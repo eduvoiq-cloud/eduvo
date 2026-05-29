@@ -358,10 +358,23 @@ function StudentsPageInner() {
 
   const fetchStudents = useCallback(async (currentPage: number) => {
     const token = getToken();
-    if (!token || !user?.school_id) return;
+    if (!token) return;
     setLoading(true);
     setError('');
     try {
+      // Self-heal: if school_id is missing from cached session, fetch fresh profile
+      if (!user?.school_id) {
+        const { authApi: api } = await import('@/lib/api');
+        const meRes = await api.me(token);
+        if (meRes.data.school_id) {
+          const { saveSession } = await import('@/lib/session');
+          saveSession(token, meRes.data);
+        } else {
+          setLoading(false);
+          return;
+        }
+      }
+
       const res = await adminApi.listStudents(token, {
         include_deleted: false,
         page: currentPage,

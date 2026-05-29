@@ -52,13 +52,25 @@ function TeachersPageInner() {
 
   const fetchAll = useCallback(async () => {
     const token = getToken();
-    if (!token || !user?.school_id) return;
+    if (!token) return;
     setLoading(true);
     setError('');
     try {
+      // Self-heal: if school_id is missing from cached session, fetch fresh profile
+      let schoolId = user?.school_id ?? null;
+      if (!schoolId) {
+        const meRes = await authApi.me(token);
+        schoolId = meRes.data.school_id;
+        if (schoolId) {
+          const { saveSession } = await import('@/lib/session');
+          saveSession(token, meRes.data);
+        }
+      }
+      if (!schoolId) { setLoading(false); return; }
+
       const [tRes, aRes] = await Promise.all([
-        usersApi.list(token, { role: 'teacher', school_id: user.school_id }),
-        assignmentsApi.list(token, user.school_id),
+        usersApi.list(token, { role: 'teacher', school_id: schoolId }),
+        assignmentsApi.list(token, schoolId),
       ]);
       setTeachers(tRes.data);
       setAssignments(aRes.data);

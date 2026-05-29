@@ -42,7 +42,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher', 'parent'), a
 
   let query = supabaseAdmin
     .from('complaints')
-    .select('*, users!complaints_submitted_by_fkey(name, email)')
+    .select('*, users(name, email)')
     .order('created_at', { ascending: false });
 
   // Scope to school

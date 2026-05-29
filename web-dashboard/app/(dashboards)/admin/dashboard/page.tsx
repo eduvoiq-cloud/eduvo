@@ -152,82 +152,112 @@ export default function SchoolAdminDashboard() {
 
   useEffect(() => {
     const token = getToken();
-    if (!token || !user?.school_id) return;
+    if (!token) return;
 
-    const schoolId = user.school_id;
     const today = new Date().toISOString().slice(0, 10);
 
-    // Fetch all stats in parallel
-    Promise.all([
-      studentsApi.list(token, { school_id: schoolId, limit: 0 }),
-      usersApi.list(token, { role: 'teacher', school_id: schoolId }),
-      attendanceApi.check(token, { class_name: '', date: today }).catch(() => null),
-      complaintsApi.list(token, { status: 'pending' }),
-      feesApi.list(token),
-      testsApi.list(token),
-    ])
-      .then(([studentsRes, teachersRes, attendanceRes, complaintsRes, feesRes, testsRes]) => {
-        // limit=0 returns a plain array; guard against paginated envelope shape
-        const rawStudents = studentsRes.data;
-        const students: Student[] = (Array.isArray(rawStudents)
-          ? rawStudents
-          : (rawStudents as unknown as { data: Student[] })?.data ?? []) as Student[];
-        const teachers: Teacher[] = teachersRes.data ?? [];
-        const complaints: Complaint[] = complaintsRes.data ?? [];
-        const fees: FeeRecord[] = feesRes.data ?? [];
-        const tests: Test[] = testsRes.data ?? [];
-
-        // Attendance % — use today-count endpoint data if available
-        let attendancePct: number | null = null;
-        if (attendanceRes) {
-          const existing = attendanceRes.data?.existing ?? [];
-          const total = attendanceRes.data?.students?.length ?? 0;
-          if (total > 0) {
-            const present = existing.filter((r) => r.status === 'present').length;
-            attendancePct = Math.round((present / total) * 100);
-          } else {
-            attendancePct = 0;
+    async function loadDashboard() {
+      // If school_id is missing from the cached session (stale localStorage),
+      // fetch the fresh profile from the server before doing anything else.
+      let schoolId = user?.school_id ?? null;
+      if (!schoolId) {
+        try {
+          const meRes = await authApi.me(token!);
+          schoolId = meRes.data.school_id;
+          if (schoolId) {
+            // Persist the refreshed profile so future loads are instant
+            const { saveSession } = await import('@/lib/session');
+            saveSession(token!, meRes.data);
           }
+        } catch {
+          // Can't reach server — nothing to show
+          setLoading(false);
+          setAuditLoading(false);
+          return;
         }
+      }
 
-        // Fee defaulters: students with fee_paid = false
-        const feeDefaulters = fees.filter((f) => !f.fee_paid).length;
+      if (!schoolId) {
+        // Still no school_id after refresh — account not linked to a school
+        setLoading(false);
+        setAuditLoading(false);
+        return;
+      }
 
-        // Active tests: tests scheduled today or in the future
-        const activeTests = tests.filter((t) => {
-          if (!t.date) return false;
-          return t.date >= today;
-        }).length;
+      // Fetch all stats in parallel
+      Promise.all([
+        studentsApi.list(token!, { school_id: schoolId, limit: 0 }),
+        usersApi.list(token!, { role: 'teacher', school_id: schoolId }),
+        attendanceApi.check(token!, { class_name: '', date: today }).catch(() => null),
+        complaintsApi.list(token!, { status: 'pending' }).catch(() => ({ data: [] as Complaint[] })),
+        feesApi.list(token!),
+        testsApi.list(token!),
+      ])
+        .then(([studentsRes, teachersRes, attendanceRes, complaintsRes, feesRes, testsRes]) => {
+          // limit=0 returns a plain array; guard against paginated envelope shape
+          const rawStudents = studentsRes.data;
+          const students: Student[] = (Array.isArray(rawStudents)
+            ? rawStudents
+            : (rawStudents as unknown as { data: Student[] })?.data ?? []) as Student[];
+          const teachers: Teacher[] = teachersRes.data ?? [];
+          const complaints: Complaint[] = complaintsRes.data ?? [];
+          const fees: FeeRecord[] = feesRes.data ?? [];
+          const tests: Test[] = testsRes.data ?? [];
 
-        setStats({
-          totalStudents: students.length,
-          studentTrend: null, // would need historical data endpoint
-          totalTeachers: teachers.length,
-          attendancePct,
-          pendingComplaints: complaints.length,
-          feeDefaulters,
-          activeTests,
-        });
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+          // Attendance % — use today-count endpoint data if available
+          let attendancePct: number | null = null;
+          if (attendanceRes) {
+            const existing = attendanceRes.data?.existing ?? [];
+            const total = attendanceRes.data?.students?.length ?? 0;
+            if (total > 0) {
+              const present = existing.filter((r) => r.status === 'present').length;
+              attendancePct = Math.round((present / total) * 100);
+            } else {
+              attendancePct = 0;
+            }
+          }
 
-    // Fetch audit logs separately so stats don't wait on it
-    adminApi
-      .auditLogs(token, 10)
-      .then((res) => setAuditLogs(res.data ?? []))
-      .catch(() => {})
-      .finally(() => setAuditLoading(false));
+          // Fee defaulters: students with fee_paid = false
+          const feeDefaulters = fees.filter((f) => !f.fee_paid).length;
 
-    // Fetch onboarding status (non-blocking)
-    onboardingApi
-      .getStatus(token)
-      .then((res) => {
-        if (!res.data.completed) {
-          setOnboarding(res.data);
-        }
-      })
-      .catch(() => {});
+          // Active tests: tests scheduled today or in the future
+          const activeTests = tests.filter((t) => {
+            if (!t.date) return false;
+            return t.date >= today;
+          }).length;
+
+          setStats({
+            totalStudents: students.length,
+            studentTrend: null,
+            totalTeachers: teachers.length,
+            attendancePct,
+            pendingComplaints: complaints.length,
+            feeDefaulters,
+            activeTests,
+          });
+        })
+        .catch(() => {})
+        .finally(() => setLoading(false));
+
+      // Fetch audit logs separately so stats don't wait on it
+      adminApi
+        .auditLogs(token!, 10)
+        .then((res) => setAuditLogs(res.data ?? []))
+        .catch(() => {})
+        .finally(() => setAuditLoading(false));
+
+      // Fetch onboarding status (non-blocking)
+      onboardingApi
+        .getStatus(token!)
+        .then((res) => {
+          if (!res.data.completed) {
+            setOnboarding(res.data);
+          }
+        })
+        .catch(() => {});
+    }
+
+    loadDashboard();
   }, [user]);
 
   return (
