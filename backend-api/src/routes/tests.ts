@@ -744,8 +744,6 @@ router.get('/results/:attempt_id', requireRole('student'), async (req: Request, 
   });
 });
 
-export default router;
-
 // ── Compatibility routes for frontend testsApi ────────────────────────────────
 // The frontend calls GET /api/tests and POST /api/tests with a different
 // schema than the student-facing routes above. These shim routes bridge the gap.
@@ -869,3 +867,5 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async
 
   sendSuccess(res, null, 'Test deleted');
 });
+
+export default router;
