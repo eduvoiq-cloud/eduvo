@@ -1,0 +1,190 @@
+import { Router, Request, Response } from 'express';
+import { z } from 'zod';
+import { supabaseAdmin } from '../config/supabase';
+import { authenticate } from '../middleware/auth';
+import { requireRole } from '../middleware/roles';
+import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+
+const router = Router();
+
+router.use(authenticate);
+
+// ── Schemas ───────────────────────────────────────────────────────────────────
+
+const createStudentSchema = z.object({
+  full_name: z.string().min(1),
+  date_of_birth: z.string().date(),
+  school_id: z.string().uuid(),
+  class_name: z.string().min(1),
+  parent_id: z.string().uuid().optional(),
+  email: z.email().optional(),
+  phone: z.string().optional(),
+});
+
+const updateStudentSchema = createStudentSchema.partial();
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function logAudit(
+  userId: string,
+  action: string,
+  details: Record<string, unknown> = {}
+) {
+  await supabaseAdmin.from('audit_logs').insert({
+    user_id: userId,
+    action,
+    details,
+    created_at: new Date().toISOString(),
+  });
+}
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+/** GET /api/students */
+router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const school_id = req.query.school_id as string | undefined;
+
+  let query = supabaseAdmin
+    .from('students')
+    .select('*')
+    .eq('is_deleted', false)  // always filter soft-deleted
+    .order('full_name');
+
+  // schooladmin and teacher are always scoped to their own school
+  if (req.user!.role === 'schooladmin' || req.user!.role === 'teacher') {
+    query = query.eq('school_id', req.user!.school_id ?? '');
+  } else if (school_id) {
+    // superadmin can filter by school_id
+    query = query.eq('school_id', school_id);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    sendError(res, error.message, 500);
+    return;
+  }
+
+  sendSuccess(res, data);
+});
+
+/** GET /api/students/:id */
+router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher', 'parent'), async (req: Request, res: Response) => {
+  const { data, error } = await supabaseAdmin
+    .from('students')
+    .select('*')
+    .eq('id', req.params.id)
+    .eq('is_deleted', false)
+    .single();
+
+  if (error || !data) {
+    sendError(res, 'Student not found', 404);
+    return;
+  }
+
+  // Parents can only view their own children
+  if (req.user!.role === 'parent' && data.parent_id !== req.user!.id) {
+    sendError(res, 'Access denied', 403);
+    return;
+  }
+
+  // Teachers and schooladmins can only view students in their school
+  if ((req.user!.role === 'teacher' || req.user!.role === 'schooladmin') &&
+      data.school_id !== req.user!.school_id) {
+    sendError(res, 'Access denied', 403);
+    return;
+  }
+
+  sendSuccess(res, data);
+});
+
+/** POST /api/students — schooladmin, teacher */
+router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const parsed = createStudentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('students')
+    .insert(parsed.data)
+    .select()
+    .single();
+
+  if (error) {
+    sendError(res, error.message, 500);
+    return;
+  }
+
+  await logAudit(req.user!.id, 'STUDENT_CREATED', { student_id: data.id });
+
+  sendSuccess(res, data, 'Student created', 201);
+});
+
+/** PATCH /api/students/:id — schooladmin, teacher */
+router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const parsed = updateStudentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('students')
+    .update(parsed.data)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error || !data) {
+    sendError(res, 'Student not found or update failed', 404);
+    return;
+  }
+
+  await logAudit(req.user!.id, 'STUDENT_UPDATED', { student_id: req.params.id });
+
+  sendSuccess(res, data, 'Student updated');
+});
+
+/** DELETE /api/students/:id — superadmin, schooladmin only (soft delete) */
+router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  // Verify student exists and belongs to the admin's school
+  const { data: existing, error: fetchErr } = await supabaseAdmin
+    .from('students')
+    .select('id, school_id, is_deleted')
+    .eq('id', req.params.id)
+    .single();
+
+  if (fetchErr || !existing) {
+    sendError(res, 'Student not found', 404);
+    return;
+  }
+
+  // schooladmin can only delete students in their own school
+  if (req.user!.role === 'schooladmin' && existing.school_id !== req.user!.school_id) {
+    sendError(res, 'Access denied', 403);
+    return;
+  }
+
+  if (existing.is_deleted) {
+    sendError(res, 'Student is already deleted', 400);
+    return;
+  }
+
+  const { error } = await supabaseAdmin
+    .from('students')
+    .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+    .eq('id', req.params.id);
+
+  if (error) {
+    sendError(res, error.message, 500);
+    return;
+  }
+
+  await logAudit(req.user!.id, 'STUDENT_DELETED', { student_id: req.params.id });
+
+  sendSuccess(res, null, 'Student deleted');
+});
+
+export default router;

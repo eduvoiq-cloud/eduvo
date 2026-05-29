@@ -1,0 +1,396 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useAuth } from '@/context/AuthContext';
+import {
+  studentsApi,
+  usersApi,
+  complaintsApi,
+  feesApi,
+  testsApi,
+  adminApi,
+  attendanceApi,
+  type Student,
+  type Teacher,
+  type Complaint,
+  type FeeRecord,
+  type Test,
+  type AuditLog,
+} from '@/lib/api';
+import { getToken } from '@/lib/session';
+import PageHeader from '@/components/PageHeader';
+import StatCard from '@/components/StatCard';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface DashboardStats {
+  totalStudents: number;
+  studentTrend: number | null; // delta vs last month (null = unknown)
+  totalTeachers: number;
+  attendancePct: number | null; // null while loading
+  pendingComplaints: number;
+  feeDefaulters: number;
+  activeTests: number;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Format a relative time string from an ISO timestamp. */
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+/** Convert an audit log action + details into a human-readable sentence. */
+function formatAuditEntry(log: AuditLog): string {
+  const actor = log.users?.name ?? 'Someone';
+  const d = log.details ?? {};
+
+  switch (log.action) {
+    case 'STUDENT_CREATED':
+      return `${actor} added student ${d.student_name ?? ''}`;
+    case 'STUDENT_UPDATED':
+      return `${actor} updated student record`;
+    case 'STUDENT_DELETED':
+      return `${actor} removed student ${d.student_name ?? ''}`;
+    case 'TEACHER_CREATED':
+      return `${actor} added teacher ${d.teacher_name ?? ''}`;
+    case 'TEACHER_DELETED':
+      return `${actor} removed teacher ${d.teacher_name ?? ''}`;
+    case 'TEACHER_ASSIGNED':
+      return `${actor} assigned ${d.teacher_name ?? 'a teacher'} to ${d.class ?? ''} ${d.section ?? ''}`;
+    case 'ATTENDANCE_RECORDED':
+    case 'manual_attendance_batch':
+      return `${actor} recorded attendance`;
+    case 'attendance_corrected':
+      return `${actor} corrected an attendance record`;
+    case 'rfid_attendance':
+      return `RFID scan recorded for ${d.student_name ?? 'a student'}`;
+    case 'FEE_TOGGLED':
+      return `${actor} updated fee status for ${d.student_name ?? 'a student'}`;
+    case 'TEST_CREATED':
+      return `${actor} created test "${d.title ?? ''}"`;
+    case 'TEST_SUBMITTED':
+      return `A student submitted a test`;
+    case 'THEORY_MARKED':
+      return `${actor} marked theory answers`;
+    case 'COMPLAINT_SUBMITTED':
+      return `A complaint was submitted`;
+    case 'COMPLAINT_STATUS_UPDATED':
+      return `${actor} updated a complaint status to ${d.new_status ?? ''}`;
+    case 'ANNOUNCEMENT_CREATED':
+      return `${actor} sent an announcement`;
+    case 'SCHOOL_SETTINGS_UPDATED':
+      return `${actor} updated school settings`;
+    case 'DATA_EXPORTED':
+      return `${actor} exported school data`;
+    default:
+      return `${actor} performed ${log.action.toLowerCase().replace(/_/g, ' ')}`;
+  }
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export default function SchoolAdminDashboard() {
+  const { user } = useAuth();
+
+  const [stats, setStats] = useState<DashboardStats>({
+    totalStudents: 0,
+    studentTrend: null,
+    totalTeachers: 0,
+    attendancePct: null,
+    pendingComplaints: 0,
+    feeDefaulters: 0,
+    activeTests: 0,
+  });
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [auditLoading, setAuditLoading] = useState(true);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token || !user?.school_id) return;
+
+    const schoolId = user.school_id;
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Fetch all stats in parallel
+    Promise.all([
+      studentsApi.list(token, schoolId),
+      usersApi.list(token, { role: 'teacher', school_id: schoolId }),
+      attendanceApi.check(token, { class_name: '', date: today }).catch(() => null),
+      complaintsApi.list(token, { status: 'pending' }),
+      feesApi.list(token),
+      testsApi.list(token),
+    ])
+      .then(([studentsRes, teachersRes, attendanceRes, complaintsRes, feesRes, testsRes]) => {
+        const students: Student[] = studentsRes.data ?? [];
+        const teachers: Teacher[] = teachersRes.data ?? [];
+        const complaints: Complaint[] = complaintsRes.data ?? [];
+        const fees: FeeRecord[] = feesRes.data ?? [];
+        const tests: Test[] = testsRes.data ?? [];
+
+        // Attendance % — use today-count endpoint data if available
+        let attendancePct: number | null = null;
+        if (attendanceRes) {
+          const existing = attendanceRes.data?.existing ?? [];
+          const total = attendanceRes.data?.students?.length ?? 0;
+          if (total > 0) {
+            const present = existing.filter((r) => r.status === 'present').length;
+            attendancePct = Math.round((present / total) * 100);
+          } else {
+            attendancePct = 0;
+          }
+        }
+
+        // Fee defaulters: students with fee_paid = false
+        const feeDefaulters = fees.filter((f) => !f.fee_paid).length;
+
+        // Active tests: tests scheduled today or in the future
+        const activeTests = tests.filter((t) => {
+          if (!t.date) return false;
+          return t.date >= today;
+        }).length;
+
+        setStats({
+          totalStudents: students.length,
+          studentTrend: null, // would need historical data endpoint
+          totalTeachers: teachers.length,
+          attendancePct,
+          pendingComplaints: complaints.length,
+          feeDefaulters,
+          activeTests,
+        });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+
+    // Fetch audit logs separately so stats don't wait on it
+    adminApi
+      .auditLogs(token, 10)
+      .then((res) => setAuditLogs(res.data ?? []))
+      .catch(() => {})
+      .finally(() => setAuditLoading(false));
+  }, [user]);
+
+  const attendanceDisplay =
+    stats.attendancePct === null ? '—' : `${stats.attendancePct}%`;
+
+  return (
+    <>
+      <PageHeader
+        title={`Welcome back, ${user?.name}`}
+        description="School overview and quick actions"
+      />
+
+      {/* ── Stats grid ─────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+        <StatCard
+          label="Total Students"
+          value={loading ? '—' : stats.totalStudents}
+          sub={
+            stats.studentTrend !== null
+              ? `${stats.studentTrend >= 0 ? '+' : ''}${stats.studentTrend} vs last month`
+              : 'Enrolled in your school'
+          }
+          icon={<StudentsIcon />}
+        />
+        <StatCard
+          label="Total Teachers"
+          value={loading ? '—' : stats.totalTeachers}
+          sub="Active staff members"
+          icon={<TeacherIcon />}
+        />
+        <StatCard
+          label="Today's Attendance"
+          value={loading ? '—' : attendanceDisplay}
+          sub="Present / total students"
+          icon={<AttendanceIcon />}
+        />
+        <StatCard
+          label="Pending Complaints"
+          value={loading ? '—' : stats.pendingComplaints}
+          sub="Awaiting review"
+          icon={<ComplaintIcon />}
+        />
+        <StatCard
+          label="Fee Defaulters"
+          value={loading ? '—' : stats.feeDefaulters}
+          sub="Fee not yet paid"
+          icon={<FeeIcon />}
+        />
+        <StatCard
+          label="Active Tests"
+          value={loading ? '—' : stats.activeTests}
+          sub="Scheduled today or upcoming"
+          icon={<TestIcon />}
+        />
+      </div>
+
+      {/* ── Quick actions ───────────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Actions</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <QuickAction href="/admin/students?action=new" label="Add Student" icon={<StudentsIcon />} />
+          <QuickAction href="/admin/teachers?action=new" label="Add Teacher" icon={<TeacherIcon />} />
+          <QuickAction href="/admin/register-rfid" label="Register RFID" icon={<RfidIcon />} />
+          <QuickAction href="/admin/announcements" label="Send Announcement" icon={<AnnouncementIcon />} />
+          <QuickAction href="/admin/attendance" label="View Attendance" icon={<AttendanceIcon />} />
+          <QuickAction href="/admin/export" label="Export Data" icon={<ExportIcon />} />
+        </div>
+      </div>
+
+      {/* ── Recent activity feed ────────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-semibold text-gray-900">Recent Activity</h2>
+          <span className="text-xs text-gray-400">Last 10 actions</span>
+        </div>
+
+        {auditLoading ? (
+          <div className="px-6 py-8 text-center text-sm text-gray-400">Loading activity…</div>
+        ) : auditLogs.length === 0 ? (
+          <div className="px-6 py-8 text-center text-sm text-gray-400">No activity recorded yet.</div>
+        ) : (
+          <div className="divide-y divide-gray-50">
+            {auditLogs.map((log) => (
+              <div key={log.id} className="flex items-start gap-3 px-6 py-3">
+                <div className="mt-0.5 w-7 h-7 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 shrink-0">
+                  <ActivityDotIcon />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-gray-800 leading-snug">
+                    {formatAuditEntry(log)}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">{timeAgo(log.created_at)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+function QuickAction({
+  href,
+  label,
+  icon,
+}: {
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex flex-col items-center gap-2 px-3 py-4 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 text-center text-xs font-medium text-gray-700 hover:text-blue-700 transition-colors"
+    >
+      <span className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
+        {icon}
+      </span>
+      {label}
+    </Link>
+  );
+}
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+
+function StudentsIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  );
+}
+
+function TeacherIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+    </svg>
+  );
+}
+
+function AttendanceIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+    </svg>
+  );
+}
+
+function ComplaintIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+    </svg>
+  );
+}
+
+function FeeIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function TestIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+    </svg>
+  );
+}
+
+function RfidIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+    </svg>
+  );
+}
+
+function AnnouncementIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
+    </svg>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+    </svg>
+  );
+}
+
+function ActivityDotIcon() {
+  return (
+    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 8 8">
+      <circle cx="4" cy="4" r="3" />
+    </svg>
+  );
+}
