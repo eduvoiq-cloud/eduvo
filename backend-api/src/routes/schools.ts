@@ -16,7 +16,9 @@ const createSchoolSchema = z.object({
   email: z.string().email().max(254).optional(),
 });
 
-const updateSchoolSchema = createSchoolSchema.partial();
+const updateSchoolSchema = createSchoolSchema.partial().extend({
+  is_active: z.boolean().optional(),
+});
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

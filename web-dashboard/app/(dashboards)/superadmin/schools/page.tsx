@@ -68,12 +68,18 @@ function SchoolsPageInner() {
     try {
       const [schoolsRes, studentsRes] = await Promise.all([
         schoolsApi.list(token),
-        studentsApi.list(token),
+        // limit=0 → returns a flat array (no pagination envelope)
+        studentsApi.list(token, { limit: 0 }),
       ]);
+
+      // Unwrap: limit=0 returns a flat array; paginated calls return an envelope
+      const studentList = Array.isArray(studentsRes.data)
+        ? (studentsRes.data as unknown as { school_id: string }[])
+        : ((studentsRes.data as unknown as { data: { school_id: string }[] }).data ?? []);
 
       // Count students per school
       const countMap: Record<string, number> = {};
-      for (const s of (studentsRes.data as unknown as { school_id: string }[])) {
+      for (const s of studentList) {
         countMap[s.school_id] = (countMap[s.school_id] ?? 0) + 1;
       }
 

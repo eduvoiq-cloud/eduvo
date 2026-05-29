@@ -1305,6 +1305,26 @@ async function main(): Promise<void> {
   const testSchoolId = schoolIds['Test School'];
   const demoSchoolId = schoolIds['Demo Coaching'];
 
+  // ── Back-fill school_id for base-seed users (schooladmin, teacher, student)
+  // These accounts are created by the base seed BEFORE schools exist, so their
+  // school_id is null. Fix it here so the dashboard guards don't silently bail.
+  console.log('\n── Back-fill school_id for base-seed users ──────────────────');
+  for (const email of ['schooladmin@eduvo.com', 'teacher@eduvo.com', 'student@eduvo.com']) {
+    const { data: u } = await supabaseAdmin
+      .from('users')
+      .select('id, school_id')
+      .eq('email', email)
+      .maybeSingle();
+    if (!u) { console.log(`  [skip] ${email} not found`); continue; }
+    if (u.school_id === testSchoolId) { console.log(`  [ok]   ${email} already linked`); continue; }
+    const { error } = await supabaseAdmin
+      .from('users')
+      .update({ school_id: testSchoolId })
+      .eq('id', u.id);
+    if (error) console.warn(`  [warn] ${email}: ${error.message}`);
+    else console.log(`  [fix]  ${email} → school_id set to Test School`);
+  }
+
   // ── Subjects ──────────────────────────────────────────────────────────────
   console.log('\n── Subjects ─────────────────────────────────────────────────');
   await seedSubjects(testSchoolId);

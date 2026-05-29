@@ -38,16 +38,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading: true,
   });
 
-  // Rehydrate session from localStorage on mount
+  // Rehydrate session from localStorage on mount, then verify + refresh
+  // profile from the server. This ensures stale cached data (e.g. a null
+  // school_id that was fixed in the DB) is always corrected on next load.
   useEffect(() => {
     const token = getToken();
     const user = getUser();
 
-    if (token && user) {
-      setState({ user, token, loading: false });
-    } else {
+    if (!token || !user) {
       setState((s) => ({ ...s, loading: false }));
+      return;
     }
+
+    // Optimistically set the cached user so the UI renders immediately,
+    // then silently refresh the profile from the server in the background.
+    setState({ user, token, loading: true });
+
+    authApi.me(token)
+      .then((res) => {
+        const freshUser = res.data;
+        // Persist the refreshed profile so future loads are up-to-date
+        saveSession(token, freshUser);
+        setState({ user: freshUser, token, loading: false });
+      })
+      .catch(() => {
+        // /me failed (expired token, network error, etc.) — keep cached user
+        // but mark loading done so the UI doesn't hang.
+        setState({ user, token, loading: false });
+      });
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {

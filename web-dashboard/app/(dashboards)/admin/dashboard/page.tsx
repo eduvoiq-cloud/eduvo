@@ -167,7 +167,11 @@ export default function SchoolAdminDashboard() {
       testsApi.list(token),
     ])
       .then(([studentsRes, teachersRes, attendanceRes, complaintsRes, feesRes, testsRes]) => {
-        const students: Student[] = (studentsRes.data as Student[]) ?? [];
+        // limit=0 returns a plain array; guard against paginated envelope shape
+        const rawStudents = studentsRes.data;
+        const students: Student[] = (Array.isArray(rawStudents)
+          ? rawStudents
+          : (rawStudents as unknown as { data: Student[] })?.data ?? []) as Student[];
         const teachers: Teacher[] = teachersRes.data ?? [];
         const complaints: Complaint[] = complaintsRes.data ?? [];
         const fees: FeeRecord[] = feesRes.data ?? [];

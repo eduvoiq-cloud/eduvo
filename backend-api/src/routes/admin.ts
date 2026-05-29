@@ -84,15 +84,28 @@ function getFirebaseApp(): firebaseAdmin.app.App | null {
 // ── GET /api/admin/students ───────────────────────────────────────────────────
 /**
  * List all students for this school.
+ * Supports pagination: ?page=1&limit=50 (default limit 50, max 200).
+ * Pass limit=0 to fetch all (no pagination envelope — returns plain array).
  * Pass ?include_deleted=true to also return soft-deleted students.
  */
 router.get('/students', async (req: Request, res: Response) => {
   const schoolId = req.user!.school_id!;
   const includeDeleted = req.query.include_deleted === 'true';
+  const search = req.query.search as string | undefined;
+  const class_name = req.query.class_name as string | undefined;
+  const section = req.query.section as string | undefined;
+
+  // Pagination
+  const rawPage  = parseInt(req.query.page  as string ?? '1',  10);
+  const rawLimit = parseInt(req.query.limit as string ?? '50', 10);
+  const page  = isNaN(rawPage)  || rawPage  < 1 ? 1  : rawPage;
+  const limit = rawLimit === 0  ? 0
+              : isNaN(rawLimit) || rawLimit < 1 ? 50
+              : Math.min(rawLimit, 200);
 
   let query = supabaseAdmin
     .from('students')
-    .select('*')
+    .select('*', { count: 'exact' })
     .eq('school_id', schoolId)
     .order('full_name');
 
@@ -100,9 +113,27 @@ router.get('/students', async (req: Request, res: Response) => {
     query = query.eq('is_deleted', false);
   }
 
-  const { data, error } = await query;
+  if (search) {
+    query = query.or(`full_name.ilike.%${search}%,roll_number.ilike.%${search}%`);
+  }
+  if (class_name) query = query.eq('class_name', class_name);
+  if (section)    query = query.eq('section', section);
+
+  if (limit > 0) {
+    const from = (page - 1) * limit;
+    query = query.range(from, from + limit - 1);
+  }
+
+  const { data, error, count } = await query;
   if (error) { sendError(res, error.message, 500); return; }
-  sendSuccess(res, data ?? []);
+
+  if (limit > 0) {
+    const total       = count ?? 0;
+    const total_pages = Math.ceil(total / limit);
+    sendSuccess(res, { data: data ?? [], total, page, limit, total_pages });
+  } else {
+    sendSuccess(res, data ?? []);
+  }
 });
 
 // ── POST /api/admin/students ──────────────────────────────────────────────────
