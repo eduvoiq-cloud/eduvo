@@ -78,7 +78,7 @@ router.get('/', requireRole('superadmin', 'schooladmin'), async (req: Request, r
   let query = supabaseAdmin
     .from('users')
     .select('id, name, email, role, school_id, created_at')
-    .eq('is_deleted', false)
+    .or('is_deleted.eq.false,is_deleted.is.null')
     .order('name');
 
   // schooladmin is always scoped to their own school

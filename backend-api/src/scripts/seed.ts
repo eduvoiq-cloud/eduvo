@@ -253,7 +253,7 @@ async function seedTeachers(
         .select('id')
         .eq('teacher_id', userId)
         .eq('school_id', schoolId)
-        .eq('class', a.class)
+        .eq('class_name', a.class)
         .eq('section', a.section)
         .eq('subject', a.subject)
         .maybeSingle();
@@ -263,7 +263,7 @@ async function seedTeachers(
       const { error } = await supabaseAdmin.from('teacher_assignments').insert({
         teacher_id: userId,
         school_id: schoolId,
-        class: a.class,
+        class_name: a.class,
         section: a.section,
         subject: a.subject,
       });
@@ -389,7 +389,7 @@ async function seedStudents(
       .select('id')
       .eq('school_id', schoolId)
       .eq('full_name', def.full_name)
-      .eq('class', def.class)
+      .eq('class_name', def.class)
       .eq('section', def.section)
       .maybeSingle();
 
@@ -406,7 +406,7 @@ async function seedStudents(
       .from('students')
       .insert({
         full_name: def.full_name,
-        class: def.class,
+        class_name: def.class,
         section: def.section,
         roll_number: def.roll_number,
         school_id: schoolId,
@@ -743,7 +743,7 @@ async function seedTests(
       .select('id')
       .eq('school_id', schoolId)
       .eq('title', def.title)
-      .eq('class', def.class)
+      .eq('class_name', def.class)
       .eq('section', def.section)
       .maybeSingle();
 
@@ -758,7 +758,7 @@ async function seedTests(
       .insert({
         title: def.title,
         subject: def.subject,
-        class: def.class,
+        class_name: def.class,
         section: def.section,
         term: def.term,
         date: def.date,
