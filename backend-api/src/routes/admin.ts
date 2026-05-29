@@ -1434,6 +1434,92 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
   sendSuccess(res, data ?? []);
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPLAINTS (admin view)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/admin/complaints ─────────────────────────────────────────────────
+/**
+ * List all complaints for this school.
+ * Optional ?status=pending|reviewed|resolved filter.
+ * Joins submitter name/email for display.
+ */
+router.get('/complaints', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id!;
+  const { status } = req.query as Record<string, string>;
+
+  let query = supabaseAdmin
+    .from('complaints')
+    .select('*, users!complaints_submitted_by_fkey(name, email)')
+    .eq('school_id', schoolId)
+    .order('created_at', { ascending: false });
+
+  if (status) query = query.eq('status', status);
+
+  const { data, error } = await query;
+  if (error) { sendError(res, error.message, 500); return; }
+
+  sendSuccess(res, data ?? []);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FEES (admin view)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/admin/fees ───────────────────────────────────────────────────────
+/**
+ * List fee records for all students in this school.
+ * Optional filters: ?class_name=&section=&term=&academic_year=
+ * Returns one row per student merged with their fee record (if any).
+ */
+router.get('/fees', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id!;
+  const { class_name, section, term, academic_year } = req.query as Record<string, string>;
+
+  // Fetch students scoped to this school
+  let studentQuery = supabaseAdmin
+    .from('students')
+    .select('id, full_name, class_name, section')
+    .eq('school_id', schoolId)
+    .eq('is_deleted', false)
+    .order('class_name')
+    .order('full_name');
+
+  if (class_name) studentQuery = studentQuery.eq('class_name', class_name);
+  if (section)    studentQuery = studentQuery.eq('section', section);
+
+  const { data: students, error: sErr } = await studentQuery;
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (!students || students.length === 0) { sendSuccess(res, []); return; }
+
+  const studentIds = students.map((s: { id: string }) => s.id);
+
+  // Fetch fee records for those students
+  let feeQuery = supabaseAdmin
+    .from('student_fees')
+    .select('*')
+    .in('student_id', studentIds);
+
+  if (term)          feeQuery = feeQuery.eq('term', term);
+  if (academic_year) feeQuery = feeQuery.eq('academic_year', academic_year);
+
+  const { data: fees, error: fErr } = await feeQuery;
+  if (fErr) { sendError(res, fErr.message, 500); return; }
+
+  // Merge: one row per student with their fee status
+  const feeMap = new Map((fees ?? []).map((f: { student_id: string }) => [f.student_id, f]));
+  const result = students.map((s: { id: string; full_name: string; class_name: string; section: string }) => ({
+    student_id: s.id,
+    full_name:  s.full_name,
+    class_name: s.class_name,
+    section:    s.section,
+    fee_record: feeMap.get(s.id) ?? null,
+    fee_paid:   (feeMap.get(s.id) as { fee_paid?: boolean } | undefined)?.fee_paid ?? false,
+  }));
+
+  sendSuccess(res, result);
+});
+
 // ── POST /api/admin/request-deletion ─────────────────────────────────────────
 /**
  * School admin requests deletion of their school account.
