@@ -301,7 +301,6 @@ export default function SchoolAdminDashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <QuickAction href="/admin/students?action=new" label="Add Student" icon={<StudentsIcon />} />
           <QuickAction href="/admin/teachers?action=new" label="Add Teacher" icon={<TeacherIcon />} />
-          <QuickAction href="/admin/register-rfid" label="Register RFID" icon={<RfidIcon />} />
           <QuickAction href="/admin/announcements" label="Send Announcement" icon={<AnnouncementIcon />} />
           <QuickAction href="/admin/attendance" label="View Attendance" icon={<AttendanceIcon />} />
           <QuickAction href="/admin/export" label="Export Data" icon={<ExportIcon />} />

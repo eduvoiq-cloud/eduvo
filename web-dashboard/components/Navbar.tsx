@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import type { AppRole } from '@/lib/api';
@@ -72,9 +73,14 @@ export default function Navbar() {
           {/* Logo + desktop nav */}
           <div className="flex items-center gap-8">
             <Link href="/" className="flex items-center gap-2 shrink-0">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">E</span>
-              </div>
+              <Image
+                src="/logo.png"
+                alt="Eduvo"
+                width={32}
+                height={32}
+                className="rounded-lg"
+                priority
+              />
               <span className="text-gray-900 font-semibold text-lg tracking-tight">
                 eduvo
               </span>
