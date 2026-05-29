@@ -278,15 +278,54 @@ export const schoolsApi = {
     request<null>(`/api/schools/${id}`, { method: 'DELETE' }, token),
 };
 
-// ── Students endpoints (for counts) ──────────────────────────────────────────
+// ── Students endpoints ────────────────────────────────────────────────────────
+
+export interface PaginatedStudents {
+  data: Student[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
 
 export const studentsApi = {
-  list: (token: string, school_id?: string) =>
-    request<Student[]>(
-      `/api/students${school_id ? `?school_id=${school_id}` : ''}`,
-      { method: 'GET' },
-      token
-    ),
+  /**
+   * List students.
+   * - Pass a string school_id for the legacy call pattern (returns Student[]).
+   * - Pass an options object for paginated/filtered calls.
+   *   - limit=0  → fetch all, returns Student[] (no envelope)
+   *   - limit>0  → returns PaginatedStudents envelope (default limit=50)
+   */
+  list(
+    token: string,
+    paramsOrSchoolId?: string | {
+      school_id?: string;
+      page?: number;
+      limit?: number;
+      search?: string;
+      class_name?: string;
+      section?: string;
+    }
+  ): Promise<ApiResponse<Student[] | PaginatedStudents>> {
+    const qs = new URLSearchParams();
+
+    if (typeof paramsOrSchoolId === 'string') {
+      // Legacy: list(token, schoolId) — fetch all, no pagination
+      if (paramsOrSchoolId) qs.set('school_id', paramsOrSchoolId);
+      qs.set('limit', '0');
+    } else if (paramsOrSchoolId) {
+      const p = paramsOrSchoolId;
+      if (p.school_id) qs.set('school_id', p.school_id);
+      if (p.page !== undefined) qs.set('page', String(p.page));
+      if (p.limit !== undefined) qs.set('limit', String(p.limit));
+      if (p.search) qs.set('search', p.search);
+      if (p.class_name) qs.set('class_name', p.class_name);
+      if (p.section) qs.set('section', p.section);
+    }
+
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<Student[] | PaginatedStudents>(`/api/students${query}`, { method: 'GET' }, token);
+  },
 
   create: (
     token: string,
@@ -316,11 +355,7 @@ export const studentsApi = {
   remove: (token: string, id: string) =>
     request<null>(`/api/students/${id}`, { method: 'DELETE' }, token),
 
-  registerRfid: (token: string, id: string, rfid_uid: string) =>
-    request<Student>(`/api/admin/students/${id}/rfid`, {
-      method: 'PUT',
-      body: JSON.stringify({ rfid_uid }),
-    }, token),
+
 };
 
 // ── Users endpoints (teachers, etc.) ─────────────────────────────────────────
@@ -494,6 +529,38 @@ export const testsApi = {
     request<null>(`/api/tests/${id}`, { method: 'DELETE' }, token),
 };
 
+// ── Onboarding endpoints ──────────────────────────────────────────────────────
+
+export type OnboardingStep =
+  | 'school_created'
+  | 'teachers_imported'
+  | 'students_imported'
+  | 'classes_created'
+  | 'teachers_assigned';
+
+export interface OnboardingProgress {
+  school_id: string;
+  school_created: boolean;
+  teachers_imported: boolean;
+  students_imported: boolean;
+  classes_created: boolean;
+  teachers_assigned: boolean;
+  completed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const onboardingApi = {
+  getStatus: (token: string) =>
+    request<OnboardingProgress>('/api/onboarding/status', { method: 'GET' }, token),
+
+  updateStep: (token: string, step: OnboardingStep, completed: boolean) =>
+    request<OnboardingProgress>('/api/onboarding/step', {
+      method: 'PUT',
+      body: JSON.stringify({ step, completed }),
+    }, token),
+};
+
 // ── Audit log types ───────────────────────────────────────────────────────────
 
 export interface AuditLog {
@@ -545,10 +612,22 @@ export const adminApi = {
   auditLogs: (token: string, limit = 10) =>
     request<AuditLog[]>(`/api/admin/audit-logs?limit=${limit}`, { method: 'GET' }, token),
 
-  /** List students (active or deleted) via admin route */
-  listStudents: (token: string, params?: { include_deleted?: boolean }) => {
+  /** List students (active or deleted) via admin route. Supports pagination. */
+  listStudents: (token: string, params?: {
+    include_deleted?: boolean;
+    page?: number;
+    limit?: number;
+    search?: string;
+    class_name?: string;
+    section?: string;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.include_deleted) qs.set('include_deleted', 'true');
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    if (params?.search) qs.set('search', params.search);
+    if (params?.class_name) qs.set('class_name', params.class_name);
+    if (params?.section) qs.set('section', params.section);
     const query = qs.toString() ? `?${qs.toString()}` : '';
     return request<AdminStudent[]>(`/api/admin/students${query}`, { method: 'GET' }, token);
   },

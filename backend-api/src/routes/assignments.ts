@@ -14,9 +14,9 @@ router.use(authenticate);
 const createAssignmentSchema = z.object({
   teacher_id: z.string().uuid(),
   school_id: z.string().uuid(),
-  class_name: z.string().min(1),
-  section: z.string().min(1),
-  subject: z.string().min(1),
+  class_name: z.string().min(1).max(20),
+  section: z.string().min(1).max(10),
+  subject: z.string().min(1).max(100),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -108,6 +108,18 @@ export default function LoginPage() {
         <p className="mt-6 text-xs text-gray-400 text-center">
           Accounts are created by your administrator.
         </p>
+
+        <p className="mt-4 text-xs text-gray-400 text-center">
+          By logging in you agree to our{' '}
+          <a href="/terms-of-service" className="text-blue-500 hover:underline" target="_blank" rel="noopener noreferrer">
+            Terms of Service
+          </a>{' '}
+          and{' '}
+          <a href="/privacy-policy" className="text-blue-500 hover:underline" target="_blank" rel="noopener noreferrer">
+            Privacy Policy
+          </a>
+          .
+        </p>
       </div>
 
     </div>

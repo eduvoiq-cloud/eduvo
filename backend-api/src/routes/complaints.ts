@@ -11,14 +11,14 @@ router.use(authenticate);
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const createComplaintSchema = z.object({
-  subject: z.string().min(1),
-  body: z.string().min(1),
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(5000),
   student_id: z.string().uuid().optional(),
 });
 
 const updateStatusSchema = z.object({
   status: z.enum(['pending', 'reviewed', 'resolved']),
-  resolution_note: z.string().optional(),
+  resolution_note: z.string().max(2000).optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

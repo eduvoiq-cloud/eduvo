@@ -24,9 +24,9 @@ router.use(requireRole('teacher'));
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const createMarkSchema = z.object({
-  student_id: z.string().min(1),
-  subject: z.string().min(1),
-  test_name: z.string().min(1),
+  student_id: z.string().uuid(),
+  subject: z.string().min(1).max(100),
+  test_name: z.string().min(1).max(200),
   exam_type: z.enum(['unit_test', 'mid_term', 'final', 'class_test']),
   term: z.enum(['term_1', 'term_2', 'term_3']),
   score: z.number().min(0),
@@ -36,29 +36,29 @@ const createMarkSchema = z.object({
 const updateMarkSchema = createMarkSchema.partial();
 
 const toggleFeeSchema = z.object({
-  student_id: z.string().min(1),
+  student_id: z.string().uuid(),
   fee_paid: z.boolean(),
 });
 
 const manualAttendanceSchema = z.object({
   attendances: z.array(z.object({
-    student_id: z.string().min(1),
+    student_id: z.string().uuid(),
     status: z.enum(['present', 'absent', 'late', 'excused']),
-  })).min(1),
-  class: z.string().min(1),
-  section: z.string().min(1),
-  date: z.string().min(1),
+  })).min(1).max(200),
+  class: z.string().min(1).max(20),
+  section: z.string().min(1).max(10),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
 });
 
 const correctAttendanceSchema = z.object({
-  attendance_id: z.string().min(1),
+  attendance_id: z.string().uuid(),
   new_status: z.enum(['present', 'absent', 'late', 'excused']),
-  reason: z.string().min(1, 'Reason is required'),
+  reason: z.string().min(1).max(500),
 });
 
 const updateComplaintSchema = z.object({
   status: z.enum(['pending', 'reviewed', 'resolved']),
-  resolution_note: z.string().optional(),
+  resolution_note: z.string().max(2000).optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

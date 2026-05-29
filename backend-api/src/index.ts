@@ -24,7 +24,7 @@ import { globalRateLimit } from './middleware/rateLimit';
 import authRoutes from './routes/auth';
 import schoolRoutes from './routes/schools';
 import studentRoutes from './routes/students';
-import attendanceRoutes, { startNotificationQueueProcessor } from './routes/attendance';
+import attendanceRoutes from './routes/attendance';
 import marksRoutes from './routes/marks';
 import notificationRoutes from './routes/notifications';
 import userRoutes from './routes/users';
@@ -38,6 +38,9 @@ import adminRoutes from './routes/admin';
 import superadminRoutes from './routes/superadmin';
 import parentRoutes from './routes/parent';
 import performanceRoutes from './routes/performance';
+import bulkImportRoutes from './routes/bulkImport';
+import onboardingRoutes from './routes/onboarding';
+import aiAssistantRoutes from './routes/aiAssistant';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -235,6 +238,9 @@ async function startServer() {
   app.use('/api/superadmin', superadminRoutes);
   app.use('/api/parent', parentRoutes);
   app.use('/api/performance', performanceRoutes);
+  app.use('/api/import', bulkImportRoutes);
+  app.use('/api/onboarding', onboardingRoutes);
+  app.use('/api/ai', aiAssistantRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {
@@ -266,9 +272,6 @@ async function startServer() {
 
     res.status(500).json({ success: false, message });
   });
-
-  // ── Background jobs ───────────────────────────────────────────────────────────
-  startNotificationQueueProcessor();
 
   // ── Start listening ───────────────────────────────────────────────────────────
   await new Promise<void>((resolve, reject) => {

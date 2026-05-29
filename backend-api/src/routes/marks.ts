@@ -13,12 +13,12 @@ router.use(authenticate);
 
 const createMarkSchema = z.object({
   student_id: z.string().uuid(),
-  subject: z.string().min(1),
+  subject: z.string().min(1).max(100),
   score: z.number().min(0).max(100),
   max_score: z.number().min(1).default(100),
-  term: z.string().min(1),
+  term: z.string().min(1).max(50),
   exam_type: z.enum(['quiz', 'midterm', 'final', 'assignment', 'project']),
-  notes: z.string().optional(),
+  notes: z.string().max(1000).optional(),
 });
 
 const updateMarkSchema = createMarkSchema.partial();

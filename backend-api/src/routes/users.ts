@@ -27,12 +27,12 @@ async function logAudit(
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const updateUserSchema = z.object({
-  name: z.string().min(1).optional(),
-  email: z.email().optional(),
+  name: z.string().min(1).max(150).optional(),
+  email: z.string().email().max(254).optional(),
 });
 
 const fcmTokenSchema = z.object({
-  fcm_token: z.string().min(1),
+  fcm_token: z.string().min(1).max(512),
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────

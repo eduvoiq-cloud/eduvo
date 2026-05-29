@@ -8,7 +8,16 @@
  * Safe to re-run: uses skip logic for anything that already exists.
  * Does NOT recreate: superadmin@eduvo.com, schooladmin@eduvo.com,
  *                    teacher@eduvo.com, student@eduvo.com
- * ADDS: parent@eduvo.com + all test data below.
+ * ADDS: parent@eduvo.com, student2@eduvo.com, admin2@eduvo.com + all test data.
+ *
+ * CHANGES:
+ *   - Removed rfid_uid from all student inserts (column no longer used)
+ *   - Added onboarding_progress records for both schools
+ *   - Added attendance submission records for current week (Class 10A + 10B)
+ *   - Added ai_usage records for teacher (3 today = "3/10 used")
+ *   - Added legal_pages (privacy policy + terms of service)
+ *   - Added student2@eduvo.com (fee NOT paid — locked tests test)
+ *   - Added admin2@eduvo.com (Demo Coaching school admin, onboarding incomplete)
  */
 
 import 'dotenv/config';
@@ -39,17 +48,21 @@ async function getUserIdByEmail(email: string): Promise<string | null> {
   return data?.id ?? null;
 }
 
-function randomHex8(): string {
-  return Math.floor(Math.random() * 0xffffffff)
-    .toString(16)
-    .padStart(8, '0')
-    .toUpperCase();
-}
-
 /** Returns a date string YYYY-MM-DD offset by `daysAgo` from today. */
 function daysAgo(n: number): string {
   const d = new Date();
   d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
+}
+
+/** Returns a date string YYYY-MM-DD for a specific weekday of the current week.
+ *  0 = Monday, 1 = Tuesday, ..., 4 = Friday */
+function currentWeekDay(dayOffset: number): string {
+  const d = new Date();
+  // Get Monday of current week
+  const day = d.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+  const diffToMonday = (day === 0 ? -6 : 1 - day);
+  d.setDate(d.getDate() + diffToMonday + dayOffset);
   return d.toISOString().split('T')[0];
 }
 
@@ -309,6 +322,49 @@ async function seedExtraParent(
   return userId;
 }
 
+// ── Step 5b: Seed admin2@eduvo.com (Demo Coaching school admin) ───────────────
+
+async function seedAdmin2(schoolId: string, superAdminId: string): Promise<string> {
+  console.log('\n── admin2@eduvo.com (Demo Coaching school admin) ────────────');
+  const email = 'admin2@eduvo.com';
+
+  const existingId = await getUserIdByEmail(email);
+  if (existingId) {
+    console.log(`  [skip] ${email} already exists (id: ${existingId})`);
+    return existingId;
+  }
+
+  const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password: 'Test@1234',
+    email_confirm: true,
+  });
+
+  if (authErr || !authData?.user) {
+    throw new Error(`Auth creation failed for ${email}: ${authErr?.message}`);
+  }
+
+  const userId = authData.user.id;
+
+  const { error: profileErr } = await supabaseAdmin.from('users').insert({
+    id: userId,
+    name: 'Demo Admin',
+    email,
+    role: 'schooladmin',
+    school_id: schoolId,
+    created_by: superAdminId,
+  });
+
+  if (profileErr) {
+    await supabaseAdmin.auth.admin.deleteUser(userId);
+    throw new Error(`Profile insert failed for ${email}: ${profileErr.message}`);
+  }
+
+  await logAudit(userId, 'SEED_USER_CREATED', { email, role: 'schooladmin' });
+  console.log(`  [done] Created ${email} (id: ${userId})`);
+  return userId;
+}
+
 // ── Step 6: Seed students ─────────────────────────────────────────────────────
 
 interface StudentDef {
@@ -316,7 +372,7 @@ interface StudentDef {
   class_name: string;
   section: string;
   roll_number: string;
-  parentEmail: string; // which parent owns this student
+  parentEmail: string;
 }
 
 async function seedStudents(
@@ -328,7 +384,6 @@ async function seedStudents(
   const ids: string[] = [];
 
   for (const def of studentDefs) {
-    // Check by roll_number + school_id + class_name to avoid duplicates
     const { data: existing } = await supabaseAdmin
       .from('students')
       .select('id')
@@ -345,8 +400,8 @@ async function seedStudents(
     }
 
     const parentId = parentIds[def.parentEmail] ?? null;
-    const rfid = randomHex8();
 
+    // NOTE: rfid_uid intentionally omitted — column no longer used
     const { data: student, error } = await supabaseAdmin
       .from('students')
       .insert({
@@ -356,7 +411,6 @@ async function seedStudents(
         roll_number: def.roll_number,
         school_id: schoolId,
         parent_id: parentId,
-        rfid_uid: rfid,
         is_deleted: false,
       })
       .select('id')
@@ -378,22 +432,73 @@ async function seedStudents(
     }
 
     ids.push(student.id as string);
-    console.log(`  [done] ${def.full_name} (${def.class_name} ${def.section}) rfid: ${rfid}`);
+    console.log(`  [done] ${def.full_name} (${def.class_name} ${def.section})`);
   }
 
   return ids;
 }
 
-// ── Step 7: Seed attendance ───────────────────────────────────────────────────
+// ── Step 6b: Seed student2@eduvo.com (fee NOT paid) ──────────────────────────
+
+async function seedStudent2(
+  schoolId: string,
+  parentId: string,
+  schoolAdminId: string
+): Promise<string | null> {
+  console.log('\n── student2@eduvo.com (fee NOT paid) ───────────────────────');
+  const email = 'student2@eduvo.com';
+
+  // Check if a student record linked to this email already exists via user lookup
+  const existingUserId = await getUserIdByEmail(email);
+  if (existingUserId) {
+    console.log(`  [skip] ${email} already exists (id: ${existingUserId})`);
+    return existingUserId;
+  }
+
+  // Create auth user
+  const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password: 'Test@1234',
+    email_confirm: true,
+  });
+
+  if (authErr || !authData?.user) {
+    console.warn(`  [warn] Auth creation failed for ${email}: ${authErr?.message}`);
+    return null;
+  }
+
+  const userId = authData.user.id;
+
+  // Create users profile (role=student)
+  const { error: profileErr } = await supabaseAdmin.from('users').insert({
+    id: userId,
+    name: 'Student Two',
+    email,
+    role: 'student',
+    school_id: schoolId,
+    created_by: schoolAdminId,
+  });
+
+  if (profileErr) {
+    await supabaseAdmin.auth.admin.deleteUser(userId);
+    console.warn(`  [warn] Profile insert failed for ${email}: ${profileErr.message}`);
+    return null;
+  }
+
+  await logAudit(userId, 'SEED_USER_CREATED', { email, role: 'student' });
+  console.log(`  [done] Created ${email} (id: ${userId})`);
+  return userId;
+}
+
+// ── Step 7: Seed attendance (historical 30-day records) ───────────────────────
 
 async function seedAttendance(
   studentIds: string[],
   recordedById: string
 ): Promise<void> {
-  console.log('\n── Attendance ───────────────────────────────────────────────');
+  console.log('\n── Attendance (historical) ──────────────────────────────────');
 
   for (const studentId of studentIds) {
-    // Build 30 days: 22 present, 8 absent, shuffled
     const statuses: ('present' | 'absent')[] = [
       ...Array(22).fill('present'),
       ...Array(8).fill('absent'),
@@ -408,7 +513,6 @@ async function seedAttendance(
       recorded_by: recordedById,
     }));
 
-    // Check how many records already exist for this student
     const { count } = await supabaseAdmin
       .from('attendance')
       .select('id', { count: 'exact', head: true })
@@ -419,7 +523,6 @@ async function seedAttendance(
       continue;
     }
 
-    // Upsert to avoid unique constraint errors on (student_id, date)
     const { error } = await supabaseAdmin
       .from('attendance')
       .upsert(rows, { onConflict: 'student_id,date', ignoreDuplicates: true });
@@ -427,6 +530,96 @@ async function seedAttendance(
     if (error) console.warn(`  [warn] Attendance insert: ${error.message}`);
     else console.log(`  [done] 30 records for student ${studentId}`);
   }
+}
+
+// ── Step 7b: Seed current-week attendance submissions ────────────────────────
+/**
+ * Simulates the new manual attendance submission system.
+ * Class 10A: 5 days submitted (Mon–Fri), 2–3 absent each day.
+ * Class 10B: 4 days submitted (Mon–Thu), Friday missing → pending state.
+ * All records have notification_sent = true.
+ */
+async function seedWeeklyAttendance(
+  class10AStudentIds: string[],
+  class10BStudentIds: string[],
+  recordedById: string
+): Promise<void> {
+  console.log('\n── Attendance (current week submissions) ────────────────────');
+
+  // Class 10A: 5 days (Mon=0 through Fri=4)
+  const class10ADays = [0, 1, 2, 3, 4];
+  // Class 10B: 4 days (Mon=0 through Thu=3), Friday intentionally missing
+  const class10BDays = [0, 1, 2, 3];
+
+  // Absent patterns per day for 10A (indices into class10AStudentIds)
+  const absentPatterns10A: number[][] = [
+    [0, 1],       // Mon: 2 absent
+    [2, 3, 4],    // Tue: 3 absent
+    [1, 3],       // Wed: 2 absent
+    [0, 2, 4],    // Thu: 3 absent
+    [1, 2],       // Fri: 2 absent
+  ];
+
+  // Absent patterns per day for 10B
+  const absentPatterns10B: number[][] = [
+    [0, 1],       // Mon: 2 absent
+    [2, 3],       // Tue: 2 absent
+    [1, 4],       // Wed: 2 absent
+    [0, 2, 3],    // Thu: 3 absent
+  ];
+
+  async function submitDayAttendance(
+    studentIds: string[],
+    dayOffset: number,
+    absentIndices: number[],
+    label: string
+  ): Promise<void> {
+    const date = currentWeekDay(dayOffset);
+    const absentSet = new Set(absentIndices.map((i) => studentIds[i]).filter(Boolean));
+
+    // Check if already submitted for this date
+    const { count: existing } = await supabaseAdmin
+      .from('attendance')
+      .select('id', { count: 'exact', head: true })
+      .in('student_id', studentIds)
+      .eq('date', date);
+
+    if ((existing ?? 0) > 0) {
+      console.log(`  [skip] ${label} attendance for ${date} already exists`);
+      return;
+    }
+
+    const rows = studentIds.map((id) => ({
+      student_id: id,
+      date,
+      status: absentSet.has(id) ? 'absent' : 'present',
+      source: 'manual' as const,
+      recorded_by: recordedById,
+      notification_sent: true,
+    }));
+
+    const { error } = await supabaseAdmin
+      .from('attendance')
+      .upsert(rows, { onConflict: 'student_id,date', ignoreDuplicates: true });
+
+    if (error) console.warn(`  [warn] ${label} ${date}: ${error.message}`);
+    else {
+      const absentCount = rows.filter((r) => r.status === 'absent').length;
+      console.log(`  [done] ${label} ${date} — ${rows.length - absentCount} present, ${absentCount} absent`);
+    }
+  }
+
+  // Submit Class 10A (5 days)
+  for (let i = 0; i < class10ADays.length; i++) {
+    await submitDayAttendance(class10AStudentIds, class10ADays[i], absentPatterns10A[i], 'Class 10A');
+  }
+
+  // Submit Class 10B (4 days — Friday intentionally missing)
+  for (let i = 0; i < class10BDays.length; i++) {
+    await submitDayAttendance(class10BStudentIds, class10BDays[i], absentPatterns10B[i], 'Class 10B');
+  }
+
+  console.log('  [info] Class 10B Friday attendance NOT submitted (pending state for testing)');
 }
 
 // ── Step 8: Seed fees ─────────────────────────────────────────────────────────
@@ -485,7 +678,6 @@ interface TestDef {
 
 function buildQuestions(subject: string): object[] {
   return [
-    // 5 MCQ questions
     {
       type: 'mcq',
       text: `${subject} MCQ 1: Which of the following is correct?`,
@@ -521,7 +713,6 @@ function buildQuestions(subject: string): object[] {
       options: [{ text: 'True A' }, { text: 'True B' }, { text: 'True C' }, { text: 'True D' }],
       correct_option: 0,
     },
-    // 2 theory questions
     {
       type: 'theory',
       text: `${subject} Theory 1: Explain the concept in detail.`,
@@ -612,10 +803,9 @@ async function seedTests(
 
 async function seedTestAttempts(
   testId: string,
-  studentIds: string[], // 3 students per test
+  studentIds: string[],
   schoolId: string
 ): Promise<void> {
-  // Fetch questions for this test
   const { data: questions, error: qErr } = await supabaseAdmin
     .from('test_questions')
     .select('id, type, correct_option, marks')
@@ -631,7 +821,6 @@ async function seedTestAttempts(
   const qs = questions as QuestionRow[];
 
   for (const studentId of studentIds) {
-    // Check if attempt already exists
     const { data: existing } = await supabaseAdmin
       .from('test_attempts')
       .select('id')
@@ -647,7 +836,6 @@ async function seedTestAttempts(
     const startedAt = new Date(Date.now() - 45 * 60 * 1000).toISOString();
     const submittedAt = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
-    // Create attempt
     const { data: attempt, error: aErr } = await supabaseAdmin
       .from('test_attempts')
       .insert({
@@ -665,14 +853,12 @@ async function seedTestAttempts(
       continue;
     }
 
-    // Build answers
     const mcqOptions = ['a', 'b', 'c', 'd'] as const;
     let mcqScore = 0;
     let totalScore = 0;
 
     const answerRows = qs.map((q) => {
       if (q.type === 'mcq') {
-        // Randomly pick an option (roughly 60% chance of correct)
         const correctLetter = mcqOptions[q.correct_option ?? 0];
         const isCorrect = Math.random() < 0.6;
         const selectedOption = isCorrect
@@ -690,7 +876,6 @@ async function seedTestAttempts(
           marks_awarded: marksAwarded,
         };
       } else {
-        // Theory: award partial marks
         const marksAwarded = Math.floor(q.marks * (0.5 + Math.random() * 0.5));
         totalScore += marksAwarded;
         return {
@@ -704,16 +889,12 @@ async function seedTestAttempts(
       }
     });
 
-    const { error: ansErr } = await supabaseAdmin
-      .from('student_answers')
-      .insert(answerRows);
-
+    const { error: ansErr } = await supabaseAdmin.from('student_answers').insert(answerRows);
     if (ansErr) {
       console.warn(`    [warn] Answers insert failed: ${ansErr.message}`);
       continue;
     }
 
-    // Update attempt with scores
     await supabaseAdmin
       .from('test_attempts')
       .update({ mcq_score: mcqScore, total_score: totalScore })
@@ -825,7 +1006,7 @@ async function seedNotifications(
 
   const notifDefs = [
     { title: 'Attendance Alert', body: 'Your child was absent today.', type: 'attendance' as const },
-    { title: 'New Test Available', body: 'A new test has been published for your child\'s class.', type: 'reminder' as const },
+    { title: 'New Test Available', body: "A new test has been published for your child's class.", type: 'reminder' as const },
     { title: 'Fee Reminder', body: 'Term 1 fees are due. Please pay at the earliest.', type: 'reminder' as const },
   ];
 
@@ -855,6 +1036,238 @@ async function seedNotifications(
   }
 }
 
+// ── Step 14: Seed onboarding_progress ────────────────────────────────────────
+/**
+ * Test School  → all 5 steps completed (completed = true)
+ * Demo Coaching → only school_created = true (onboarding incomplete)
+ */
+async function seedOnboardingProgress(
+  testSchoolId: string,
+  demoSchoolId: string
+): Promise<void> {
+  console.log('\n── Onboarding Progress ──────────────────────────────────────');
+  const now = new Date().toISOString();
+
+  // ── Test School: fully completed ─────────────────────────────────────────
+  const { data: existingTest } = await supabaseAdmin
+    .from('onboarding_progress')
+    .select('school_id')
+    .eq('school_id', testSchoolId)
+    .maybeSingle();
+
+  if (existingTest) {
+    console.log('  [skip] onboarding_progress for Test School already exists');
+  } else {
+    const { error } = await supabaseAdmin.from('onboarding_progress').insert({
+      school_id:         testSchoolId,
+      school_created:    true,
+      teachers_imported: true,
+      students_imported: true,
+      classes_created:   true,
+      teachers_assigned: true,
+      completed:         true,
+      created_at:        now,
+      updated_at:        now,
+    });
+    if (error) console.warn(`  [warn] onboarding_progress (Test School): ${error.message}`);
+    else console.log('  [done] Test School — all steps completed');
+  }
+
+  // ── Demo Coaching: only school_created = true ─────────────────────────────
+  const { data: existingDemo } = await supabaseAdmin
+    .from('onboarding_progress')
+    .select('school_id')
+    .eq('school_id', demoSchoolId)
+    .maybeSingle();
+
+  if (existingDemo) {
+    console.log('  [skip] onboarding_progress for Demo Coaching already exists');
+  } else {
+    const { error } = await supabaseAdmin.from('onboarding_progress').insert({
+      school_id:         demoSchoolId,
+      school_created:    true,
+      teachers_imported: false,
+      students_imported: false,
+      classes_created:   false,
+      teachers_assigned: false,
+      completed:         false,
+      created_at:        now,
+      updated_at:        now,
+    });
+    if (error) console.warn(`  [warn] onboarding_progress (Demo Coaching): ${error.message}`);
+    else console.log('  [done] Demo Coaching — school_created only (onboarding incomplete)');
+  }
+}
+
+// ── Step 15: Seed ai_usage records ────────────────────────────────────────────
+/**
+ * Inserts 3 ai_usage records for teacher@eduvo.com dated today.
+ * feature = "question_generation"
+ * Result: teacher sees "3 / 10 generations used today"
+ */
+async function seedAiUsage(teacherId: string, schoolId: string): Promise<void> {
+  console.log('\n── AI Usage ─────────────────────────────────────────────────');
+
+  // Check how many records already exist for today
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const { count: existing } = await supabaseAdmin
+    .from('ai_usage')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', teacherId)
+    .eq('school_id', schoolId)
+    .gte('created_at', startOfDay.toISOString());
+
+  if ((existing ?? 0) >= 3) {
+    console.log(`  [skip] ai_usage already has ${existing} records for today`);
+    return;
+  }
+
+  const needed = 3 - (existing ?? 0);
+  const now = new Date();
+
+  for (let i = 0; i < needed; i++) {
+    // Spread the 3 records across the day (1h apart)
+    const createdAt = new Date(now.getTime() - (needed - 1 - i) * 60 * 60 * 1000).toISOString();
+
+    const { error } = await supabaseAdmin.from('ai_usage').insert({
+      user_id:       teacherId,
+      school_id:     schoolId,
+      feature:       'question_generation',
+      tokens_used:   Math.floor(800 + Math.random() * 400), // realistic token count
+      prompt_hash:   `seed_placeholder_hash_${i}_${Date.now()}`,
+      cached_result: null,
+      created_at:    createdAt,
+    });
+
+    if (error) console.warn(`  [warn] ai_usage insert ${i + 1}: ${error.message}`);
+    else console.log(`  [done] ai_usage record ${i + 1}/3 at ${createdAt}`);
+  }
+
+  console.log('  [info] Teacher now shows "3 / 10 generations used today"');
+}
+
+// ── Step 16: Seed legal_pages ─────────────────────────────────────────────────
+/**
+ * Inserts placeholder privacy policy and terms of service into legal_pages table.
+ * Table structure assumed: id (uuid), slug (text unique), title (text),
+ *                          content (text), updated_at (timestamptz)
+ */
+async function seedLegalPages(): Promise<void> {
+  console.log('\n── Legal Pages ──────────────────────────────────────────────');
+
+  const pages = [
+    {
+      slug: 'privacy-policy',
+      title: 'Privacy Policy',
+      content: `# Privacy Policy
+
+**Last updated: ${new Date().toISOString().split('T')[0]}**
+
+## 1. Introduction
+Eduvo ("we", "our", or "us") is committed to protecting your personal information. This Privacy Policy explains how we collect, use, and safeguard data when you use the Eduvo school management platform.
+
+## 2. Information We Collect
+- **Account information**: name, email address, role (admin, teacher, parent, student)
+- **School data**: student records, attendance, marks, fees, and test results
+- **Usage data**: login timestamps, feature usage, and audit logs
+- **Device information**: device type, operating system, and app version (mobile app only)
+
+## 3. How We Use Your Information
+- To provide and maintain the Eduvo platform
+- To send attendance notifications and school announcements
+- To generate AI-assisted question papers (teacher feature)
+- To comply with legal obligations and resolve disputes
+
+## 4. Data Sharing
+We do not sell your personal data. We may share data with:
+- Supabase (our database and authentication provider)
+- Google Gemini API (for AI question generation — content only, no PII)
+
+## 5. Data Retention
+School data is retained for the duration of the active subscription. Upon cancellation, data is available for export for 30 days before deletion.
+
+## 6. Your Rights
+You have the right to access, correct, or delete your personal data. Contact your school administrator or reach us at privacy@eduvo.com.
+
+## 7. Security
+We use industry-standard encryption (TLS in transit, AES-256 at rest) and role-based access controls to protect your data.
+
+## 8. Contact
+For privacy-related queries: privacy@eduvo.com`,
+    },
+    {
+      slug: 'terms-of-service',
+      title: 'Terms of Service',
+      content: `# Terms of Service
+
+**Last updated: ${new Date().toISOString().split('T')[0]}**
+
+## 1. Acceptance of Terms
+By accessing or using Eduvo, you agree to be bound by these Terms of Service. If you do not agree, please do not use the platform.
+
+## 2. Description of Service
+Eduvo is a school management platform providing tools for attendance tracking, marks management, fee collection, test creation, and parent communication.
+
+## 3. User Accounts
+- You are responsible for maintaining the confidentiality of your account credentials.
+- You must notify us immediately of any unauthorised use of your account.
+- Each user account is for a single individual; sharing accounts is prohibited.
+
+## 4. Acceptable Use
+You agree not to:
+- Use the platform for any unlawful purpose
+- Attempt to gain unauthorised access to any part of the system
+- Upload malicious files or content
+- Misrepresent student data or attendance records
+
+## 5. Subscription and Payment
+- School subscriptions are billed as agreed with the super administrator.
+- Subscriptions may be suspended for non-payment after a 7-day grace period.
+- Refunds are handled on a case-by-case basis.
+
+## 6. Intellectual Property
+All platform code, design, and content are the property of Eduvo. School data remains the property of the respective school.
+
+## 7. Limitation of Liability
+Eduvo is not liable for indirect, incidental, or consequential damages arising from use of the platform.
+
+## 8. Termination
+We reserve the right to suspend or terminate accounts that violate these terms.
+
+## 9. Changes to Terms
+We may update these terms at any time. Continued use of the platform constitutes acceptance of the updated terms.
+
+## 10. Contact
+For terms-related queries: legal@eduvo.com`,
+    },
+  ];
+
+  for (const page of pages) {
+    const { data: existing } = await supabaseAdmin
+      .from('legal_pages')
+      .select('slug')
+      .eq('slug', page.slug)
+      .maybeSingle();
+
+    if (existing) {
+      console.log(`  [skip] legal_pages "${page.slug}" already exists`);
+      continue;
+    }
+
+    const { error } = await supabaseAdmin.from('legal_pages').insert({
+      slug:       page.slug,
+      title:      page.title,
+      content:    page.content,
+      updated_at: new Date().toISOString(),
+    });
+
+    if (error) console.warn(`  [warn] legal_pages "${page.slug}": ${error.message}`);
+    else console.log(`  [done] legal_pages: "${page.title}"`);
+  }
+}
+
 // ── Main orchestrator ─────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -863,20 +1276,20 @@ async function main(): Promise<void> {
   console.log('╚══════════════════════════════════════════════════════╝');
 
   // ── Resolve existing required users ──────────────────────────────────────
-  const schoolAdminId = await getUserIdByEmail('schooladmin@eduvo.com');
-  const teacherSeedId = await getUserIdByEmail('teacher@eduvo.com');
-  const studentSeedId = await getUserIdByEmail('student@eduvo.com');
-  const superAdminId  = await getUserIdByEmail('superadmin@eduvo.com');
+  const schoolAdminId  = await getUserIdByEmail('schooladmin@eduvo.com');
+  const teacherSeedId  = await getUserIdByEmail('teacher@eduvo.com');
+  const studentSeedId  = await getUserIdByEmail('student@eduvo.com');
+  const superAdminId   = await getUserIdByEmail('superadmin@eduvo.com');
 
   if (!schoolAdminId) throw new Error('schooladmin@eduvo.com not found — run base seed first');
   if (!superAdminId)  throw new Error('superadmin@eduvo.com not found — run base seed first');
 
   // ── Schools ───────────────────────────────────────────────────────────────
-  const schoolIds = await seedSchools();
+  const schoolIds    = await seedSchools();
   const testSchoolId = schoolIds['Test School'];
   const demoSchoolId = schoolIds['Demo Coaching'];
 
-  // ── Subjects (for both schools) ───────────────────────────────────────────
+  // ── Subjects ──────────────────────────────────────────────────────────────
   console.log('\n── Subjects ─────────────────────────────────────────────────');
   await seedSubjects(testSchoolId);
   await seedSubjects(demoSchoolId);
@@ -884,16 +1297,18 @@ async function main(): Promise<void> {
   // ── Parent user (parent@eduvo.com) — linked to Test School ───────────────
   const mainParentId = await seedParentUser(testSchoolId);
 
-  // ── Extra parents (5 total: mainParent + 4 more, some share children) ────
+  // ── Extra parents ─────────────────────────────────────────────────────────
   console.log('\n── Extra parents ────────────────────────────────────────────');
   const parent2Id = await seedExtraParent('parent2@eduvo.com', 'Parent Two',   testSchoolId, schoolAdminId);
   const parent3Id = await seedExtraParent('parent3@eduvo.com', 'Parent Three', testSchoolId, schoolAdminId);
   const parent4Id = await seedExtraParent('parent4@eduvo.com', 'Parent Four',  testSchoolId, schoolAdminId);
   const parent5Id = await seedExtraParent('parent5@eduvo.com', 'Parent Five',  testSchoolId, schoolAdminId);
 
-  // Demo school parents
   const demoParent1Id = await seedExtraParent('demoparent1@eduvo.com', 'Demo Parent One', demoSchoolId, schoolAdminId);
   const demoParent2Id = await seedExtraParent('demoparent2@eduvo.com', 'Demo Parent Two', demoSchoolId, schoolAdminId);
+
+  // ── admin2@eduvo.com — Demo Coaching school admin (onboarding incomplete) ─
+  const admin2Id = await seedAdmin2(demoSchoolId, superAdminId);
 
   // ── Teachers for Test School ──────────────────────────────────────────────
   const testTeacherDefs: TeacherDef[] = [
@@ -901,16 +1316,17 @@ async function main(): Promise<void> {
       email: 'teacher@eduvo.com', // existing — just ensure assignments
       name: 'Test Teacher',
       assignments: [
-        { subject: 'Maths', class_name: '10', section: 'A' },
-        { subject: 'Maths', class_name: '10', section: 'B' },
+        { subject: 'Maths',   class_name: '10', section: 'A' },
+        { subject: 'Science', class_name: '10', section: 'A' },
+        { subject: 'Maths',   class_name: '10', section: 'B' },
       ],
     },
     {
       email: 'teacher2@eduvo.com',
       name: 'Teacher Two',
       assignments: [
-        { subject: 'Science', class_name: '10', section: 'A' },
         { subject: 'English', class_name: '10', section: 'A' },
+        { subject: 'English', class_name: '10', section: 'B' },
       ],
     },
     {
@@ -923,9 +1339,7 @@ async function main(): Promise<void> {
     },
   ];
 
-  // For teacher@eduvo.com we only add assignments, not recreate the user
   const testTeacherIds = await seedTeachers(testSchoolId, schoolAdminId, testTeacherDefs);
-  // Ensure existing teacher@eduvo.com id is in the map
   if (teacherSeedId) testTeacherIds['teacher@eduvo.com'] = teacherSeedId;
 
   // ── Teachers for Demo School ──────────────────────────────────────────────
@@ -934,8 +1348,8 @@ async function main(): Promise<void> {
       email: 'demoteacher1@eduvo.com',
       name: 'Demo Teacher One',
       assignments: [
-        { subject: 'Maths',   class_name: '10', section: 'A' },
-        { subject: 'Maths',   class_name: '10', section: 'B' },
+        { subject: 'Maths', class_name: '10', section: 'A' },
+        { subject: 'Maths', class_name: '10', section: 'B' },
       ],
     },
     {
@@ -958,24 +1372,24 @@ async function main(): Promise<void> {
   await seedTeachers(demoSchoolId, schoolAdminId, demoTeacherDefs);
 
   // ── Students for Test School ──────────────────────────────────────────────
-  // 5 in Class 9A, 5 in Class 10A, 5 in Class 10B = 15 total
-  // parent@eduvo.com has 2 children (multi-child test)
-  // parent2 has 2 children, rest have 1 each
+  // parent@eduvo.com  → 2 children: Aarav Sharma (9A) + one in 10A
+  // student@eduvo.com → maps to Ananya Gupta (10A, fee paid)
+  // student2@eduvo.com → maps to Vivek Rao (10A, fee NOT paid)
   const testStudentDefs: StudentDef[] = [
     // Class 9A — 5 students
     { full_name: 'Aarav Sharma',   class_name: '9',  section: 'A', roll_number: '9A01', parentEmail: 'parent@eduvo.com' },
-    { full_name: 'Diya Patel',     class_name: '9',  section: 'A', roll_number: '9A02', parentEmail: 'parent@eduvo.com' }, // 2nd child of mainParent
+    { full_name: 'Diya Patel',     class_name: '9',  section: 'A', roll_number: '9A02', parentEmail: 'parent@eduvo.com' },
     { full_name: 'Rohan Mehta',    class_name: '9',  section: 'A', roll_number: '9A03', parentEmail: 'parent2@eduvo.com' },
-    { full_name: 'Priya Singh',    class_name: '9',  section: 'A', roll_number: '9A04', parentEmail: 'parent2@eduvo.com' }, // 2nd child of parent2
+    { full_name: 'Priya Singh',    class_name: '9',  section: 'A', roll_number: '9A04', parentEmail: 'parent2@eduvo.com' },
     { full_name: 'Karan Joshi',    class_name: '9',  section: 'A', roll_number: '9A05', parentEmail: 'parent3@eduvo.com' },
     // Class 10A — 5 students
-    { full_name: 'Ananya Gupta',   class_name: '10', section: 'A', roll_number: '10A01', parentEmail: 'parent3@eduvo.com' },
-    { full_name: 'Vivek Rao',      class_name: '10', section: 'A', roll_number: '10A02', parentEmail: 'parent4@eduvo.com' },
+    { full_name: 'Ananya Gupta',   class_name: '10', section: 'A', roll_number: '10A01', parentEmail: 'parent@eduvo.com' },
+    { full_name: 'Vivek Rao',      class_name: '10', section: 'A', roll_number: '10A02', parentEmail: 'parent3@eduvo.com' },
     { full_name: 'Sneha Desai',    class_name: '10', section: 'A', roll_number: '10A03', parentEmail: 'parent4@eduvo.com' },
-    { full_name: 'Arjun Nair',     class_name: '10', section: 'A', roll_number: '10A04', parentEmail: 'parent5@eduvo.com' },
+    { full_name: 'Arjun Nair',     class_name: '10', section: 'A', roll_number: '10A04', parentEmail: 'parent4@eduvo.com' },
     { full_name: 'Meera Iyer',     class_name: '10', section: 'A', roll_number: '10A05', parentEmail: 'parent5@eduvo.com' },
     // Class 10B — 5 students
-    { full_name: 'Rahul Verma',    class_name: '10', section: 'B', roll_number: '10B01', parentEmail: 'parent@eduvo.com' },
+    { full_name: 'Rahul Verma',    class_name: '10', section: 'B', roll_number: '10B01', parentEmail: 'parent5@eduvo.com' },
     { full_name: 'Pooja Agarwal',  class_name: '10', section: 'B', roll_number: '10B02', parentEmail: 'parent2@eduvo.com' },
     { full_name: 'Siddharth Bose', class_name: '10', section: 'B', roll_number: '10B03', parentEmail: 'parent3@eduvo.com' },
     { full_name: 'Kavya Reddy',    class_name: '10', section: 'B', roll_number: '10B04', parentEmail: 'parent4@eduvo.com' },
@@ -991,6 +1405,9 @@ async function main(): Promise<void> {
   };
 
   const testStudentIds = await seedStudents(testSchoolId, testStudentDefs, testParentIds);
+
+  // ── student2@eduvo.com user account ──────────────────────────────────────
+  await seedStudent2(testSchoolId, parent3Id, schoolAdminId);
 
   // ── Students for Demo School ──────────────────────────────────────────────
   const demoStudentDefs: StudentDef[] = [
@@ -1018,10 +1435,16 @@ async function main(): Promise<void> {
 
   const demoStudentIds = await seedStudents(demoSchoolId, demoStudentDefs, demoParentIds);
 
-  // ── Attendance ────────────────────────────────────────────────────────────
+  // ── Historical Attendance (30 days) ───────────────────────────────────────
   const attendanceRecorderId = teacherSeedId ?? schoolAdminId;
   await seedAttendance(testStudentIds, attendanceRecorderId);
   await seedAttendance(demoStudentIds, schoolAdminId);
+
+  // ── Current-week attendance submissions (new manual system) ───────────────
+  // Class 10A = testStudentIds[5..9], Class 10B = testStudentIds[10..14]
+  const class10AStudentIds = testStudentIds.slice(5, 10);
+  const class10BStudentIds = testStudentIds.slice(10, 15);
+  await seedWeeklyAttendance(class10AStudentIds, class10BStudentIds, attendanceRecorderId);
 
   // ── Fees ──────────────────────────────────────────────────────────────────
   await seedFees(testStudentIds, testSchoolId, schoolAdminId);
@@ -1029,18 +1452,15 @@ async function main(): Promise<void> {
 
   // ── Tests for Test School ─────────────────────────────────────────────────
   const testSchoolTestDefs: TestDef[] = [
-    // Class 9A — 3 tests
-    { title: 'Maths Unit Test 1',    subject: 'Maths',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Hindi Mid-Term',       subject: 'Hindi',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'Gujarati Quiz 1',      subject: 'Gujarati', class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
-    // Class 10A — 3 tests
-    { title: 'Maths Unit Test 1',    subject: 'Maths',    class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',     subject: 'Science',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',       subject: 'English',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
-    // Class 10B — 3 tests
-    { title: 'Maths Unit Test 1',    subject: 'Maths',    class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',     subject: 'Science',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',       subject: 'English',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Hindi Mid-Term',     subject: 'Hindi',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'Gujarati Quiz 1',    subject: 'Gujarati', class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
   ];
 
   const testCreatorId = teacherSeedId ?? schoolAdminId;
@@ -1048,15 +1468,15 @@ async function main(): Promise<void> {
 
   // ── Tests for Demo School ─────────────────────────────────────────────────
   const demoSchoolTestDefs: TestDef[] = [
-    { title: 'Maths Unit Test 1',    subject: 'Maths',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Hindi Mid-Term',       subject: 'Hindi',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'Gujarati Quiz 1',      subject: 'Gujarati', class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
-    { title: 'Maths Unit Test 1',    subject: 'Maths',    class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',     subject: 'Science',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',       subject: 'English',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
-    { title: 'Maths Unit Test 1',    subject: 'Maths',    class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',     subject: 'Science',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',       subject: 'English',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Hindi Mid-Term',     subject: 'Hindi',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'Gujarati Quiz 1',    subject: 'Gujarati', class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
   ];
 
   const demoTeacher1Id = await getUserIdByEmail('demoteacher1@eduvo.com') ?? schoolAdminId;
@@ -1065,12 +1485,10 @@ async function main(): Promise<void> {
   // ── Test attempts: 3 students per test ───────────────────────────────────
   console.log('\n── Test Attempts ────────────────────────────────────────────');
 
-  // Test School: group students by class/section
-  const class9AStudents  = testStudentIds.slice(0, 5);   // indices 0-4
-  const class10AStudents = testStudentIds.slice(5, 10);  // indices 5-9
-  const class10BStudents = testStudentIds.slice(10, 15); // indices 10-14
+  const class9AStudents  = testStudentIds.slice(0, 5);
+  const class10AStudents = testStudentIds.slice(5, 10);
+  const class10BStudents = testStudentIds.slice(10, 15);
 
-  // Tests 0-2 are for 9A, 3-5 for 10A, 6-8 for 10B
   const testSchoolGroups = [
     { testIds: testSchoolTestIds.slice(0, 3), students: class9AStudents },
     { testIds: testSchoolTestIds.slice(3, 6), students: class10AStudents },
@@ -1080,13 +1498,12 @@ async function main(): Promise<void> {
   for (const group of testSchoolGroups) {
     for (const testId of group.testIds) {
       if (!testId) continue;
-      const attemptStudents = group.students.slice(0, 3); // 3 students per test
+      const attemptStudents = group.students.slice(0, 3);
       console.log(`  Test ${testId} — attempting with 3 students`);
       await seedTestAttempts(testId, attemptStudents, testSchoolId);
     }
   }
 
-  // Demo School attempts
   const demoClass9AStudents  = demoStudentIds.slice(0, 5);
   const demoClass10AStudents = demoStudentIds.slice(5, 10);
   const demoClass10BStudents = demoStudentIds.slice(10, 15);
@@ -1107,18 +1524,8 @@ async function main(): Promise<void> {
   }
 
   // ── Complaints ────────────────────────────────────────────────────────────
-  await seedComplaints(
-    testSchoolId,
-    [mainParentId, parent2Id, parent3Id],
-    testStudentIds,
-    schoolAdminId
-  );
-  await seedComplaints(
-    demoSchoolId,
-    [demoParent1Id, demoParent2Id, demoParent1Id],
-    demoStudentIds,
-    schoolAdminId
-  );
+  await seedComplaints(testSchoolId, [mainParentId, parent2Id, parent3Id], testStudentIds, schoolAdminId);
+  await seedComplaints(demoSchoolId, [demoParent1Id, demoParent2Id, demoParent1Id], demoStudentIds, schoolAdminId);
 
   // ── Announcements ─────────────────────────────────────────────────────────
   await seedAnnouncements(testSchoolId, schoolAdminId);
@@ -1129,26 +1536,48 @@ async function main(): Promise<void> {
   await seedNotifications(allTestParentIds, schoolAdminId);
   await seedNotifications([demoParent1Id, demoParent2Id], schoolAdminId);
 
+  // ── NEW: Onboarding progress ──────────────────────────────────────────────
+  await seedOnboardingProgress(testSchoolId, demoSchoolId);
+
+  // ── NEW: AI usage records for teacher@eduvo.com ───────────────────────────
+  const teacherId = teacherSeedId ?? schoolAdminId;
+  await seedAiUsage(teacherId, testSchoolId);
+
+  // ── NEW: Legal pages ──────────────────────────────────────────────────────
+  await seedLegalPages();
+
   // ── Summary ───────────────────────────────────────────────────────────────
-  console.log('\n╔══════════════════════════════════════════════════════╗');
-  console.log('║              Seed Complete — Login Credentials       ║');
-  console.log('╠══════════════════════════════════════════════════════╣');
-  console.log('║  superadmin@eduvo.com     / Test@1234  (superadmin)  ║');
-  console.log('║  schooladmin@eduvo.com    / Test@1234  (schooladmin) ║');
-  console.log('║  teacher@eduvo.com        / Test@1234  (teacher)     ║');
-  console.log('║  parent@eduvo.com         / Test@1234  (parent)      ║');
-  console.log('║    └─ has 2 children: Aarav Sharma + Diya Patel      ║');
-  console.log('║  student@eduvo.com        / Test@1234  (student)     ║');
-  console.log('╠══════════════════════════════════════════════════════╣');
-  console.log('║  Extra teachers: teacher2@eduvo.com / Test@1234      ║');
-  console.log('║                  teacher3@eduvo.com / Test@1234      ║');
-  console.log('║  Extra parents:  parent2-5@eduvo.com / Test@1234     ║');
-  console.log('║  Demo school:    demoteacher1-3@eduvo.com / Test@1234║');
-  console.log('║                  demoparent1-2@eduvo.com / Test@1234 ║');
-  console.log('╠══════════════════════════════════════════════════════╣');
-  console.log('║  Test School  → 15 students, 9 tests, 30 att/student ║');
-  console.log('║  Demo Coaching → 15 students, 9 tests, 30 att/student║');
-  console.log('╚══════════════════════════════════════════════════════╝');
+  console.log('\n╔══════════════════════════════════════════════════════════════╗');
+  console.log('║           Seed Complete — Login Credentials                  ║');
+  console.log('╠══════════════════════════════════════════════════════════════╣');
+  console.log('║  superadmin@eduvo.com   / Test@1234  → Super Admin           ║');
+  console.log('║  schooladmin@eduvo.com  / Test@1234  → School Admin          ║');
+  console.log('║    └─ Test School, onboarding COMPLETE                       ║');
+  console.log('║  teacher@eduvo.com      / Test@1234  → Teacher               ║');
+  console.log('║    └─ Class 10 (Maths + Science), 3/10 AI uses today         ║');
+  console.log('║  parent@eduvo.com       / Test@1234  → Parent                ║');
+  console.log('║    └─ 2 children: Aarav Sharma (9A) + Ananya Gupta (10A)     ║');
+  console.log('║  student@eduvo.com      / Test@1234  → Student               ║');
+  console.log('║    └─ Class 10A, fee PAID (can access tests)                 ║');
+  console.log('║  student2@eduvo.com     / Test@1234  → Student               ║');
+  console.log('║    └─ Class 10A, fee NOT PAID (tests locked)                 ║');
+  console.log('║  admin2@eduvo.com       / Test@1234  → School Admin          ║');
+  console.log('║    └─ Demo Coaching, onboarding INCOMPLETE                   ║');
+  console.log('╠══════════════════════════════════════════════════════════════╣');
+  console.log('║  Extra teachers:  teacher2@eduvo.com / Test@1234             ║');
+  console.log('║                   teacher3@eduvo.com / Test@1234             ║');
+  console.log('║  Extra parents:   parent2-5@eduvo.com / Test@1234            ║');
+  console.log('║  Demo school:     demoteacher1-3@eduvo.com / Test@1234       ║');
+  console.log('║                   demoparent1-2@eduvo.com / Test@1234        ║');
+  console.log('╠══════════════════════════════════════════════════════════════╣');
+  console.log('║  Test School  → 15 students, 9 tests, attendance seeded      ║');
+  console.log('║    Class 10A: 5 days attendance this week (all submitted)    ║');
+  console.log('║    Class 10B: 4 days this week (Friday PENDING — not sent)   ║');
+  console.log('║  Demo Coaching → 15 students, 9 tests, attendance seeded     ║');
+  console.log('║  Onboarding: Test School=DONE, Demo Coaching=INCOMPLETE      ║');
+  console.log('║  AI Usage: teacher has 3/10 generations used today           ║');
+  console.log('║  Legal Pages: privacy-policy + terms-of-service inserted     ║');
+  console.log('╚══════════════════════════════════════════════════════════════╝');
 }
 
 main().catch((err: Error) => {

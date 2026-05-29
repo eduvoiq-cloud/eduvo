@@ -27,7 +27,7 @@ export default function TeacherDashboard() {
     ])
       .then(([aRes, sRes, cRes, tRes]) => {
         setAssignments(aRes.data.filter((a) => a.teacher_id === user.id));
-        setStudents(sRes.data);
+        setStudents((sRes.data as unknown as Student[]) ?? []);
         setPendingComplaints(cRes.data.length);
         // Count tests created this calendar month
         const now = new Date();

@@ -10,10 +10,10 @@ const router = Router();
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const createSchoolSchema = z.object({
-  name: z.string().min(1),
-  address: z.string().min(1),
-  phone: z.string().optional(),
-  email: z.email().optional(),
+  name: z.string().min(1).max(200),
+  address: z.string().min(1).max(500),
+  phone: z.string().regex(/^\+?[\d\s\-()]{7,20}$/, 'Invalid phone number format').optional(),
+  email: z.string().email().max(254).optional(),
 });
 
 const updateSchoolSchema = createSchoolSchema.partial();

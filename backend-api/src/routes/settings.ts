@@ -13,9 +13,9 @@ router.use(authenticate);
 
 const upsertSettingsSchema = z.object({
   attendance_cutoff_time: z.string().regex(/^\d{2}:\d{2}$/, 'Must be HH:MM format').optional(),
-  timezone: z.string().optional(),
-  term_name: z.string().optional(),
-  academic_year: z.string().optional(),
+  timezone: z.string().max(100).optional(),
+  term_name: z.string().max(100).optional(),
+  academic_year: z.string().max(20).optional(),
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────

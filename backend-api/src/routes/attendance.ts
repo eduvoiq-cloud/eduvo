@@ -1,55 +1,31 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import rateLimit from 'express-rate-limit';
-import * as admin from 'firebase-admin';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import rateLimit from 'express-rate-limit';
+import { sendAttendanceNotifications } from '../services/attendanceNotifications';
 
 const router = Router();
 
-// ── Firebase Admin initialisation (lazy, idempotent) ─────────────────────────
-// Credentials are read from GOOGLE_APPLICATION_CREDENTIALS env var (path to
-// service-account JSON) or from individual FIREBASE_* env vars.
-// If neither is set the app boots without FCM — push notifications are skipped
-// gracefully rather than crashing the server.
-
-function getFirebaseApp(): admin.app.App | null {
-  try {
-    // Return existing app if already initialised
-    return admin.app();
-  } catch {
-    // Not yet initialised — try to set up now
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-
-    if (projectId && clientEmail && privateKey) {
-      return admin.initializeApp({
-        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
-      });
-    }
-
-    // Fall back to Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS)
-    if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      return admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
-      });
-    }
-
-    console.warn('[fcm] Firebase credentials not configured — push notifications disabled');
-    return null;
-  }
-}
-
-// ── RFID-specific rate limiter: 200 req/min ───────────────────────────────────
-const rfidRateLimit = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 200,
+// ── Rate limiter: max 10 attendance submissions per teacher per day ────────────
+// Uses a 24-hour window keyed by user ID (via Authorization header).
+const submitRateLimit = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 10,
+  keyGenerator: (req) => req.user?.id ?? req.ip ?? 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
-  message: { success: false, message: 'RFID rate limit exceeded. Try again shortly.' },
+  message: {
+    success: false,
+    message: 'Attendance submission limit reached (10 per day). Try again tomorrow.',
+  },
+  skip: (req) => {
+    // Only rate-limit teachers; admins are exempt
+    const role = req.user?.role;
+    return role === 'superadmin' || role === 'schooladmin';
+  },
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -74,197 +50,139 @@ async function logAudit(
   }
 }
 
-/** Returns today's date as YYYY-MM-DD in the server's local timezone. */
+/** Returns today's date as YYYY-MM-DD (UTC). */
 function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Format a Date as HH:MM (24-hour). */
-function formatTime(d: Date): string {
-  return d.toTimeString().slice(0, 5);
-}
-
-/**
- * Send an FCM push notification to a single device token.
- * Returns true on success, false if FCM is not configured or the send fails.
- */
-async function sendFcmNotification(
-  fcmToken: string,
-  title: string,
-  body: string
-): Promise<boolean> {
-  const app = getFirebaseApp();
-  if (!app) return false;
-
-  try {
-    await admin.messaging(app).send({
-      token: fcmToken,
-      notification: { title, body },
-      android: { priority: 'high' },
-      apns: { payload: { aps: { sound: 'default' } } },
-    });
-    return true;
-  } catch (err) {
-    console.error('[fcm] Send failed:', err);
-    return false;
-  }
-}
-
-// ── Routes ────────────────────────────────────────────────────────────────────
-
-// All routes below require a valid JWT except /rfid which uses its own
-// auth-free path (RFID readers call it directly with school_id).
-// Authenticated routes apply authenticate middleware individually.
-
-// ── POST /api/attendance/rfid ─────────────────────────────────────────────────
-/**
- * Called by RFID gate readers. No JWT required — the reader authenticates
- * via school_id + rfid_uid. Rate-limited to 200 req/min.
- *
- * Flow:
- *  1. Find student by rfid_uid (not deleted)
- *  2. Check for duplicate attendance today
- *  3. Insert attendance (status = present)
- *  4. Queue parent notification (send_after = now + 30 min)
- *  5. Insert notification record for parent
- *  6. Audit log
- */
-router.post('/rfid', rfidRateLimit, async (req: Request, res: Response) => {
-  const schema = z.object({
-    rfid_uid: z.string().min(1),
-    school_id: z.string().uuid(),
-  });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    sendValidationError(res, parsed.error.flatten());
-    return;
-  }
-
-  const { rfid_uid, school_id } = parsed.data;
-  const today = todayDate();
-  const now = new Date();
-
-  // 1. Find student by rfid_uid
-  const { data: student, error: studentErr } = await supabaseAdmin
-    .from('students')
-    .select('id, full_name, class_name, section, parent_id')
-    .eq('rfid_uid', rfid_uid)
-    .eq('school_id', school_id)
-    .eq('is_deleted', false)
-    .single();
-
-  if (studentErr || !student) {
-    res.status(404).json({ success: false, error: 'Card not registered' });
-    return;
-  }
-
-  // 2. Check for duplicate attendance today
-  const { data: existing } = await supabaseAdmin
-    .from('attendance')
-    .select('id, created_at')
-    .eq('student_id', student.id)
-    .eq('date', today)
-    .maybeSingle();
-
-  if (existing) {
-    res.status(200).json({
-      success: false,
-      error: 'Already marked',
-      student_name: student.full_name,
-      marked_at: formatTime(new Date(existing.created_at)),
-    });
-    return;
-  }
-
-  // 3. Insert attendance record
-  const { error: insertErr } = await supabaseAdmin
-    .from('attendance')
-    .insert({
-      student_id: student.id,
-      date: today,
-      status: 'present',
-      marked_by: null,
-      source: 'rfid',
-      created_at: now.toISOString(),
-    });
-
-  if (insertErr) {
-    sendError(res, 'Failed to record attendance', 500);
-    return;
-  }
-
-  // 4 & 5. Queue notification + insert into notifications table for parent
-  if (student.parent_id) {
-    const arrivalTime = formatTime(now);
-    const notifTitle = 'Student Arrival';
-    const notifBody = `Your child ${student.full_name} arrived at school at ${arrivalTime}`;
-    const sendAfter = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
-
-    // Insert into notifications table (in-app)
-    await supabaseAdmin.from('notifications').insert({
-      title: notifTitle,
-      body: notifBody,
-      type: 'attendance',
-      recipient_id: student.parent_id,
-      sender_id: student.parent_id, // system-generated; use parent_id as placeholder
-      is_read: false,
-      created_at: now.toISOString(),
-    });
-
-    // Queue FCM push (delayed 30 min)
-    await supabaseAdmin.from('notification_queue').insert({
-      user_id: student.parent_id,
-      student_id: student.id,
-      message: notifBody,
-      send_after: sendAfter,
-      sent: false,
-      cancelled: false,
-      created_at: now.toISOString(),
-    });
-  }
-
-  // 6. Audit log
-  await logAudit(null, 'rfid_attendance', 'attendance', {
-    student_id: student.id,
-    student_name: student.full_name,
-    school_id,
-    date: today,
-  });
-
-  res.status(200).json({
-    success: true,
-    student_name: student.full_name,
-    class: student.class_name,
-    section: student.section,
-  });
-});
-
-// All routes below this point require authentication
+// ── All routes require authentication ─────────────────────────────────────────
 router.use(authenticate);
 
-// ── POST /api/attendance/manual ───────────────────────────────────────────────
+// ── GET /api/attendance/class ─────────────────────────────────────────────────
 /**
- * Bulk manual attendance entry by a teacher or school admin.
+ * Fetch all students for a class/section with their attendance status for a date.
+ * Default-present system: students without a record are shown as "not_marked".
  *
- * Body: { attendances: [{ student_id, status }], class, section, date }
+ * Query params: class, section, date (default today)
+ * school_id is taken from the auth token for non-superadmin users.
  */
-router.post(
-  '/manual',
+router.get(
+  '/class',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    const { class: className, section } = req.query as Record<string, string>;
+    const date = (req.query.date as string) || todayDate();
+
+    if (!className || !section) {
+      sendError(res, 'class and section are required', 400);
+      return;
+    }
+
+    // school_id always comes from the auth token for non-superadmin users
+    // to prevent cross-school data access by manipulating the query param
+    let school_id: string;
+    if (req.user!.role === 'superadmin') {
+      const qSchoolId = req.query.school_id as string | undefined;
+      if (!qSchoolId) {
+        sendError(res, 'school_id is required for superadmin', 400);
+        return;
+      }
+      school_id = qSchoolId;
+    } else {
+      if (!req.user!.school_id) {
+        sendError(res, 'Your account is not linked to a school', 403);
+        return;
+      }
+      school_id = req.user!.school_id;
+    }
+
+    // Teachers can only view their assigned classes
+    if (req.user!.role === 'teacher') {
+      const { data: assignment } = await supabaseAdmin
+        .from('teacher_assignments')
+        .select('id')
+        .eq('teacher_id', req.user!.id)
+        .eq('class_name', className)
+        .eq('section', section)
+        .maybeSingle();
+
+      if (!assignment) {
+        sendError(res, 'You are not assigned to this class', 403);
+        return;
+      }
+    }
+
+    // Fetch all active students for this class/section
+    const { data: students, error: stuErr } = await supabaseAdmin
+      .from('students')
+      .select('id, full_name, roll_number, photo_url')
+      .eq('school_id', school_id)
+      .eq('class_name', className)
+      .eq('section', section)
+      .eq('is_deleted', false)
+      .order('roll_number', { ascending: true });
+
+    if (stuErr) {
+      sendError(res, stuErr.message, 500);
+      return;
+    }
+
+    if (!students || students.length === 0) {
+      sendSuccess(res, []);
+      return;
+    }
+
+    const studentIds = students.map((s: { id: string }) => s.id);
+
+    // Fetch existing attendance records for this date
+    const { data: records, error: attErr } = await supabaseAdmin
+      .from('attendance')
+      .select('student_id, status')
+      .in('student_id', studentIds)
+      .eq('date', date);
+
+    if (attErr) {
+      sendError(res, attErr.message, 500);
+      return;
+    }
+
+    // Build a lookup map: student_id → status
+    const statusMap = new Map<string, string>();
+    for (const r of records ?? []) {
+      statusMap.set(r.student_id, r.status);
+    }
+
+    // Merge: default to "not_marked" if no record exists
+    const result = students.map((s: { id: string; full_name: string; roll_number: string | null; photo_url: string | null }) => ({
+      student_id: s.id,
+      name: s.full_name,
+      roll_number: s.roll_number,
+      photo_url: s.photo_url,
+      status: (statusMap.get(s.id) as 'present' | 'absent' | 'not_marked') ?? 'not_marked',
+    }));
+
+    sendSuccess(res, result);
+  }
+);
+
+// ── POST /api/attendance/submit ───────────────────────────────────────────────
+/**
+ * Default-present bulk submission: teacher sends only absent student IDs.
+ * All other students in the class are automatically marked present.
+ *
+ * Body: { class, section, date, school_id, absent_student_ids: uuid[] }
+ */
+router.post(
+  '/submit',
+  requireRole('superadmin', 'schooladmin', 'teacher'),
+  submitRateLimit,
+  async (req: Request, res: Response) => {
     const schema = z.object({
-      attendances: z
-        .array(
-          z.object({
-            student_id: z.string().uuid(),
-            status: z.enum(['present', 'absent', 'late', 'excused']),
-          })
-        )
-        .min(1),
-      class: z.string().min(1),
-      section: z.string().min(1),
+      class: z.string().min(1).max(20),
+      section: z.string().min(1).max(10),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+      school_id: z.string().uuid().optional(), // only used by superadmin; others use token
+      absent_student_ids: z.array(z.string().uuid()).default([]),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -273,11 +191,28 @@ router.post(
       return;
     }
 
-    const { attendances, class: className, section, date } = parsed.data;
+    const { class: className, section, date, absent_student_ids } = parsed.data;
     const userId = req.user!.id;
     const userRole = req.user!.role;
 
-    // Verify teacher is assigned to this class (skip check for superadmin/schooladmin)
+    // school_id always comes from the auth token for non-superadmin users
+    // to prevent cross-school data access by manipulating the request body
+    let school_id: string;
+    if (userRole === 'superadmin') {
+      if (!parsed.data.school_id) {
+        sendError(res, 'school_id is required for superadmin', 400);
+        return;
+      }
+      school_id = parsed.data.school_id;
+    } else {
+      if (!req.user!.school_id) {
+        sendError(res, 'Your account is not linked to a school', 403);
+        return;
+      }
+      school_id = req.user!.school_id;
+    }
+
+    // Teachers must be assigned to this class
     if (userRole === 'teacher') {
       const { data: assignment } = await supabaseAdmin
         .from('teacher_assignments')
@@ -293,69 +228,88 @@ router.post(
       }
     }
 
-    const saved: string[] = [];
-    const skipped: { student_name: string; reason: string }[] = [];
+    // Check if attendance already submitted for this class+section+date
+    const { data: students, error: stuErr } = await supabaseAdmin
+      .from('students')
+      .select('id')
+      .eq('school_id', school_id)
+      .eq('class_name', className)
+      .eq('section', section)
+      .eq('is_deleted', false);
 
-    for (const entry of attendances) {
-      // Check if attendance already exists for this student on this date
-      const { data: existing } = await supabaseAdmin
-        .from('attendance')
-        .select('id')
-        .eq('student_id', entry.student_id)
-        .eq('date', date)
-        .maybeSingle();
-
-      if (existing) {
-        // Fetch student name for the skipped report
-        const { data: stu } = await supabaseAdmin
-          .from('students')
-          .select('full_name')
-          .eq('id', entry.student_id)
-          .maybeSingle();
-
-        skipped.push({
-          student_name: stu?.full_name ?? entry.student_id,
-          reason: 'already_marked',
-        });
-        continue;
-      }
-
-      const { error: insertErr } = await supabaseAdmin.from('attendance').insert({
-        student_id: entry.student_id,
-        date,
-        status: entry.status,
-        marked_by: userId,
-        source: 'manual',
-        created_at: new Date().toISOString(),
-      });
-
-      if (!insertErr) {
-        saved.push(entry.student_id);
-      }
+    if (stuErr) {
+      sendError(res, stuErr.message, 500);
+      return;
     }
 
-    // Audit log for the entire batch
-    await logAudit(userId, 'manual_attendance_batch', 'attendance', {
+    if (!students || students.length === 0) {
+      sendError(res, 'No students found for this class and section', 404);
+      return;
+    }
+
+    const allStudentIds = students.map((s: { id: string }) => s.id);
+
+    // Duplicate submission guard: check if any record already exists for this class/section/date
+    const { count: existingCount } = await supabaseAdmin
+      .from('attendance')
+      .select('id', { count: 'exact', head: true })
+      .in('student_id', allStudentIds)
+      .eq('date', date);
+
+    if ((existingCount ?? 0) > 0) {
+      sendError(res, 'Attendance already submitted for today', 409);
+      return;
+    }
+
+    // Build records: absent for IDs in absent_student_ids, present for the rest
+    const absentSet = new Set(absent_student_ids);
+    const rows = allStudentIds.map((id: string) => ({
+      student_id: id,
+      date,
+      status: absentSet.has(id) ? 'absent' : 'present',
+      recorded_by: userId,
+      source: 'manual',
+      notification_sent: false,
+      created_at: new Date().toISOString(),
+    }));
+
+    const { error: insertErr } = await supabaseAdmin.from('attendance').insert(rows);
+
+    if (insertErr) {
+      sendError(res, insertErr.message, 500);
+      return;
+    }
+
+    const presentCount = rows.filter((r) => r.status === 'present').length;
+    const absentCount = rows.filter((r) => r.status === 'absent').length;
+
+    // Audit log
+    await logAudit(userId, 'attendance_submitted', 'attendance', {
       class: className,
       section,
       date,
-      saved_count: saved.length,
-      skipped_count: skipped.length,
+      school_id,
+      present_count: presentCount,
+      absent_count: absentCount,
     });
 
-    sendSuccess(res, { saved: saved.length, skipped }, 'Attendance batch processed', 201);
+    // Fire-and-forget: run notification job after response is sent
+    setImmediate(() => {
+      sendAttendanceNotifications(school_id, className, section, date).catch((err) => {
+        console.error('[attendance] Background notification job failed:', err);
+      });
+    });
+
+    sendSuccess(res, { success: true, present_count: presentCount, absent_count: absentCount }, 'Attendance submitted', 201);
   }
 );
 
 // ── PUT /api/attendance/correct ───────────────────────────────────────────────
 /**
  * Correct an existing attendance record.
+ * Teacher must be assigned to the student's class.
  *
  * Body: { attendance_id, new_status, reason }
- *
- * Side-effects:
- *  - If a queued notification hasn't been sent yet → cancel it
- *  - If it was already sent → send a correction notification to parent
  */
 router.put(
   '/correct',
@@ -364,7 +318,7 @@ router.put(
     const schema = z.object({
       attendance_id: z.string().uuid(),
       new_status: z.enum(['present', 'absent', 'late', 'excused']),
-      reason: z.string().min(1),
+      reason: z.string().min(1, 'reason is required'),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -375,8 +329,9 @@ router.put(
 
     const { attendance_id, new_status, reason } = parsed.data;
     const userId = req.user!.id;
+    const userRole = req.user!.role;
 
-    // Fetch original record
+    // Fetch original record with student info
     const { data: original, error: fetchErr } = await supabaseAdmin
       .from('attendance')
       .select('id, student_id, date, status')
@@ -388,163 +343,83 @@ router.put(
       return;
     }
 
-    const originalStatus = original.status;
+    // Teachers must be assigned to the student's class
+    if (userRole === 'teacher') {
+      const { data: student } = await supabaseAdmin
+        .from('students')
+        .select('class_name, section')
+        .eq('id', original.student_id)
+        .maybeSingle();
 
-    // Update the attendance record
+      if (!student) {
+        sendError(res, 'Student not found', 404);
+        return;
+      }
+
+      const { data: assignment } = await supabaseAdmin
+        .from('teacher_assignments')
+        .select('id')
+        .eq('teacher_id', userId)
+        .eq('class_name', student.class_name)
+        .eq('section', student.section)
+        .maybeSingle();
+
+      if (!assignment) {
+        sendError(res, 'You are not assigned to this student\'s class', 403);
+        return;
+      }
+    }
+
+    const oldStatus = original.status;
+
+    // Update the record
     const { error: updateErr } = await supabaseAdmin
       .from('attendance')
       .update({ status: new_status, updated_at: new Date().toISOString() })
       .eq('id', attendance_id);
 
     if (updateErr) {
-      sendError(res, 'Failed to update attendance', 500);
+      sendError(res, 'Failed to update attendance record', 500);
       return;
     }
 
-    // Audit log with old/new values
+    // Audit log with old/new values and reason
     await logAudit(userId, 'attendance_corrected', 'attendance', {
       attendance_id,
-      old_value: { status: originalStatus },
-      new_value: { status: new_status, reason, corrected_by: userId },
+      old_value: { status: oldStatus },
+      new_value: { status: new_status },
+      reason,
+      corrected_by: userId,
     });
 
-    // Handle notification queue for this student on this date
-    const { data: queueEntry } = await supabaseAdmin
-      .from('notification_queue')
-      .select('id, sent, user_id')
-      .eq('student_id', original.student_id)
-      .eq('sent', false)
-      .eq('cancelled', false)
-      // Only entries created today (same date as the attendance record)
-      .gte('created_at', `${original.date}T00:00:00.000Z`)
-      .lte('created_at', `${original.date}T23:59:59.999Z`)
+    // Notify parent about the correction
+    const { data: student } = await supabaseAdmin
+      .from('students')
+      .select('full_name, parent_id')
+      .eq('id', original.student_id)
       .maybeSingle();
 
-    if (queueEntry) {
-      if (!queueEntry.sent) {
-        // Not sent yet — cancel it
-        await supabaseAdmin
-          .from('notification_queue')
-          .update({ cancelled: true })
-          .eq('id', queueEntry.id);
-      }
-    } else {
-      // Notification was already sent — inform parent of the correction
-      const { data: student } = await supabaseAdmin
-        .from('students')
-        .select('full_name, parent_id')
-        .eq('id', original.student_id)
-        .maybeSingle();
-
-      if (student?.parent_id) {
-        const correctionMsg = `Your child ${student.full_name} attendance for ${original.date} was corrected to ${new_status}`;
-
-        // In-app notification
-        await supabaseAdmin.from('notifications').insert({
-          title: 'Attendance Correction',
-          body: correctionMsg,
-          type: 'attendance',
-          recipient_id: student.parent_id,
-          sender_id: userId,
-          is_read: false,
-          created_at: new Date().toISOString(),
-        });
-
-        // FCM push (immediate — correction is time-sensitive)
-        const { data: parentUser } = await supabaseAdmin
-          .from('users')
-          .select('fcm_token')
-          .eq('id', student.parent_id)
-          .maybeSingle();
-
-        if (parentUser?.fcm_token) {
-          await sendFcmNotification(
-            parentUser.fcm_token,
-            'Attendance Correction',
-            correctionMsg
-          );
-        }
-      }
+    if (student?.parent_id) {
+      await supabaseAdmin.from('notifications').insert({
+        title: 'Attendance Correction',
+        body: `${student.full_name}'s attendance for ${original.date} was corrected from ${oldStatus} to ${new_status}. Reason: ${reason}`,
+        type: 'attendance',
+        recipient_id: student.parent_id,
+        sender_id: userId,
+        is_read: false,
+        created_at: new Date().toISOString(),
+      });
     }
 
-    sendSuccess(res, { attendance_id, new_status }, 'Attendance corrected');
-  }
-);
-
-// ── GET /api/attendance/today-count ──────────────────────────────────────────
-/**
- * Live counter for the gate screen.
- * Query param: school_id
- * Returns: { present, absent, not_marked }
- */
-router.get(
-  '/today-count',
-  requireRole('superadmin', 'schooladmin', 'teacher'),
-  async (req: Request, res: Response) => {
-    const { school_id } = req.query as Record<string, string>;
-
-    if (!school_id) {
-      sendError(res, 'school_id is required', 400);
-      return;
-    }
-
-    const today = todayDate();
-
-    // Total active students in the school
-    const { count: totalStudents } = await supabaseAdmin
-      .from('students')
-      .select('id', { count: 'exact', head: true })
-      .eq('school_id', school_id)
-      .eq('is_deleted', false);
-
-    // Present today
-    const { count: presentCount } = await supabaseAdmin
-      .from('attendance')
-      .select('id', { count: 'exact', head: true })
-      .eq('date', today)
-      .eq('status', 'present')
-      .in(
-        'student_id',
-        (
-          await supabaseAdmin
-            .from('students')
-            .select('id')
-            .eq('school_id', school_id)
-            .eq('is_deleted', false)
-        ).data?.map((s: { id: string }) => s.id) ?? []
-      );
-
-    // Absent today
-    const { count: absentCount } = await supabaseAdmin
-      .from('attendance')
-      .select('id', { count: 'exact', head: true })
-      .eq('date', today)
-      .eq('status', 'absent')
-      .in(
-        'student_id',
-        (
-          await supabaseAdmin
-            .from('students')
-            .select('id')
-            .eq('school_id', school_id)
-            .eq('is_deleted', false)
-        ).data?.map((s: { id: string }) => s.id) ?? []
-      );
-
-    const total = totalStudents ?? 0;
-    const present = presentCount ?? 0;
-    const absent = absentCount ?? 0;
-    const notMarked = Math.max(0, total - present - absent);
-
-    sendSuccess(res, { present, absent, not_marked: notMarked });
+    sendSuccess(res, { attendance_id, old_status: oldStatus, new_status }, 'Attendance corrected');
   }
 );
 
 // ── GET /api/attendance/history ───────────────────────────────────────────────
 /**
- * Attendance history for a student over a date range.
+ * Attendance history for a single student over a date range.
  * Query params: student_id, start_date, end_date
- * Returns records + attendance percentage.
+ * Returns records sorted by date descending + summary stats.
  */
 router.get(
   '/history',
@@ -572,9 +447,31 @@ router.get(
       }
     }
 
+    // Students can only query their own record
+    if (req.user!.role === 'student') {
+      const { data: self } = await supabaseAdmin
+        .from('students')
+        .select('id')
+        .eq('id', student_id)
+        .eq('parent_id', req.user!.id) // student user id maps via parent_id in some schemas
+        .maybeSingle();
+
+      // Fallback: check if the student's user id matches
+      const { data: selfByUser } = await supabaseAdmin
+        .from('students')
+        .select('id')
+        .eq('id', student_id)
+        .maybeSingle();
+
+      if (!self && selfByUser?.id !== req.user!.id) {
+        sendError(res, 'Access denied', 403);
+        return;
+      }
+    }
+
     const { data: records, error } = await supabaseAdmin
       .from('attendance')
-      .select('id, date, status, source, marked_by, created_at')
+      .select('id, date, status, source, recorded_by, created_at')
       .eq('student_id', student_id)
       .gte('date', start_date)
       .lte('date', end_date)
@@ -585,253 +482,238 @@ router.get(
       return;
     }
 
-    const total = records?.length ?? 0;
-    const presentDays = records?.filter((r: { status: string }) => r.status === 'present').length ?? 0;
-    const percentage = total > 0 ? Math.round((presentDays / total) * 100) : 0;
+    const list = records ?? [];
+    const total_days = list.length;
+    const present_count = list.filter((r: { status: string }) => r.status === 'present').length;
+    const absent_count = list.filter((r: { status: string }) => r.status === 'absent').length;
+    const percentage = total_days > 0 ? Math.round((present_count / total_days) * 100) : 0;
 
     sendSuccess(res, {
-      records: records ?? [],
+      records: list,
       summary: {
-        total,
-        present: presentDays,
-        absent: records?.filter((r: { status: string }) => r.status === 'absent').length ?? 0,
-        late: records?.filter((r: { status: string }) => r.status === 'late').length ?? 0,
-        excused: records?.filter((r: { status: string }) => r.status === 'excused').length ?? 0,
+        total_days,
+        present_count,
+        absent_count,
         percentage,
       },
     });
   }
 );
 
-// ── GET /api/attendance — existing route (preserved) ─────────────────────────
-/** GET /api/attendance?student_id=&date=&from=&to= */
+// ── GET /api/attendance/class-history ────────────────────────────────────────
+/**
+ * Attendance summary for an entire class over a date range.
+ * Query params: class, section, start_date, end_date
+ * school_id is taken from the auth token for non-superadmin users.
+ * Returns per-student: name, present_count, absent_count, percentage.
+ */
 router.get(
-  '/',
-  requireRole('superadmin', 'schooladmin', 'teacher', 'parent'),
+  '/class-history',
+  requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
-    const { student_id, date, from, to } = req.query as Record<string, string>;
+    const { class: className, section, start_date, end_date } = req.query as Record<string, string>;
 
-    let query = supabaseAdmin
-      .from('attendance')
-      .select('*, students(full_name)')
-      .order('date', { ascending: false });
+    if (!className || !section || !start_date || !end_date) {
+      sendError(res, 'class, section, start_date, and end_date are required', 400);
+      return;
+    }
 
-    if (student_id) query = query.eq('student_id', student_id);
-    if (date) query = query.eq('date', date);
-    if (from) query = query.gte('date', from);
-    if (to) query = query.lte('date', to);
+    // school_id always comes from the auth token for non-superadmin users
+    let school_id: string;
+    if (req.user!.role === 'superadmin') {
+      const qSchoolId = req.query.school_id as string | undefined;
+      if (!qSchoolId) {
+        sendError(res, 'school_id is required for superadmin', 400);
+        return;
+      }
+      school_id = qSchoolId;
+    } else {
+      if (!req.user!.school_id) {
+        sendError(res, 'Your account is not linked to a school', 403);
+        return;
+      }
+      school_id = req.user!.school_id;
+    }
 
-    // Parents can only see their own children's attendance
-    if (req.user!.role === 'parent') {
-      const { data: children } = await supabaseAdmin
-        .from('students')
+    // Teachers can only view their assigned classes
+    if (req.user!.role === 'teacher') {
+      const { data: assignment } = await supabaseAdmin
+        .from('teacher_assignments')
         .select('id')
-        .eq('parent_id', req.user!.id);
+        .eq('teacher_id', req.user!.id)
+        .eq('class_name', className)
+        .eq('section', section)
+        .maybeSingle();
 
-      const childIds = (children ?? []).map((c: { id: string }) => c.id);
-      query = query.in('student_id', childIds);
+      if (!assignment) {
+        sendError(res, 'You are not assigned to this class', 403);
+        return;
+      }
     }
 
-    const { data, error } = await query;
-
-    if (error) {
-      sendError(res, error.message, 500);
-      return;
-    }
-
-    sendSuccess(res, data);
-  }
-);
-
-// ── POST /api/attendance — existing single-record route (preserved) ───────────
-router.post(
-  '/',
-  requireRole('superadmin', 'schooladmin', 'teacher'),
-  async (req: Request, res: Response) => {
-    const recordAttendanceSchema = z.object({
-      student_id: z.string().uuid(),
-      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      status: z.enum(['present', 'absent', 'late', 'excused']),
-      notes: z.string().optional(),
-    });
-
-    const parsed = recordAttendanceSchema.safeParse(req.body);
-    if (!parsed.success) {
-      sendValidationError(res, parsed.error.flatten());
-      return;
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from('attendance')
-      .upsert(
-        { ...parsed.data, recorded_by: req.user!.id },
-        { onConflict: 'student_id,date' }
-      )
-      .select()
-      .single();
-
-    if (error) {
-      sendError(res, error.message, 500);
-      return;
-    }
-
-    await logAudit(req.user!.id, 'ATTENDANCE_RECORDED', 'attendance', {
-      student_id: parsed.data.student_id,
-      date: parsed.data.date,
-      status: parsed.data.status,
-    });
-
-    sendSuccess(res, data, 'Attendance recorded', 201);
-  }
-);
-
-// ── POST /api/attendance/bulk — existing bulk route (preserved) ───────────────
-router.post(
-  '/bulk',
-  requireRole('superadmin', 'schooladmin', 'teacher'),
-  async (req: Request, res: Response) => {
-    const recordAttendanceSchema = z.object({
-      student_id: z.string().uuid(),
-      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      status: z.enum(['present', 'absent', 'late', 'excused']),
-      notes: z.string().optional(),
-    });
-
-    const bulkAttendanceSchema = z.object({
-      records: z.array(recordAttendanceSchema).min(1),
-    });
-
-    const parsed = bulkAttendanceSchema.safeParse(req.body);
-    if (!parsed.success) {
-      sendValidationError(res, parsed.error.flatten());
-      return;
-    }
-
-    const records = parsed.data.records.map((r) => ({
-      ...r,
-      recorded_by: req.user!.id,
-      source: 'manual',
-    }));
-
-    const { data, error } = await supabaseAdmin
-      .from('attendance')
-      .upsert(records, { onConflict: 'student_id,date' })
-      .select();
-
-    if (error) {
-      sendError(res, error.message, 500);
-      return;
-    }
-
-    await logAudit(req.user!.id, 'ATTENDANCE_BULK_RECORDED', 'attendance', {
-      count: records.length,
-      source: 'manual',
-    });
-
-    sendSuccess(res, data, `${records.length} attendance records saved`, 201);
-  }
-);
-
-// ── GET /api/attendance/check — existing route (preserved) ───────────────────
-router.get(
-  '/check',
-  requireRole('superadmin', 'schooladmin', 'teacher'),
-  async (req: Request, res: Response) => {
-    const { class_name, section, date } = req.query as Record<string, string>;
-
-    if (!class_name || !date) {
-      sendError(res, 'class_name and date are required', 400);
-      return;
-    }
-
-    let studentQuery = supabaseAdmin
+    // Fetch all active students for this class
+    const { data: students, error: stuErr } = await supabaseAdmin
       .from('students')
-      .select('id, full_name, class_name, section')
-      .eq('school_id', req.user!.school_id ?? '')
-      .eq('class_name', class_name);
+      .select('id, full_name, roll_number')
+      .eq('school_id', school_id)
+      .eq('class_name', className)
+      .eq('section', section)
+      .eq('is_deleted', false)
+      .order('roll_number', { ascending: true });
 
-    if (section) studentQuery = studentQuery.eq('section', section);
+    if (stuErr) {
+      sendError(res, stuErr.message, 500);
+      return;
+    }
 
-    const { data: students, error: sErr } = await studentQuery;
-    if (sErr) { sendError(res, sErr.message, 500); return; }
     if (!students || students.length === 0) {
-      sendSuccess(res, { students: [], existing: [] });
+      sendSuccess(res, []);
       return;
     }
 
     const studentIds = students.map((s: { id: string }) => s.id);
 
-    const { data: existing, error: aErr } = await supabaseAdmin
+    // Fetch all attendance records for the date range
+    const { data: records, error: attErr } = await supabaseAdmin
       .from('attendance')
-      .select('student_id, status, source, recorded_by')
+      .select('student_id, status')
       .in('student_id', studentIds)
-      .eq('date', date);
+      .gte('date', start_date)
+      .lte('date', end_date);
 
-    if (aErr) { sendError(res, aErr.message, 500); return; }
+    if (attErr) {
+      sendError(res, attErr.message, 500);
+      return;
+    }
 
-    sendSuccess(res, { students, existing: existing ?? [] });
+    // Group records by student_id
+    const recordsByStudent = new Map<string, { present: number; absent: number; total: number }>();
+    for (const id of studentIds) {
+      recordsByStudent.set(id, { present: 0, absent: 0, total: 0 });
+    }
+    for (const r of records ?? []) {
+      const entry = recordsByStudent.get(r.student_id);
+      if (entry) {
+        entry.total += 1;
+        if (r.status === 'present') entry.present += 1;
+        else if (r.status === 'absent') entry.absent += 1;
+      }
+    }
+
+    const result = students.map((s: { id: string; full_name: string; roll_number: string | null }) => {
+      const stats = recordsByStudent.get(s.id) ?? { present: 0, absent: 0, total: 0 };
+      return {
+        student_id: s.id,
+        name: s.full_name,
+        roll_number: s.roll_number,
+        present_count: stats.present,
+        absent_count: stats.absent,
+        total_days: stats.total,
+        percentage: stats.total > 0 ? Math.round((stats.present / stats.total) * 100) : 0,
+      };
+    });
+
+    sendSuccess(res, result);
+  }
+);
+
+// ── GET /api/attendance/today-summary ────────────────────────────────────────
+/**
+ * School-wide attendance summary for today.
+ * school_id is taken from the auth token for non-superadmin users.
+ * Returns: total_students, present, absent, not_submitted_classes[]
+ */
+router.get(
+  '/today-summary',
+  requireRole('superadmin', 'schooladmin', 'teacher'),
+  async (req: Request, res: Response) => {
+    // school_id always comes from the auth token for non-superadmin users
+    let school_id: string;
+    if (req.user!.role === 'superadmin') {
+      const qSchoolId = req.query.school_id as string | undefined;
+      if (!qSchoolId) {
+        sendError(res, 'school_id is required for superadmin', 400);
+        return;
+      }
+      school_id = qSchoolId;
+    } else {
+      if (!req.user!.school_id) {
+        sendError(res, 'Your account is not linked to a school', 403);
+        return;
+      }
+      school_id = req.user!.school_id;
+    }
+
+    const today = todayDate();
+
+    // Fetch all active students for this school
+    const { data: students, error: stuErr } = await supabaseAdmin
+      .from('students')
+      .select('id, class_name, section')
+      .eq('school_id', school_id)
+      .eq('is_deleted', false);
+
+    if (stuErr) {
+      sendError(res, stuErr.message, 500);
+      return;
+    }
+
+    const allStudents = students ?? [];
+    const totalStudents = allStudents.length;
+
+    if (totalStudents === 0) {
+      sendSuccess(res, {
+        total_students: 0,
+        present: 0,
+        absent: 0,
+        not_submitted_classes: [],
+      });
+      return;
+    }
+
+    const allStudentIds = allStudents.map((s: { id: string }) => s.id);
+
+    // Fetch today's attendance records
+    const { data: records, error: attErr } = await supabaseAdmin
+      .from('attendance')
+      .select('student_id, status')
+      .in('student_id', allStudentIds)
+      .eq('date', today);
+
+    if (attErr) {
+      sendError(res, attErr.message, 500);
+      return;
+    }
+
+    const markedSet = new Set((records ?? []).map((r: { student_id: string }) => r.student_id));
+    const presentCount = (records ?? []).filter((r: { status: string }) => r.status === 'present').length;
+    const absentCount = (records ?? []).filter((r: { status: string }) => r.status === 'absent').length;
+
+    // Determine which class+section combos have NOT been submitted yet
+    // A class is "submitted" if at least one student in it has an attendance record today
+    const classMap = new Map<string, { class_name: string; section: string; hasRecord: boolean }>();
+
+    for (const s of allStudents as Array<{ id: string; class_name: string; section: string }>) {
+      const key = `${s.class_name}||${s.section}`;
+      if (!classMap.has(key)) {
+        classMap.set(key, { class_name: s.class_name, section: s.section, hasRecord: false });
+      }
+      if (markedSet.has(s.id)) {
+        classMap.get(key)!.hasRecord = true;
+      }
+    }
+
+    const notSubmittedClasses = Array.from(classMap.values())
+      .filter((c) => !c.hasRecord)
+      .map((c) => ({ class_name: c.class_name, section: c.section }));
+
+    sendSuccess(res, {
+      total_students: totalStudents,
+      present: presentCount,
+      absent: absentCount,
+      not_submitted_classes: notSubmittedClasses,
+    });
   }
 );
 
 export default router;
-
-// ── Notification queue processor (exported for use in index.ts) ───────────────
-/**
- * Processes the notification_queue table every 5 minutes.
- * Sends FCM push notifications for entries where:
- *   send_after <= now AND sent = false AND cancelled = false
- *
- * Call startNotificationQueueProcessor() once from index.ts.
- */
-export function startNotificationQueueProcessor(): void {
-  const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-  const process = async () => {
-    try {
-      const now = new Date().toISOString();
-
-      const { data: pending, error } = await supabaseAdmin
-        .from('notification_queue')
-        .select('id, user_id, message')
-        .lte('send_after', now)
-        .eq('sent', false)
-        .eq('cancelled', false);
-
-      if (error) {
-        console.error('[notification-queue] Query error:', error.message);
-        return;
-      }
-
-      if (!pending || pending.length === 0) return;
-
-      for (const entry of pending) {
-        // Fetch parent's FCM token
-        const { data: user } = await supabaseAdmin
-          .from('users')
-          .select('fcm_token')
-          .eq('id', entry.user_id)
-          .maybeSingle();
-
-        if (user?.fcm_token) {
-          await sendFcmNotification(user.fcm_token, 'School Attendance', entry.message);
-        }
-
-        // Mark as sent regardless of FCM result (avoid infinite retries)
-        await supabaseAdmin
-          .from('notification_queue')
-          .update({ sent: true, sent_at: new Date().toISOString() })
-          .eq('id', entry.id);
-      }
-
-      console.log(`[notification-queue] Processed ${pending.length} notification(s)`);
-    } catch (err) {
-      console.error('[notification-queue] Processor error:', err);
-    }
-  };
-
-  // Run immediately on startup, then every 5 minutes
-  void process();
-  setInterval(() => void process(), INTERVAL_MS);
-
-  console.log('[notification-queue] Processor started (interval: 5 min)');
-}

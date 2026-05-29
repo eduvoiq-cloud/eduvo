@@ -1434,4 +1434,56 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
   sendSuccess(res, data ?? []);
 });
 
+// ── POST /api/admin/request-deletion ─────────────────────────────────────────
+/**
+ * School admin requests deletion of their school account.
+ * Sends a notification to all superadmins and logs the request.
+ * The actual deletion is performed manually by a superadmin.
+ */
+router.post('/request-deletion', async (req: Request, res: Response) => {
+  const adminId  = req.user!.id;
+  const schoolId = req.user!.school_id!;
+
+  // Fetch school info for the notification
+  const { data: school } = await supabaseAdmin
+    .from('schools')
+    .select('name')
+    .eq('id', schoolId)
+    .single();
+
+  const schoolName = (school as Record<string, unknown> | null)?.name as string ?? schoolId;
+
+  // Fetch all superadmins to notify
+  const { data: superAdmins } = await supabaseAdmin
+    .from('users')
+    .select('id')
+    .eq('role', 'superadmin');
+
+  const now = new Date().toISOString();
+
+  // Create in-app notifications for all superadmins
+  if (superAdmins && superAdmins.length > 0) {
+    const notifications = superAdmins.map((sa: { id: string }) => ({
+      title:        'School Deletion Request',
+      body:         `School "${schoolName}" has requested account deletion. Please review and process.`,
+      type:         'deletion_request',
+      recipient_id: sa.id,
+      sender_id:    adminId,
+      is_read:      false,
+      created_at:   now,
+    }));
+
+    await supabaseAdmin.from('notifications').insert(notifications);
+  }
+
+  await logAudit(adminId, 'SCHOOL_DELETION_REQUESTED', 'schools', {
+    school_id:   schoolId,
+    school_name: schoolName,
+    requested_by: adminId,
+    requested_at: now,
+  });
+
+  sendSuccess(res, null, 'Deletion request submitted. A super admin will contact you within 7 business days.');
+});
+
 export default router;

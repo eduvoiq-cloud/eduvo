@@ -73,7 +73,7 @@ function SchoolsPageInner() {
 
       // Count students per school
       const countMap: Record<string, number> = {};
-      for (const s of studentsRes.data) {
+      for (const s of (studentsRes.data as unknown as { school_id: string }[])) {
         countMap[s.school_id] = (countMap[s.school_id] ?? 0) + 1;
       }
 

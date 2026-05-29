@@ -50,7 +50,7 @@ export default function AnnouncementsPage() {
         studentsApi.list(token, user.school_id),
       ]);
       setTeachers(tRes.data);
-      setStudents(sRes.data);
+      setStudents((sRes.data as unknown as Student[]) ?? []);
     } catch {
       // non-fatal
     } finally {

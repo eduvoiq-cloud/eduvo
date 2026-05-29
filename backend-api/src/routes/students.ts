@@ -12,13 +12,13 @@ router.use(authenticate);
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const createStudentSchema = z.object({
-  full_name: z.string().min(1),
+  full_name: z.string().min(1).max(150),
   date_of_birth: z.string().date(),
   school_id: z.string().uuid(),
-  class_name: z.string().min(1),
+  class_name: z.string().min(1).max(20),
   parent_id: z.string().uuid().optional(),
-  email: z.email().optional(),
-  phone: z.string().optional(),
+  email: z.string().email().max(254).optional(),
+  phone: z.string().regex(/^\+?[\d\s\-()]{7,20}$/, 'Invalid phone number format').optional(),
 });
 
 const updateStudentSchema = createStudentSchema.partial();
@@ -40,32 +40,66 @@ async function logAudit(
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/students */
+/** GET /api/students
+ *  Supports pagination via ?page=1&limit=50 (default limit 50, max 200).
+ *  Returns { data, total, page, limit, total_pages } when paginated.
+ *  Pass limit=0 to fetch all (use sparingly — only for internal tooling).
+ */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const school_id = req.query.school_id as string | undefined;
+  const search = req.query.search as string | undefined;
+  const class_name = req.query.class_name as string | undefined;
+  const section = req.query.section as string | undefined;
+
+  // Pagination params
+  const rawPage = parseInt(req.query.page as string ?? '1', 10);
+  const rawLimit = parseInt(req.query.limit as string ?? '50', 10);
+  const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
+  // limit=0 means fetch all (no pagination); otherwise clamp to 1–200
+  const limit = rawLimit === 0 ? 0 : (isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200));
 
   let query = supabaseAdmin
     .from('students')
-    .select('*')
-    .eq('is_deleted', false)  // always filter soft-deleted
+    .select('*', { count: 'exact' })
+    .eq('is_deleted', false)
     .order('full_name');
 
   // schooladmin and teacher are always scoped to their own school
   if (req.user!.role === 'schooladmin' || req.user!.role === 'teacher') {
     query = query.eq('school_id', req.user!.school_id ?? '');
   } else if (school_id) {
-    // superadmin can filter by school_id
     query = query.eq('school_id', school_id);
   }
 
-  const { data, error } = await query;
+  // Optional filters
+  if (search) {
+    query = query.or(`full_name.ilike.%${search}%,roll_number.ilike.%${search}%`);
+  }
+  if (class_name) query = query.eq('class_name', class_name);
+  if (section) query = query.eq('section', section);
+
+  // Apply pagination (skip when limit=0)
+  if (limit > 0) {
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    query = query.range(from, to);
+  }
+
+  const { data, error, count } = await query;
 
   if (error) {
     sendError(res, error.message, 500);
     return;
   }
 
-  sendSuccess(res, data);
+  // Return paginated envelope when limit > 0, plain array when limit=0
+  if (limit > 0) {
+    const total = count ?? 0;
+    const total_pages = Math.ceil(total / limit);
+    sendSuccess(res, { data: data ?? [], total, page, limit, total_pages });
+  } else {
+    sendSuccess(res, data ?? []);
+  }
 });
 
 /** GET /api/students/:id */

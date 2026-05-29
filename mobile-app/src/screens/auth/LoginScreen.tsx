@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   ScrollView,
   Platform,
+  Linking,
 } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 import apiClient from '../../api/client';
@@ -18,6 +19,9 @@ import apiClient from '../../api/client';
 const MAX_ATTEMPTS = 10;
 const LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
 const PRIMARY = '#3b82f6';
+
+const TERMS_URL = 'https://eduvo.in/terms-of-service';
+const PRIVACY_URL = 'https://eduvo.in/privacy-policy';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -209,6 +213,27 @@ export default function LoginScreen() {
             <Text style={styles.buttonText}>Log In</Text>
           )}
         </TouchableOpacity>
+
+        {/* Terms & Privacy footer */}
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>By logging in you agree to our </Text>
+          <TouchableOpacity
+            onPress={() => Linking.openURL(TERMS_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Terms of Service"
+          >
+            <Text style={styles.footerLink}>Terms of Service</Text>
+          </TouchableOpacity>
+          <Text style={styles.footerText}> and </Text>
+          <TouchableOpacity
+            onPress={() => Linking.openURL(PRIVACY_URL)}
+            accessibilityRole="link"
+            accessibilityLabel="Privacy Policy"
+          >
+            <Text style={styles.footerLink}>Privacy Policy</Text>
+          </TouchableOpacity>
+          <Text style={styles.footerText}>.</Text>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -297,5 +322,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  footer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  footerText: {
+    fontSize: 12,
+    color: '#9CA3AF',
+  },
+  footerLink: {
+    fontSize: 12,
+    color: PRIMARY,
+    fontWeight: '500',
   },
 });

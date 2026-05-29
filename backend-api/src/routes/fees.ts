@@ -12,9 +12,9 @@ router.use(authenticate);
 
 const toggleFeeSchema = z.object({
   fee_paid: z.boolean(),
-  term: z.string().min(1),
-  academic_year: z.string().min(1),
-  notes: z.string().optional(),
+  term: z.string().min(1).max(50),
+  academic_year: z.string().min(1).max(20),
+  notes: z.string().max(500).optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

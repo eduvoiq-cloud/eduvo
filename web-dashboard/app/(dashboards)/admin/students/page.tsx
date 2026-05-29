@@ -6,9 +6,14 @@ import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
 import { adminApi, feesApi, type AdminStudent, type FeeRecord } from '@/lib/api';
 import { getToken } from '@/lib/session';
+import { useDebounce } from '@/lib/useDebounce';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
 import FormField, { inputClass } from '@/components/FormField';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const PAGE_SIZE = 50;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,9 +32,42 @@ const EMPTY_FORM: StudentForm = {
   parent_email: '', parent_phone: '', photo_url: '',
 };
 
+// ── Skeleton loader ───────────────────────────────────────────────────────────
+
+function StudentTableSkeleton() {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-6">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50">
+              {['Photo', 'Name', 'Roll No', 'Class', 'Section', 'RFID', 'Fees', 'Actions'].map((h) => (
+                <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <tr key={i} className="animate-pulse">
+                <td className="px-4 py-3"><div className="w-9 h-9 rounded-full bg-gray-200" /></td>
+                <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-32" /></td>
+                <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-12" /></td>
+                <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-16" /></td>
+                <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-8" /></td>
+                <td className="px-4 py-3"><div className="h-5 bg-gray-200 rounded-full w-24" /></td>
+                <td className="px-4 py-3"><div className="h-5 bg-gray-200 rounded-full w-16" /></td>
+                <td className="px-4 py-3"><div className="h-6 bg-gray-200 rounded w-20 ml-auto" /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Compress an image File to ≤ 200 KB via canvas, returns a data-URL. */
 async function compressImage(file: File, maxKB = 200): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = document.createElement('img');
@@ -38,7 +76,6 @@ async function compressImage(file: File, maxKB = 200): Promise<string> {
       URL.revokeObjectURL(url);
       const canvas = document.createElement('canvas');
       let { width, height } = img;
-      // Scale down if needed
       const MAX_DIM = 800;
       if (width > MAX_DIM || height > MAX_DIM) {
         const ratio = Math.min(MAX_DIM / width, MAX_DIM / height);
@@ -50,7 +87,6 @@ async function compressImage(file: File, maxKB = 200): Promise<string> {
       const ctx = canvas.getContext('2d');
       if (!ctx) { reject(new Error('Canvas not supported')); return; }
       ctx.drawImage(img, 0, 0, width, height);
-      // Try quality 0.8 first, then reduce until ≤ maxKB
       let quality = 0.8;
       let dataUrl = canvas.toDataURL('image/jpeg', quality);
       while (dataUrl.length * 0.75 > maxKB * 1024 && quality > 0.1) {
@@ -64,16 +100,11 @@ async function compressImage(file: File, maxKB = 200): Promise<string> {
   });
 }
 
-/** Export students array to a CSV file and trigger download. */
 function exportCSV(students: AdminStudent[]) {
   const headers = ['Name', 'Roll No', 'Class', 'Section', 'RFID Status', 'Phone'];
   const rows = students.map((s) => [
-    `"${s.full_name}"`,
-    s.roll_number ?? '',
-    s.class_name,
-    s.section ?? '',
-    s.rfid_uid ? 'Registered' : 'Not Registered',
-    s.phone ?? '',
+    `"${s.full_name}"`, s.roll_number ?? '', s.class_name, s.section ?? '',
+    s.rfid_uid ? 'Registered' : 'Not Registered', s.phone ?? '',
   ]);
   const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -84,7 +115,6 @@ function exportCSV(students: AdminStudent[]) {
   URL.revokeObjectURL(a.href);
 }
 
-/** Generate a simple ID card as a printable HTML page and open in new tab. */
 function downloadIdCard(student: AdminStudent, schoolName: string) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>ID Card – ${student.full_name}</title>
@@ -128,16 +158,11 @@ function downloadIdCard(student: AdminStudent, schoolName: string) {
 function RfidBadge({ uid, onClick }: { uid?: string | null; onClick?: () => void }) {
   const registered = !!uid;
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <button type="button" onClick={onClick}
       title={registered ? `UID: ${uid}` : 'Click to register RFID'}
       className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
-        registered
-          ? 'bg-green-100 text-green-700 hover:bg-green-200'
-          : 'bg-red-100 text-red-600 hover:bg-red-200'
-      } ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
-    >
+        registered ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-600 hover:bg-red-200'
+      } ${onClick ? 'cursor-pointer' : 'cursor-default'}`}>
       <span className={`w-1.5 h-1.5 rounded-full inline-block ${registered ? 'bg-green-500' : 'bg-red-400'}`} />
       {registered ? 'Registered' : 'Not Registered'}
     </button>
@@ -155,15 +180,7 @@ function FeeBadge({ paid }: { paid: boolean }) {
   );
 }
 
-// ── Photo upload field ────────────────────────────────────────────────────────
-
-function PhotoUpload({
-  preview,
-  onFile,
-}: {
-  preview: string;
-  onFile: (dataUrl: string) => void;
-}) {
+function PhotoUpload({ preview, onFile }: { preview: string; onFile: (dataUrl: string) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   const [compressing, setCompressing] = useState(false);
 
@@ -175,7 +192,6 @@ function PhotoUpload({
       const dataUrl = await compressImage(file);
       onFile(dataUrl);
     } catch {
-      // fallback: use object URL (won't persist, but shows preview)
       onFile(URL.createObjectURL(file));
     } finally {
       setCompressing(false);
@@ -184,10 +200,8 @@ function PhotoUpload({
 
   return (
     <div className="flex items-center gap-4">
-      <div
-        onClick={() => ref.current?.click()}
-        className="w-16 h-16 rounded-full border-2 border-dashed border-gray-300 hover:border-blue-400 flex items-center justify-center cursor-pointer overflow-hidden transition-colors bg-gray-50"
-      >
+      <div onClick={() => ref.current?.click()}
+        className="w-16 h-16 rounded-full border-2 border-dashed border-gray-300 hover:border-blue-400 flex items-center justify-center cursor-pointer overflow-hidden transition-colors bg-gray-50">
         {compressing ? (
           <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
         ) : preview ? (
@@ -207,17 +221,8 @@ function PhotoUpload({
   );
 }
 
-// ── Student Form (shared by Add + Edit modals) ────────────────────────────────
-
 function StudentFormFields({
-  form,
-  setForm,
-  photoPreview,
-  setPhotoPreview,
-  formError,
-  submitting,
-  onCancel,
-  submitLabel,
+  form, setForm, photoPreview, setPhotoPreview, formError, submitting, onCancel, submitLabel,
 }: {
   form: StudentForm;
   setForm: React.Dispatch<React.SetStateAction<StudentForm>>;
@@ -233,17 +238,12 @@ function StudentFormFields({
       {formError && (
         <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{formError}</div>
       )}
-
-      <PhotoUpload
-        preview={photoPreview}
-        onFile={(url) => { setPhotoPreview(url); setForm((f) => ({ ...f, photo_url: url })); }}
-      />
-
+      <PhotoUpload preview={photoPreview}
+        onFile={(url) => { setPhotoPreview(url); setForm((f) => ({ ...f, photo_url: url })); }} />
       <FormField label="Full Name" htmlFor="sf-name" required>
         <input id="sf-name" type="text" className={inputClass} placeholder="e.g. John Doe"
           value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} required />
       </FormField>
-
       <div className="grid grid-cols-2 gap-3">
         <FormField label="Class" htmlFor="sf-class" required>
           <input id="sf-class" type="text" className={inputClass} placeholder="e.g. Grade 5"
@@ -254,23 +254,19 @@ function StudentFormFields({
             value={form.section} onChange={(e) => setForm((f) => ({ ...f, section: e.target.value }))} required />
         </FormField>
       </div>
-
       <FormField label="Roll Number" htmlFor="sf-roll">
         <input id="sf-roll" type="text" className={inputClass} placeholder="e.g. 42"
           value={form.roll_number} onChange={(e) => setForm((f) => ({ ...f, roll_number: e.target.value }))} />
       </FormField>
-
       <FormField label="Parent Email" htmlFor="sf-pemail">
         <input id="sf-pemail" type="email" className={inputClass} placeholder="parent@example.com"
           value={form.parent_email} onChange={(e) => setForm((f) => ({ ...f, parent_email: e.target.value }))} />
         <p className="mt-1 text-xs text-gray-400">An invite will be sent automatically if the parent has no account.</p>
       </FormField>
-
       <FormField label="Parent Phone" htmlFor="sf-pphone">
         <input id="sf-pphone" type="tel" className={inputClass} placeholder="+1 555 000 0000"
           value={form.parent_phone} onChange={(e) => setForm((f) => ({ ...f, parent_phone: e.target.value }))} />
       </FormField>
-
       <div className="flex justify-end gap-3 pt-2">
         <button type="button" onClick={onCancel}
           className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
@@ -279,6 +275,31 @@ function StudentFormFields({
         <button type="submit" disabled={submitting}
           className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-lg transition-colors">
           {submitting ? 'Saving…' : submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Pagination controls ───────────────────────────────────────────────────────
+
+function Pagination({
+  page, totalPages, onPrev, onNext,
+}: { page: number; totalPages: number; onPrev: () => void; onNext: () => void }) {
+  if (totalPages <= 1) return null;
+  return (
+    <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+      <p className="text-xs text-gray-500">
+        Page {page} of {totalPages}
+      </p>
+      <div className="flex items-center gap-2">
+        <button onClick={onPrev} disabled={page <= 1}
+          className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          ← Prev
+        </button>
+        <button onClick={onNext} disabled={page >= totalPages}
+          className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          Next →
         </button>
       </div>
     </div>
@@ -298,11 +319,20 @@ function StudentsPageInner() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // ── Pagination state ────────────────────────────────────────────────────
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+
   // ── Filter state ────────────────────────────────────────────────────────
   const [search, setSearch] = useState('');
   const [filterClass, setFilterClass] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [showDeleted, setShowDeleted] = useState(false);
+  const [deletedStudents, setDeletedStudents] = useState<AdminStudent[]>([]);
+
+  // Debounce search — only fires API call 300ms after user stops typing
+  const debouncedSearch = useDebounce(search, 300);
 
   // ── Modal state ─────────────────────────────────────────────────────────
   const [showAdd, setShowAdd] = useState(false);
@@ -316,7 +346,7 @@ function StudentsPageInner() {
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Open add modal from URL param (e.g. from dashboard quick action)
+  // Open add modal from URL param
   useEffect(() => {
     if (searchParams.get('action') === 'new') {
       setShowAdd(true);
@@ -324,34 +354,77 @@ function StudentsPageInner() {
     }
   }, [searchParams, router]);
 
-  // ── Fetch ───────────────────────────────────────────────────────────────
+  // ── Fetch paginated active students ─────────────────────────────────────
 
-  const fetchAll = useCallback(async () => {
+  const fetchStudents = useCallback(async (currentPage: number) => {
     const token = getToken();
     if (!token || !user?.school_id) return;
     setLoading(true);
     setError('');
     try {
-      // Fetch all students (active + deleted) and fees in parallel
-      const [studentsRes, feesRes] = await Promise.all([
-        adminApi.listStudents(token, { include_deleted: true }),
-        feesApi.list(token).catch(() => ({ data: [] as FeeRecord[] })),
-      ]);
-      setStudents(studentsRes.data ?? []);
-      // Build fee map: student_id → fee_paid
-      const map: Record<string, boolean> = {};
-      for (const f of feesRes.data ?? []) {
-        map[f.student_id] = f.fee_paid;
+      const res = await adminApi.listStudents(token, {
+        include_deleted: false,
+        page: currentPage,
+        limit: PAGE_SIZE,
+        search: debouncedSearch || undefined,
+        class_name: filterClass || undefined,
+        section: filterSection || undefined,
+      });
+      // adminApi.listStudents returns paginated envelope when limit > 0
+      const envelope = res.data as unknown as {
+        data: AdminStudent[];
+        total: number;
+        page: number;
+        limit: number;
+        total_pages: number;
+      };
+      if (envelope && 'total_pages' in envelope) {
+        setStudents(envelope.data ?? []);
+        setTotal(envelope.total ?? 0);
+        setTotalPages(envelope.total_pages ?? 1);
+      } else {
+        // Fallback: plain array (older API)
+        const plain = res.data as unknown as AdminStudent[];
+        setStudents(plain ?? []);
+        setTotal(plain?.length ?? 0);
+        setTotalPages(1);
       }
-      setFeeMap(map);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load students');
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, debouncedSearch, filterClass, filterSection]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  // Fetch deleted students separately (only when panel is open)
+  const fetchDeleted = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const res = await adminApi.listStudents(token, { include_deleted: true });
+      const all = res.data as unknown as AdminStudent[];
+      setDeletedStudents((all ?? []).filter((s) => s.is_deleted));
+    } catch { /* swallow */ }
+  }, []);
+
+  // Fetch fees once
+  const fetchFees = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const feesRes = await feesApi.list(token).catch(() => ({ data: [] as FeeRecord[] }));
+      const map: Record<string, boolean> = {};
+      for (const f of feesRes.data ?? []) map[f.student_id] = f.fee_paid;
+      setFeeMap(map);
+    } catch { /* swallow */ }
+  }, []);
+
+  // Reset to page 1 when filters/search change
+  useEffect(() => { setPage(1); }, [debouncedSearch, filterClass, filterSection]);
+
+  useEffect(() => { fetchStudents(page); }, [fetchStudents, page]);
+  useEffect(() => { fetchFees(); }, [fetchFees]);
+  useEffect(() => { if (showDeleted) fetchDeleted(); }, [showDeleted, fetchDeleted]);
 
   // ── Add student ─────────────────────────────────────────────────────────
 
@@ -367,9 +440,7 @@ function StudentsPageInner() {
     setSubmitting(true);
     try {
       await adminApi.createStudent(token, {
-        name: form.name.trim(),
-        class: form.class.trim(),
-        section: form.section.trim(),
+        name: form.name.trim(), class: form.class.trim(), section: form.section.trim(),
         roll_number: form.roll_number.trim() || undefined,
         parent_email: form.parent_email.trim() || undefined,
         parent_phone: form.parent_phone.trim() || undefined,
@@ -378,7 +449,7 @@ function StudentsPageInner() {
       setShowAdd(false);
       setForm(EMPTY_FORM);
       setPhotoPreview('');
-      await fetchAll();
+      fetchStudents(page);
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : 'Failed to add student');
     } finally {
@@ -390,15 +461,9 @@ function StudentsPageInner() {
 
   function openEdit(s: AdminStudent) {
     setEditTarget(s);
-    setForm({
-      name: s.full_name,
-      class: s.class_name,
-      section: s.section ?? '',
-      roll_number: s.roll_number ?? '',
-      parent_email: '',
-      parent_phone: s.phone ?? '',
-      photo_url: s.photo_url ?? '',
-    });
+    setForm({ name: s.full_name, class: s.class_name, section: s.section ?? '',
+      roll_number: s.roll_number ?? '', parent_email: '', parent_phone: s.phone ?? '',
+      photo_url: s.photo_url ?? '' });
     setPhotoPreview(s.photo_url ?? '');
     setFormError('');
   }
@@ -416,9 +481,7 @@ function StudentsPageInner() {
     setSubmitting(true);
     try {
       await adminApi.updateStudent(token, editTarget.id, {
-        name: form.name.trim(),
-        class: form.class.trim(),
-        section: form.section.trim(),
+        name: form.name.trim(), class: form.class.trim(), section: form.section.trim(),
         roll_number: form.roll_number.trim() || undefined,
         parent_email: form.parent_email.trim() || undefined,
         parent_phone: form.parent_phone.trim() || undefined,
@@ -427,7 +490,7 @@ function StudentsPageInner() {
       setEditTarget(null);
       setForm(EMPTY_FORM);
       setPhotoPreview('');
-      await fetchAll();
+      fetchStudents(page);
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : 'Failed to update student');
     } finally {
@@ -435,7 +498,7 @@ function StudentsPageInner() {
     }
   }
 
-  // ── Delete student ──────────────────────────────────────────────────────
+  // ── Delete / Restore ────────────────────────────────────────────────────
 
   async function handleDelete() {
     if (!deleteTarget) return;
@@ -445,7 +508,8 @@ function StudentsPageInner() {
     try {
       await adminApi.deleteStudent(token, deleteTarget.id);
       setDeleteTarget(null);
-      await fetchAll();
+      fetchStudents(page);
+      if (showDeleted) fetchDeleted();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to delete student');
       setDeleteTarget(null);
@@ -453,8 +517,6 @@ function StudentsPageInner() {
       setSubmitting(false);
     }
   }
-
-  // ── Restore student ─────────────────────────────────────────────────────
 
   async function handleRestore() {
     if (!restoreTarget) return;
@@ -464,7 +526,8 @@ function StudentsPageInner() {
     try {
       await adminApi.restoreStudent(token, restoreTarget.id);
       setRestoreTarget(null);
-      await fetchAll();
+      fetchStudents(page);
+      fetchDeleted();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to restore student');
       setRestoreTarget(null);
@@ -472,24 +535,6 @@ function StudentsPageInner() {
       setSubmitting(false);
     }
   }
-
-  // ── Derived data ────────────────────────────────────────────────────────
-
-  const activeStudents = students.filter((s) => !s.is_deleted);
-  const deletedStudents = students.filter((s) => s.is_deleted);
-
-  const classes = [...new Set(activeStudents.map((s) => s.class_name))].sort();
-  const sections = filterClass
-    ? [...new Set(activeStudents.filter((s) => s.class_name === filterClass).map((s) => s.section ?? ''))].filter(Boolean).sort()
-    : [];
-
-  const filtered = activeStudents.filter((s) => {
-    const q = search.toLowerCase();
-    const matchSearch = !q || s.full_name.toLowerCase().includes(q) || (s.roll_number ?? '').toLowerCase().includes(q);
-    const matchClass = !filterClass || s.class_name === filterClass;
-    const matchSection = !filterSection || (s.section ?? '') === filterSection;
-    return matchSearch && matchClass && matchSection;
-  });
 
   const schoolName = user?.name ?? 'School';
 
@@ -499,31 +544,18 @@ function StudentsPageInner() {
     <>
       <PageHeader
         title="Students"
-        description={`${activeStudents.length} student${activeStudents.length !== 1 ? 's' : ''} enrolled`}
+        description={`${total} student${total !== 1 ? 's' : ''} enrolled`}
         action={
           <div className="flex items-center gap-2 flex-wrap justify-end">
-            <button
-              onClick={() => exportCSV(filtered)}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
+            <button onClick={() => exportCSV(students)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
               Export CSV
             </button>
-            <button
-              onClick={() => filtered.forEach((s) => downloadIdCard(s, schoolName))}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0" />
-              </svg>
-              Download All ID Cards
-            </button>
-            <button
-              onClick={() => { setForm(EMPTY_FORM); setPhotoPreview(''); setFormError(''); setShowAdd(true); }}
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
-            >
+            <button onClick={() => { setForm(EMPTY_FORM); setPhotoPreview(''); setFormError(''); setShowAdd(true); }}
+              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
@@ -539,120 +571,118 @@ function StudentsPageInner() {
 
       {/* ── Filters ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        {/* Search with debounce — API call fires 300ms after typing stops */}
         <div className="relative flex-1 max-w-sm">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
-          <input
-            type="text" placeholder="Search by name or roll number…" value={search}
+          <input type="text" placeholder="Search by name or roll number…" value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
+            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          {/* Show spinner while debounce is pending */}
+          {search !== debouncedSearch && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+              <div className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
         </div>
-        <select value={filterClass} onChange={(e) => { setFilterClass(e.target.value); setFilterSection(''); }}
-          className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-          <option value="">All Classes</option>
-          {classes.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        {sections.length > 0 && (
-          <select value={filterSection} onChange={(e) => setFilterSection(e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-            <option value="">All Sections</option>
-            {sections.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        )}
+        <input type="text" placeholder="Filter by class…" value={filterClass}
+          onChange={(e) => { setFilterClass(e.target.value); setFilterSection(''); }}
+          className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-36" />
+        <input type="text" placeholder="Filter by section…" value={filterSection}
+          onChange={(e) => setFilterSection(e.target.value)}
+          className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-36" />
       </div>
 
       {/* ── Active Students Table ─────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-6">
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-16 text-sm text-gray-500">
-            {search || filterClass || filterSection ? 'No students match your filters.' : 'No students yet. Add your first student.'}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Photo</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Roll No</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Class</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Section</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">RFID</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Fees</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.map((s) => (
-                  <tr key={s.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      {s.photo_url ? (
-                        <Image src={s.photo_url} alt={s.full_name} width={36} height={36}
-                          className="w-9 h-9 rounded-full object-cover" />
-                      ) : (
-                        <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-xs font-semibold">
-                          {s.full_name.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-gray-900">{s.full_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{s.roll_number ?? '—'}</td>
-                    <td className="px-4 py-3 text-gray-600">{s.class_name}</td>
-                    <td className="px-4 py-3 text-gray-600">{s.section ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      <RfidBadge
-                        uid={s.rfid_uid}
-                        onClick={() => router.push(`/admin/register-rfid?student_id=${s.id}`)}
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <FeeBadge paid={feeMap[s.id] ?? false} />
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {/* Edit */}
-                        <button onClick={() => openEdit(s)} title="Edit student"
-                          className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </button>
-                        {/* Download ID Card */}
-                        <button onClick={() => downloadIdCard(s, schoolName)} title="Download ID card"
-                          className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-md transition-colors">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0" />
-                          </svg>
-                        </button>
-                        {/* Delete */}
-                        <button onClick={() => setDeleteTarget(s)} title="Delete student"
-                          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {loading ? (
+        <StudentTableSkeleton />
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-6">
+          {students.length === 0 ? (
+            <div className="text-center py-16 text-sm text-gray-500">
+              {search || filterClass || filterSection
+                ? 'No students match your filters.'
+                : 'No students yet. Add your first student.'}
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Photo</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Name</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Roll No</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Class</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Section</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">RFID</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Fees</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {students.map((s) => (
+                      <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3">
+                          {s.photo_url ? (
+                            <Image src={s.photo_url} alt={s.full_name} width={36} height={36}
+                              className="w-9 h-9 rounded-full object-cover" />
+                          ) : (
+                            <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-xs font-semibold">
+                              {s.full_name.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-gray-900">{s.full_name}</td>
+                        <td className="px-4 py-3 text-gray-500">{s.roll_number ?? '—'}</td>
+                        <td className="px-4 py-3 text-gray-600">{s.class_name}</td>
+                        <td className="px-4 py-3 text-gray-600">{s.section ?? '—'}</td>
+                        <td className="px-4 py-3">
+                          <RfidBadge uid={s.rfid_uid}
+                            onClick={() => router.push(`/admin/register-rfid?student_id=${s.id}`)} />
+                        </td>
+                        <td className="px-4 py-3"><FeeBadge paid={feeMap[s.id] ?? false} /></td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button onClick={() => openEdit(s)} title="Edit student"
+                              className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button onClick={() => downloadIdCard(s, schoolName)} title="Download ID card"
+                              className="p-1.5 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded-md transition-colors">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0" />
+                              </svg>
+                            </button>
+                            <button onClick={() => setDeleteTarget(s)} title="Delete student"
+                              className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors">
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Pagination — shows 50 students per page */}
+              <Pagination page={page} totalPages={totalPages}
+                onPrev={() => setPage((p) => Math.max(1, p - 1))}
+                onNext={() => setPage((p) => Math.min(totalPages, p + 1))} />
+            </>
+          )}
+        </div>
+      )}
 
       {/* ── Deleted Students Toggle ───────────────────────────────────────── */}
       <div className="mb-4">
-        <button
-          onClick={() => setShowDeleted((v) => !v)}
-          className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors"
-        >
+        <button onClick={() => setShowDeleted((v) => !v)}
+          className="flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">
           <svg className={`w-4 h-4 transition-transform ${showDeleted ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
@@ -692,10 +722,8 @@ function StudentsPageInner() {
                         {s.deleted_at ? new Date(s.deleted_at).toLocaleDateString() : '—'}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => setRestoreTarget(s)}
-                          className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
-                        >
+                        <button onClick={() => setRestoreTarget(s)}
+                          className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors">
                           Restore
                         </button>
                       </td>
@@ -708,40 +736,30 @@ function StudentsPageInner() {
         </div>
       )}
 
-      {/* ── Add Student Modal ─────────────────────────────────────────────── */}
+      {/* ── Modals ────────────────────────────────────────────────────────── */}
       <Modal open={showAdd} onClose={() => { setShowAdd(false); setFormError(''); }} title="Add Student" size="lg">
         <form onSubmit={handleAdd}>
-          <StudentFormFields
-            form={form} setForm={setForm}
-            photoPreview={photoPreview} setPhotoPreview={setPhotoPreview}
-            formError={formError} submitting={submitting}
-            onCancel={() => { setShowAdd(false); setFormError(''); }}
-            submitLabel="Add Student"
-          />
+          <StudentFormFields form={form} setForm={setForm} photoPreview={photoPreview}
+            setPhotoPreview={setPhotoPreview} formError={formError} submitting={submitting}
+            onCancel={() => { setShowAdd(false); setFormError(''); }} submitLabel="Add Student" />
         </form>
       </Modal>
 
-      {/* ── Edit Student Modal ────────────────────────────────────────────── */}
       <Modal open={!!editTarget} onClose={() => { setEditTarget(null); setFormError(''); }} title="Edit Student" size="lg">
         <form onSubmit={handleEdit}>
-          <StudentFormFields
-            form={form} setForm={setForm}
-            photoPreview={photoPreview} setPhotoPreview={setPhotoPreview}
-            formError={formError} submitting={submitting}
-            onCancel={() => { setEditTarget(null); setFormError(''); }}
-            submitLabel="Save Changes"
-          />
+          <StudentFormFields form={form} setForm={setForm} photoPreview={photoPreview}
+            setPhotoPreview={setPhotoPreview} formError={formError} submitting={submitting}
+            onCancel={() => { setEditTarget(null); setFormError(''); }} submitLabel="Save Changes" />
         </form>
       </Modal>
 
-      {/* ── Delete Confirm Modal ──────────────────────────────────────────── */}
       <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete Student" size="sm">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">
             Are you sure you want to delete <strong>{deleteTarget?.full_name}</strong>?
           </p>
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-            This will soft delete the student. They can be restored from the &quot;Show deleted students&quot; section below the table.
+            This will soft delete the student. They can be restored from the &quot;Show deleted students&quot; section.
           </p>
           <div className="flex justify-end gap-3">
             <button onClick={() => setDeleteTarget(null)}
@@ -756,7 +774,6 @@ function StudentsPageInner() {
         </div>
       </Modal>
 
-      {/* ── Restore Confirm Modal ─────────────────────────────────────────── */}
       <Modal open={!!restoreTarget} onClose={() => setRestoreTarget(null)} title="Restore Student" size="sm">
         <div className="space-y-4">
           <p className="text-sm text-gray-600">

@@ -5,3 +5,7 @@ dist/
 build/
 .env.local
 .env.*.local
+
+# Excel test/import files — never commit sample data
+*.xlsx
+*.xls

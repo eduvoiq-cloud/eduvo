@@ -24,6 +24,48 @@ interface RowState {
   message: string;
 }
 
+// ── Skeleton loader ───────────────────────────────────────────────────────────
+
+function MarksTableSkeleton() {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-6 py-4 border-b border-gray-100 animate-pulse">
+        <div className="h-4 bg-gray-200 rounded w-48" />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50">
+              {['#', 'Student Name', 'Score', 'Max Score', 'Status'].map((h) => (
+                <th key={h} className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <tr key={i} className="animate-pulse">
+                <td className="px-6 py-3"><div className="h-3 bg-gray-200 rounded w-4" /></td>
+                <td className="px-6 py-3"><div className="h-4 bg-gray-200 rounded w-36" /></td>
+                <td className="px-4 py-3"><div className="h-8 bg-gray-200 rounded w-24" /></td>
+                <td className="px-4 py-3"><div className="h-8 bg-gray-200 rounded w-24" /></td>
+                <td className="px-4 py-3"><div className="h-3 bg-gray-200 rounded w-12 mx-auto" /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+interface RowState {
+  student: Student;
+  score: string;
+  max_score: string;
+  status: 'idle' | 'saving' | 'saved' | 'error';
+  message: string;
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function MarksPage() {
@@ -84,11 +126,15 @@ export default function MarksPage() {
     setStudentsLoaded(false);
     setSubmitSummary('');
     try {
-      const res = await studentsApi.list(token, user.school_id);
-      const filtered = res.data.filter(
-        (s) => s.class_name === filterClass && (s.section ?? '') === filterSection
-      );
-      setRows(filtered.map((s) => ({
+      // limit=0 fetches all students without pagination (needed for marks entry)
+      const res = await studentsApi.list(token, {
+        school_id: user.school_id,
+        class_name: filterClass,
+        section: filterSection,
+        limit: 0,
+      });
+      const allStudents = (res.data as Student[]) ?? [];
+      setRows((allStudents ?? []).map((s) => ({
         student: s,
         score: '',
         max_score: '100',
@@ -260,14 +306,14 @@ export default function MarksPage() {
           <div className="mt-4 flex justify-end">
             <button type="button" onClick={loadStudents} disabled={loadingStudents}
               className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition-colors">
-              {loadingStudents ? (
-                <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Loading…</>
-              ) : 'Load Students'}
+              {loadingStudents ? 'Loading…' : 'Load Students'}
             </button>
           </div>
         </div>
 
         {/* ── Step 7: Student table ─────────────────────────────────────────── */}
+        {loadingStudents && <MarksTableSkeleton />}
+
         {studentsLoaded && (
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">

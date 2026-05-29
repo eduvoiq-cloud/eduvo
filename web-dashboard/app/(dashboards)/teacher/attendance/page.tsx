@@ -2,527 +2,633 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { assignmentsApi, attendanceApi, type TeacherAssignment, type AttendanceCheckResult } from '@/lib/api';
+import { assignmentsApi, type TeacherAssignment } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
-import Modal from '@/components/Modal';
-import FormField, { inputClass } from '@/components/FormField';
 
-type AttendanceStatus = 'present' | 'absent' | 'late' | 'excused';
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-interface StudentRow {
-  id: string;
-  full_name: string;
-  class_name: string;
-  section: string;
-  status: AttendanceStatus;
-  rfidMarked: boolean;
-  rfidStatus?: string;
+type StudentStatus = 'present' | 'absent';
+
+interface StudentCard {
+  student_id: string;
+  name: string;
+  roll_number: string | null;
+  photo_url: string | null;
+  /** Current status in the UI (toggled by teacher) */
+  status: StudentStatus;
+  /** Original status from the server (for correction diff) */
+  originalStatus?: StudentStatus;
+  /** attendance record id — only present in read-only / correction mode */
+  attendance_id?: string;
 }
+
+type PageMode = 'marking' | 'readonly' | 'correction';
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+
+async function apiFetch<T>(path: string, options: RequestInit, token: string): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.headers as Record<string, string>),
+    },
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.message ?? `Request failed: ${res.status}`);
+  return json.data as T;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function AttendancePage() {
   const { user } = useAuth();
+
+  // ── Assignments ───────────────────────────────────────────────────────────
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
 
-  // Filters
-  const [filterClass, setFilterClass] = useState('');
-  const [filterSection, setFilterSection] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().split('T')[0]);
+  // ── Filter state ──────────────────────────────────────────────────────────
+  const [selectedClass, setSelectedClass] = useState('');
+  const [selectedSection, setSelectedSection] = useState('');
+  const [date, setDate] = useState(todayStr);
 
-  // Attendance state
-  const [rows, setRows] = useState<StudentRow[]>([]);
-  const [loadingCheck, setLoadingCheck] = useState(false);
+  // ── Student grid state ────────────────────────────────────────────────────
+  const [students, setStudents] = useState<StudentCard[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [mode, setMode] = useState<PageMode>('marking');
+  const [submittedAt, setSubmittedAt] = useState<string | null>(null);
+
+  // ── Correction state ──────────────────────────────────────────────────────
+  const [correctionReason, setCorrectionReason] = useState('');
+  const [correctionReasonError, setCorrectionReasonError] = useState(false);
+
+  // ── Confirm modal ─────────────────────────────────────────────────────────
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  // ── Feedback ──────────────────────────────────────────────────────────────
+  const [banner, setBanner] = useState<{ type: 'success' | 'warning' | 'error'; msg: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [success, setSuccess] = useState('');
-  const [error, setError] = useState('');
-  const [alreadyAllRfid, setAlreadyAllRfid] = useState(false);
 
-  // ── Correction section state ──────────────────────────────────────────────
-  const [corrDate, setCorrDate] = useState(() => new Date().toISOString().split('T')[0]);
-  const [corrClass, setCorrClass] = useState('');
-  const [corrSection, setCorrSection] = useState('');
-  interface CorrRow { id: string; student_id: string; full_name: string; status: string; source?: string }
-  const [corrRows, setCorrRows] = useState<CorrRow[]>([]);
-  const [loadingCorr, setLoadingCorr] = useState(false);
-  const [corrError, setCorrError] = useState('');
-  const [corrTarget, setCorrTarget] = useState<CorrRow | null>(null);
-  const [corrNewStatus, setCorrNewStatus] = useState('present');
-  const [corrReason, setCorrReason] = useState('');
-  const [corrSubmitting, setCorrSubmitting] = useState(false);
-  const [corrFormError, setCorrFormError] = useState('');
-  const [corrSuccess, setCorrSuccess] = useState('');
-
-  // Load teacher's assignments
+  // ── Load assignments ──────────────────────────────────────────────────────
   useEffect(() => {
     const token = getToken();
     if (!token || !user?.school_id) return;
-    assignmentsApi.list(token, user.school_id)
+    assignmentsApi
+      .list(token, user.school_id)
       .then((res) => setAssignments(res.data.filter((a) => a.teacher_id === user.id)))
       .catch(() => {})
       .finally(() => setLoadingAssignments(false));
   }, [user]);
 
-  // Load students + existing attendance when class/section/date changes
-  const loadAttendance = useCallback(async () => {
-    if (!filterClass || !filterSection || !date) return;
+  const myClasses = [...new Set(assignments.map((a) => a.class_name))].sort();
+  const mySections = [
+    ...new Set(assignments.filter((a) => a.class_name === selectedClass).map((a) => a.section)),
+  ].sort();
+
+  // ── Load students for selected class/section/date ─────────────────────────
+  const loadStudents = useCallback(async () => {
+    if (!selectedClass || !selectedSection || !date || !user?.school_id) return;
     const token = getToken();
     if (!token) return;
-    setLoadingCheck(true);
-    setSuccess(''); setError(''); setAlreadyAllRfid(false);
+
+    setLoadingStudents(true);
+    setBanner(null);
+    setStudents([]);
+    setMode('marking');
+    setSubmittedAt(null);
+    setCorrectionReason('');
+    setCorrectionReasonError(false);
+
     try {
-      const res = await attendanceApi.check(token, {
-        class_name: filterClass,
-        section: filterSection,
-        date,
-      });
-      const { students, existing }: AttendanceCheckResult = res.data;
-      const existingMap = new Map(existing.map((e) => [e.student_id, e]));
+      const data = await apiFetch<
+        {
+          student_id: string;
+          name: string;
+          roll_number: string | null;
+          photo_url: string | null;
+          status: 'present' | 'absent' | 'not_marked';
+        }[]
+      >(
+        `/api/attendance/class?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}&date=${date}&school_id=${user.school_id}`,
+        { method: 'GET' },
+        token
+      );
 
-      const studentRows: StudentRow[] = students.map((s) => {
-        const ex = existingMap.get(s.id);
-        return {
-          id: s.id,
-          full_name: s.full_name,
-          class_name: s.class_name,
-          section: s.section,
-          status: (ex?.status as AttendanceStatus) ?? 'present',
-          rfidMarked: ex?.source === 'rfid',
-          rfidStatus: ex?.source === 'rfid' ? ex.status : undefined,
-        };
-      });
+      const alreadySubmitted = data.some((s) => s.status !== 'not_marked');
 
-      setRows(studentRows);
-      // If every student is already RFID-marked, show info banner
-      if (studentRows.length > 0 && studentRows.every((r) => r.rfidMarked)) {
-        setAlreadyAllRfid(true);
+      if (alreadySubmitted) {
+        // Read-only mode — show what was submitted
+        const cards: StudentCard[] = data.map((s) => ({
+          student_id: s.student_id,
+          name: s.name,
+          roll_number: s.roll_number,
+          photo_url: s.photo_url,
+          status: s.status === 'absent' ? 'absent' : 'present',
+          originalStatus: s.status === 'absent' ? 'absent' : 'present',
+        }));
+        setStudents(cards);
+        setMode('readonly');
+        setSubmittedAt(date);
+      } else {
+        // Fresh marking — everyone starts as present
+        const cards: StudentCard[] = data.map((s) => ({
+          student_id: s.student_id,
+          name: s.name,
+          roll_number: s.roll_number,
+          photo_url: s.photo_url,
+          status: 'present',
+        }));
+        setStudents(cards);
+        setMode('marking');
       }
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to load attendance');
+      setBanner({ type: 'error', msg: e instanceof Error ? e.message : 'Failed to load students' });
     } finally {
-      setLoadingCheck(false);
+      setLoadingStudents(false);
     }
-  }, [filterClass, filterSection, date]);
+  }, [selectedClass, selectedSection, date, user?.school_id]);
 
-  useEffect(() => { loadAttendance(); }, [loadAttendance]);
-
-  function setStatus(studentId: string, status: AttendanceStatus) {
-    setRows((prev) => prev.map((r) => r.id === studentId ? { ...r, status } : r));
+  // ── Toggle a student's status ─────────────────────────────────────────────
+  function toggleStudent(id: string) {
+    if (mode === 'readonly') return;
+    setStudents((prev) =>
+      prev.map((s) =>
+        s.student_id === id
+          ? { ...s, status: s.status === 'present' ? 'absent' : 'present' }
+          : s
+      )
+    );
   }
 
-  function markAll(status: AttendanceStatus) {
-    setRows((prev) => prev.map((r) => r.rfidMarked ? r : { ...r, status }));
+  // ── Submit attendance ─────────────────────────────────────────────────────
+  async function submitAttendance() {
+    const token = getToken();
+    if (!token || !user?.school_id) return;
+    setSubmitting(true);
+    setBanner(null);
+    try {
+      const absentIds = students.filter((s) => s.status === 'absent').map((s) => s.student_id);
+      await apiFetch(
+        '/api/attendance/submit',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            class: selectedClass,
+            section: selectedSection,
+            date,
+            school_id: user.school_id,
+            absent_student_ids: absentIds,
+          }),
+        },
+        token
+      );
+      setBanner({ type: 'success', msg: 'Attendance submitted. Parents will be notified.' });
+      setMode('readonly');
+      setSubmittedAt(date);
+      // Refresh to get server state
+      await loadStudents();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to submit attendance';
+      if (msg.toLowerCase().includes('already')) {
+        setBanner({ type: 'warning', msg: 'Attendance already submitted for today.' });
+        setMode('readonly');
+        await loadStudents();
+      } else {
+        setBanner({ type: 'error', msg });
+      }
+    } finally {
+      setSubmitting(false);
+      setShowConfirm(false);
+    }
   }
 
-  async function handleSubmit() {
-    setError(''); setSuccess('');
+  // ── Enter correction mode ─────────────────────────────────────────────────
+  function enterCorrectionMode() {
+    setMode('correction');
+    setBanner(null);
+    setCorrectionReason('');
+    setCorrectionReasonError(false);
+    // snapshot original statuses
+    setStudents((prev) => prev.map((s) => ({ ...s, originalStatus: s.status })));
+  }
+
+  // ── Submit corrections ────────────────────────────────────────────────────
+  async function submitCorrections() {
+    if (!correctionReason.trim()) {
+      setCorrectionReasonError(true);
+      return;
+    }
     const token = getToken();
     if (!token) return;
 
-    // Only submit non-RFID rows
-    const toSubmit = rows
-      .filter((r) => !r.rfidMarked)
-      .map((r) => ({ student_id: r.id, date, status: r.status }));
-
-    if (toSubmit.length === 0) {
-      setSuccess('All attendance already marked via RFID — nothing to submit.');
+    const changed = students.filter((s) => s.status !== s.originalStatus);
+    if (changed.length === 0) {
+      setBanner({ type: 'warning', msg: 'No changes detected.' });
+      setMode('readonly');
       return;
     }
 
     setSubmitting(true);
+    setBanner(null);
     try {
-      await attendanceApi.bulkSubmit(token, toSubmit);
-      setSuccess(`Attendance saved for ${toSubmit.length} student${toSubmit.length !== 1 ? 's' : ''}.`);
-      await loadAttendance();
+      // We need attendance_ids — re-fetch to get them
+      const data = await apiFetch<
+        { student_id: string; status: string; id?: string }[]
+      >(
+        `/api/attendance/class?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}&date=${date}&school_id=${user!.school_id}`,
+        { method: 'GET' },
+        token
+      );
+      const idMap = new Map(data.map((r) => [r.student_id, (r as { id?: string }).id]));
+
+      await Promise.all(
+        changed.map((s) => {
+          const attendance_id = idMap.get(s.student_id);
+          if (!attendance_id) return Promise.resolve();
+          return apiFetch('/api/attendance/correct', {
+            method: 'PUT',
+            body: JSON.stringify({
+              attendance_id,
+              new_status: s.status,
+              reason: correctionReason.trim(),
+            }),
+          }, token);
+        })
+      );
+
+      setBanner({ type: 'success', msg: `${changed.length} record${changed.length !== 1 ? 's' : ''} corrected successfully.` });
+      setMode('readonly');
+      await loadStudents();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save attendance');
+      setBanner({ type: 'error', msg: e instanceof Error ? e.message : 'Failed to submit corrections' });
     } finally {
       setSubmitting(false);
     }
   }
 
-  const myClasses = [...new Set(assignments.map((a) => a.class_name))];
-  const mySections = [...new Set(assignments.filter((a) => a.class_name === filterClass).map((a) => a.section))];
-  const manualCount = rows.filter((r) => !r.rfidMarked).length;
-  const rfidCount = rows.filter((r) => r.rfidMarked).length;
+  // ── Derived counts ────────────────────────────────────────────────────────
+  const presentCount = students.filter((s) => s.status === 'present').length;
+  const absentCount = students.filter((s) => s.status === 'absent').length;
+  const changedCount = mode === 'correction'
+    ? students.filter((s) => s.status !== s.originalStatus).length
+    : 0;
 
-  // ── Correction helpers ────────────────────────────────────────────────────
-
-  const corrSections = [...new Set(assignments.filter((a) => a.class_name === corrClass).map((a) => a.section))];
-
-  async function loadCorrAttendance() {
-    if (!corrClass || !corrSection || !corrDate) { setCorrError('Select class, section and date.'); return; }
-    const token = getToken();
-    if (!token) return;
-    setCorrError(''); setCorrSuccess('');
-    setLoadingCorr(true);
-    try {
-      const res = await attendanceApi.check(token, { class_name: corrClass, section: corrSection, date: corrDate });
-      const { students, existing } = res.data;
-      const existingMap = new Map(existing.map((e) => [e.student_id, e]));
-      const mapped: CorrRow[] = students
-        .filter((s) => existingMap.has(s.id))
-        .map((s) => {
-          const ex = existingMap.get(s.id)!;
-          return { id: (ex as { id?: string }).id ?? '', student_id: s.id, full_name: s.full_name, status: ex.status, source: ex.source };
-        });
-      setCorrRows(mapped);
-      if (mapped.length === 0) setCorrError('No attendance records found for this date.');
-    } catch (e: unknown) {
-      setCorrError(e instanceof Error ? e.message : 'Failed to load attendance');
-    } finally {
-      setLoadingCorr(false);
-    }
-  }
-
-  function openCorrModal(row: CorrRow) {
-    setCorrTarget(row);
-    setCorrNewStatus(row.status === 'present' ? 'absent' : 'present');
-    setCorrReason('');
-    setCorrFormError('');
-  }
-
-  async function handleCorrect(e: React.FormEvent) {
-    e.preventDefault();
-    setCorrFormError('');
-    if (!corrTarget) return;
-    if (!corrReason.trim()) { setCorrFormError('Reason is required.'); return; }
-    const token = getToken();
-    if (!token) return;
-    setCorrSubmitting(true);
-    try {
-      await attendanceApi.correct(token, {
-        attendance_id: corrTarget.id,
-        new_status: corrNewStatus,
-        reason: corrReason.trim(),
-      });
-      setCorrSuccess(`Attendance for ${corrTarget.full_name} corrected to ${corrNewStatus}.`);
-      setCorrTarget(null);
-      await loadCorrAttendance();
-    } catch (e: unknown) {
-      setCorrFormError(e instanceof Error ? e.message : 'Failed to correct attendance');
-    } finally {
-      setCorrSubmitting(false);
-    }
-  }
-
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <PageHeader title="Manual Attendance" description="Mark attendance for your assigned classes" />
+      <PageHeader
+        title="Mark Attendance"
+        description="Select a class and date, then click absent students"
+      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 mb-6">
-        <select className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-          value={filterClass} onChange={(e) => { setFilterClass(e.target.value); setFilterSection(''); setRows([]); }}
-          disabled={loadingAssignments}>
-          <option value="">Select class…</option>
-          {myClasses.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-
-        <select className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-          value={filterSection} onChange={(e) => { setFilterSection(e.target.value); setRows([]); }}
-          disabled={!filterClass}>
-          <option value="">Select section…</option>
-          {mySections.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-
-        <input type="date" className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          value={date} onChange={(e) => setDate(e.target.value)} />
-      </div>
-
-      {/* Feedback */}
-      {success && (
-        <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 flex items-center gap-2">
-          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-          {success}
-        </div>
-      )}
-      {error && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
-      )}
-
-      {/* RFID info banner */}
-      {alreadyAllRfid && (
-        <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700 flex items-center gap-2">
-          <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          All students in this class have already been marked via RFID today.
-        </div>
-      )}
-
-      {/* Student list */}
-      {!filterClass || !filterSection ? (
-        <div className="bg-white rounded-xl border border-gray-200 text-center py-16 text-sm text-gray-400">
-          Select a class and section to load students.
-        </div>
-      ) : loadingCheck ? (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 text-center py-16 text-sm text-gray-400">
-          No students found for {filterClass} · {filterSection}.
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          {/* Bulk actions */}
-          <div className="flex items-center justify-between px-6 py-3 border-b border-gray-100 bg-gray-50">
-            <div className="flex items-center gap-2 text-xs text-gray-500">
-              <span>{rows.length} students</span>
-              {rfidCount > 0 && (
-                <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">
-                  {rfidCount} via RFID
-                </span>
-              )}
-              {manualCount > 0 && (
-                <span className="px-2 py-0.5 bg-gray-200 text-gray-600 rounded-full">
-                  {manualCount} manual
-                </span>
-              )}
-            </div>
-            {manualCount > 0 && (
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">Mark all:</span>
-                {(['present', 'absent'] as AttendanceStatus[]).map((s) => (
-                  <button key={s} onClick={() => markAll(s)}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors capitalize ${
-                      s === 'present' ? 'bg-green-50 text-green-700 hover:bg-green-100' : 'bg-red-50 text-red-600 hover:bg-red-100'
-                    }`}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="divide-y divide-gray-50">
-            {rows.map((row) => (
-              <div key={row.id} className="flex items-center justify-between px-6 py-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 text-xs font-semibold">
-                    {row.full_name.charAt(0).toUpperCase()}
-                  </div>
-                  <p className="text-sm font-medium text-gray-900">{row.full_name}</p>
-                </div>
-
-                {row.rfidMarked ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full font-medium">
-                      RFID · {row.rfidStatus}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    {(['present', 'absent', 'late', 'excused'] as AttendanceStatus[]).map((s) => (
-                      <button key={s} onClick={() => setStatus(row.id, s)}
-                        className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors capitalize ${
-                          row.status === s
-                            ? s === 'present' ? 'bg-green-600 text-white'
-                              : s === 'absent' ? 'bg-red-600 text-white'
-                              : s === 'late' ? 'bg-orange-500 text-white'
-                              : 'bg-gray-500 text-white'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                        }`}>
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Submit */}
-          {manualCount > 0 && (
-            <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
-              <button onClick={handleSubmit} disabled={submitting}
-                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition-colors">
-                {submitting ? (
-                  <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Saving…</>
-                ) : (
-                  <>Submit Attendance ({manualCount} students)</>
-                )}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Attendance Correction Section ──────────────────────────────────── */}
-      <div className="mt-10">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="h-px flex-1 bg-gray-200" />
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
-            Attendance Correction
-          </h2>
-          <div className="h-px flex-1 bg-gray-200" />
-        </div>
-        <p className="text-xs text-gray-400 mb-4">
-          Select a date and class to view existing records, then correct any wrong entry. A notification will be sent to the parent.
-        </p>
-
-        {/* Correction filters */}
-        <div className="flex flex-wrap gap-3 mb-4">
+      {/* ── Top filter bar ─────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-end gap-3 mb-6">
+        {/* Class */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-500">Class</label>
           <select
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            value={corrClass}
-            onChange={(e) => { setCorrClass(e.target.value); setCorrSection(''); setCorrRows([]); setCorrError(''); setCorrSuccess(''); }}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[140px]"
+            value={selectedClass}
+            onChange={(e) => {
+              setSelectedClass(e.target.value);
+              setSelectedSection('');
+              setStudents([]);
+              setBanner(null);
+            }}
             disabled={loadingAssignments}
           >
             <option value="">Select class…</option>
-            {myClasses.map((c) => <option key={c} value={c}>{c}</option>)}
+            {myClasses.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
           </select>
+        </div>
 
+        {/* Section */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-500">Section</label>
           <select
-            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            value={corrSection}
-            onChange={(e) => { setCorrSection(e.target.value); setCorrRows([]); setCorrError(''); setCorrSuccess(''); }}
-            disabled={!corrClass}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[120px]"
+            value={selectedSection}
+            onChange={(e) => {
+              setSelectedSection(e.target.value);
+              setStudents([]);
+              setBanner(null);
+            }}
+            disabled={!selectedClass}
           >
             <option value="">Select section…</option>
-            {corrSections.map((s) => <option key={s} value={s}>{s}</option>)}
+            {mySections.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
           </select>
+        </div>
 
+        {/* Date */}
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-500">Date</label>
           <input
             type="date"
             className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={corrDate}
-            onChange={(e) => { setCorrDate(e.target.value); setCorrRows([]); setCorrError(''); setCorrSuccess(''); }}
+            value={date}
+            max={todayStr()}
+            onChange={(e) => {
+              setDate(e.target.value);
+              setStudents([]);
+              setBanner(null);
+            }}
           />
-
-          <button
-            type="button"
-            onClick={loadCorrAttendance}
-            disabled={loadingCorr}
-            className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-900 disabled:bg-gray-400 text-white text-sm font-medium rounded-lg transition-colors"
-          >
-            {loadingCorr ? (
-              <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Loading…</>
-            ) : 'Load Attendance'}
-          </button>
         </div>
 
-        {/* Correction feedback */}
-        {corrSuccess && (
-          <div className="mb-4 px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 flex items-center gap-2">
+        {/* Load button */}
+        <button
+          type="button"
+          onClick={loadStudents}
+          disabled={!selectedClass || !selectedSection || !date || loadingStudents}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 rounded-lg transition-colors self-end"
+        >
+          {loadingStudents ? 'Loading…' : 'Load Students'}
+        </button>
+      </div>
+
+      {/* ── Banner ─────────────────────────────────────────────────────────── */}
+      {banner && (
+        <div
+          className={`mb-5 px-4 py-3 rounded-lg text-sm flex items-center gap-2 ${
+            banner.type === 'success'
+              ? 'bg-green-50 border border-green-200 text-green-700'
+              : banner.type === 'warning'
+              ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
+              : 'bg-red-50 border border-red-200 text-red-700'
+          }`}
+        >
+          {banner.type === 'success' && (
             <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            {corrSuccess}
-          </div>
-        )}
-        {corrError && (
-          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{corrError}</div>
-        )}
+          )}
+          {banner.msg}
+        </div>
+      )}
 
-        {/* Correction table */}
-        {corrRows.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            <div className="px-6 py-3 border-b border-gray-100 bg-gray-50">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                {corrClass} · {corrSection} — {corrDate} — {corrRows.length} record{corrRows.length !== 1 ? 's' : ''}
+      {/* ── Empty state ─────────────────────────────────────────────────────── */}
+      {students.length === 0 && !loadingStudents && (
+        <div className="bg-white rounded-xl border border-gray-200 text-center py-16 text-sm text-gray-400">
+          {!selectedClass || !selectedSection
+            ? 'Select a class and section, then click "Load Students".'
+            : 'No students found for this class and section.'}
+        </div>
+      )}
+
+      {/* ── Loading spinner ──────────────────────────────────────────────────── */}
+      {loadingStudents && (
+        <div className="flex items-center justify-center py-16">
+          <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+      )}
+
+      {/* ── Student grid ─────────────────────────────────────────────────────── */}
+      {students.length > 0 && !loadingStudents && (
+        <>
+          {/* Summary bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <p className="text-sm font-semibold text-gray-800">
+                {selectedClass} {selectedSection} — {date} — {students.length} Students
+              </p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                <span className="text-green-600 font-medium">{presentCount} Present</span>
+                {' · '}
+                <span className="text-red-600 font-medium">{absentCount} Absent</span>
               </p>
             </div>
-            <div className="divide-y divide-gray-50">
-              {corrRows.map((row) => (
-                <div key={row.student_id} className="flex items-center justify-between px-6 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center text-gray-600 text-xs font-semibold">
-                      {row.full_name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">{row.full_name}</p>
-                      {row.source && (
-                        <p className="text-xs text-gray-400">Source: {row.source}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${
-                      row.status === 'present' ? 'bg-green-100 text-green-700'
-                      : row.status === 'absent' ? 'bg-red-100 text-red-600'
-                      : row.status === 'late' ? 'bg-orange-100 text-orange-600'
-                      : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {row.status}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => openCorrModal(row)}
-                      className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+
+            {/* Readonly badge + Correct button */}
+            {mode === 'readonly' && (
+              <div className="flex items-center gap-3">
+                {submittedAt && (
+                  <span className="text-xs text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
+                    Submitted at {submittedAt}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={enterCorrectionMode}
+                  className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                >
+                  Correct Attendance
+                </button>
+              </div>
+            )}
+
+            {/* Correction mode hint */}
+            {mode === 'correction' && (
+              <span className="text-xs font-medium text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full">
+                Correction mode — {changedCount} change{changedCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+
+          {/* Instruction hint for marking mode */}
+          {mode === 'marking' && (
+            <p className="text-xs text-gray-400 mb-3">
+              All students are <span className="text-green-600 font-medium">present</span> by default. Click a card to mark as <span className="text-red-600 font-medium">absent</span>.
+            </p>
+          )}
+
+          {/* Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-6">
+            {students.map((s) => {
+              const isAbsent = s.status === 'absent';
+              const isChanged = mode === 'correction' && s.status !== s.originalStatus;
+              const isClickable = mode === 'marking' || mode === 'correction';
+
+              return (
+                <button
+                  key={s.student_id}
+                  type="button"
+                  onClick={() => isClickable && toggleStudent(s.student_id)}
+                  disabled={!isClickable}
+                  className={`relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 text-left transition-colors ${
+                    isChanged
+                      ? 'border-yellow-400 bg-yellow-50'
+                      : isAbsent
+                      ? 'border-red-300 bg-red-50'
+                      : 'border-green-300 bg-green-50'
+                  } ${isClickable ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
+                >
+                  {/* Changed indicator */}
+                  {isChanged && (
+                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-yellow-500" />
+                  )}
+
+                  {/* Avatar */}
+                  {s.photo_url ? (
+                    <img
+                      src={s.photo_url}
+                      alt={s.name}
+                      className="w-12 h-12 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div
+                      className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold ${
+                        isAbsent ? 'bg-red-200 text-red-700' : 'bg-green-200 text-green-700'
+                      }`}
                     >
-                      Correct
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                      {s.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+
+                  {/* Name */}
+                  <p className="text-xs font-semibold text-gray-900 text-center leading-tight line-clamp-2">
+                    {s.name}
+                  </p>
+
+                  {/* Roll number */}
+                  {s.roll_number && (
+                    <p className="text-xs text-gray-400">#{s.roll_number}</p>
+                  )}
+
+                  {/* Status badge */}
+                  <span
+                    className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      isAbsent
+                        ? 'bg-red-100 text-red-700'
+                        : 'bg-green-100 text-green-700'
+                    }`}
+                  >
+                    {isAbsent ? 'Absent' : 'Present'}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-        )}
-      </div>
 
-      {/* ── Correction Modal ───────────────────────────────────────────────── */}
-      <Modal open={!!corrTarget} onClose={() => setCorrTarget(null)} title="Correct Attendance">
-        <form onSubmit={handleCorrect} className="space-y-4">
-          {corrFormError && (
-            <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{corrFormError}</div>
-          )}
-
-          {corrTarget && (
-            <div className="px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-lg space-y-1">
-              <p className="text-xs text-gray-500 font-medium">Student</p>
-              <p className="text-sm font-semibold text-gray-900">{corrTarget.full_name}</p>
-              <p className="text-xs text-gray-500">
-                Current status: <span className="font-medium capitalize text-gray-700">{corrTarget.status}</span>
-              </p>
+          {/* ── Correction reason input ─────────────────────────────────────── */}
+          {mode === 'correction' && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Reason for correction <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                rows={2}
+                className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none ${
+                  correctionReasonError ? 'border-red-400' : 'border-gray-300'
+                }`}
+                placeholder="Explain why you are correcting this attendance…"
+                value={correctionReason}
+                onChange={(e) => {
+                  setCorrectionReason(e.target.value);
+                  if (e.target.value.trim()) setCorrectionReasonError(false);
+                }}
+              />
+              {correctionReasonError && (
+                <p className="text-xs text-red-600 mt-1">Reason is required before submitting corrections.</p>
+              )}
             </div>
           )}
+        </>
+      )}
 
-          <FormField label="New Status" htmlFor="corr-status" required>
-            <select
-              id="corr-status"
-              className={inputClass}
-              value={corrNewStatus}
-              onChange={(e) => setCorrNewStatus(e.target.value)}
-            >
-              {(['present', 'absent', 'late', 'excused'] as const).map((s) => (
-                <option key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-              ))}
-            </select>
-          </FormField>
+      {/* ── Sticky bottom bar ─────────────────────────────────────────────────── */}
+      {students.length > 0 && !loadingStudents && mode !== 'readonly' && (
+        <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3 z-10">
+          <p className="text-sm text-gray-700">
+            <span className="font-semibold text-green-600">{presentCount} Present</span>
+            {', '}
+            <span className="font-semibold text-red-600">{absentCount} Absent</span>
+            {mode === 'correction' && changedCount > 0 && (
+              <span className="ml-2 text-yellow-600 font-medium">· {changedCount} changed</span>
+            )}
+          </p>
 
-          <FormField label="Reason" htmlFor="corr-reason" required>
-            <textarea
-              id="corr-reason"
-              rows={3}
-              className={`${inputClass} resize-none`}
-              placeholder="Explain why this correction is needed…"
-              value={corrReason}
-              onChange={(e) => setCorrReason(e.target.value)}
-            />
-          </FormField>
+          <div className="flex items-center gap-3">
+            {mode === 'correction' && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('readonly');
+                  setStudents((prev) => prev.map((s) => ({ ...s, status: s.originalStatus ?? s.status })));
+                  setCorrectionReason('');
+                  setCorrectionReasonError(false);
+                  setBanner(null);
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            )}
 
-          <div className="flex justify-end gap-3 pt-1">
             <button
               type="button"
-              onClick={() => setCorrTarget(null)}
-              className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              onClick={() => {
+                if (mode === 'correction') {
+                  submitCorrections();
+                } else {
+                  setShowConfirm(true);
+                }
+              }}
+              disabled={submitting || students.length === 0}
+              className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 rounded-lg transition-colors"
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={corrSubmitting}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-lg transition-colors"
-            >
-              {corrSubmitting ? 'Saving…' : 'Submit Correction'}
+              {submitting
+                ? 'Submitting…'
+                : mode === 'correction'
+                ? 'Submit Correction'
+                : 'Submit Attendance'}
             </button>
           </div>
-        </form>
-      </Modal>
+        </div>
+      )}
+
+      {/* ── Confirm modal ─────────────────────────────────────────────────────── */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 p-6">
+            <h2 className="text-base font-semibold text-gray-900 mb-2">Confirm Submission</h2>
+            <p className="text-sm text-gray-600 mb-4">
+              Submit attendance for{' '}
+              <span className="font-medium">{selectedClass} {selectedSection}</span>?
+            </p>
+            <div className="flex gap-4 mb-5">
+              <div className="flex-1 bg-green-50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-green-600">{presentCount}</p>
+                <p className="text-xs text-green-700 mt-0.5">Present</p>
+              </div>
+              <div className="flex-1 bg-red-50 rounded-lg p-3 text-center">
+                <p className="text-2xl font-bold text-red-600">{absentCount}</p>
+                <p className="text-xs text-red-700 mt-0.5">Absent</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowConfirm(false)}
+                className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitAttendance}
+                disabled={submitting}
+                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-lg transition-colors"
+              >
+                {submitting ? 'Submitting…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

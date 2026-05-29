@@ -12,9 +12,9 @@ router.use(authenticate);
 // -- Schemas ------------------------------------------------------------------
 
 const createNotificationSchema = z.object({
-  title: z.string().min(1),
-  body: z.string().min(1),
-  recipient_ids: z.array(z.string().uuid()).min(1),
+  title: z.string().min(1).max(200),
+  body: z.string().min(1).max(2000),
+  recipient_ids: z.array(z.string().uuid()).min(1).max(500),
   type: z.enum(['announcement', 'alert', 'reminder', 'grade', 'attendance']),
 });
 

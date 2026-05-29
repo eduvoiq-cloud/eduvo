@@ -11,12 +11,14 @@ import {
   testsApi,
   adminApi,
   attendanceApi,
+  onboardingApi,
   type Student,
   type Teacher,
   type Complaint,
   type FeeRecord,
   type Test,
   type AuditLog,
+  type OnboardingProgress,
 } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -96,6 +98,39 @@ function formatAuditEntry(log: AuditLog): string {
   }
 }
 
+// ── Skeleton stat card ────────────────────────────────────────────────────────
+
+function StatCardSkeleton() {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 animate-pulse">
+      <div className="flex items-center justify-between mb-3">
+        <div className="h-3 bg-gray-200 rounded w-28" />
+        <div className="w-8 h-8 bg-gray-200 rounded-lg" />
+      </div>
+      <div className="h-7 bg-gray-200 rounded w-16 mb-2" />
+      <div className="h-3 bg-gray-200 rounded w-32" />
+    </div>
+  );
+}
+
+// ── Skeleton activity feed ────────────────────────────────────────────────────
+
+function ActivityFeedSkeleton() {
+  return (
+    <div className="divide-y divide-gray-50">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="flex items-start gap-3 px-6 py-3 animate-pulse">
+          <div className="mt-0.5 w-7 h-7 rounded-full bg-gray-200 shrink-0" />
+          <div className="flex-1 space-y-1.5">
+            <div className="h-3.5 bg-gray-200 rounded w-3/4" />
+            <div className="h-3 bg-gray-200 rounded w-20" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SchoolAdminDashboard() {
@@ -111,6 +146,7 @@ export default function SchoolAdminDashboard() {
     activeTests: 0,
   });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [onboarding, setOnboarding] = useState<OnboardingProgress | null>(null);
   const [loading, setLoading] = useState(true);
   const [auditLoading, setAuditLoading] = useState(true);
 
@@ -123,7 +159,7 @@ export default function SchoolAdminDashboard() {
 
     // Fetch all stats in parallel
     Promise.all([
-      studentsApi.list(token, schoolId),
+      studentsApi.list(token, { school_id: schoolId, limit: 0 }),
       usersApi.list(token, { role: 'teacher', school_id: schoolId }),
       attendanceApi.check(token, { class_name: '', date: today }).catch(() => null),
       complaintsApi.list(token, { status: 'pending' }),
@@ -131,7 +167,7 @@ export default function SchoolAdminDashboard() {
       testsApi.list(token),
     ])
       .then(([studentsRes, teachersRes, attendanceRes, complaintsRes, feesRes, testsRes]) => {
-        const students: Student[] = studentsRes.data ?? [];
+        const students: Student[] = (studentsRes.data as Student[]) ?? [];
         const teachers: Teacher[] = teachersRes.data ?? [];
         const complaints: Complaint[] = complaintsRes.data ?? [];
         const fees: FeeRecord[] = feesRes.data ?? [];
@@ -178,10 +214,17 @@ export default function SchoolAdminDashboard() {
       .then((res) => setAuditLogs(res.data ?? []))
       .catch(() => {})
       .finally(() => setAuditLoading(false));
-  }, [user]);
 
-  const attendanceDisplay =
-    stats.attendancePct === null ? '—' : `${stats.attendancePct}%`;
+    // Fetch onboarding status (non-blocking)
+    onboardingApi
+      .getStatus(token)
+      .then((res) => {
+        if (!res.data.completed) {
+          setOnboarding(res.data);
+        }
+      })
+      .catch(() => {});
+  }, [user]);
 
   return (
     <>
@@ -190,48 +233,66 @@ export default function SchoolAdminDashboard() {
         description="School overview and quick actions"
       />
 
+      {/* ── Onboarding banner ──────────────────────────────────────────────── */}
+      {onboarding && !onboarding.completed && (
+        <OnboardingBanner progress={onboarding} />
+      )}
+
       {/* ── Stats grid ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-        <StatCard
-          label="Total Students"
-          value={loading ? '—' : stats.totalStudents}
-          sub={
-            stats.studentTrend !== null
-              ? `${stats.studentTrend >= 0 ? '+' : ''}${stats.studentTrend} vs last month`
-              : 'Enrolled in your school'
-          }
-          icon={<StudentsIcon />}
-        />
-        <StatCard
-          label="Total Teachers"
-          value={loading ? '—' : stats.totalTeachers}
-          sub="Active staff members"
-          icon={<TeacherIcon />}
-        />
-        <StatCard
-          label="Today's Attendance"
-          value={loading ? '—' : attendanceDisplay}
-          sub="Present / total students"
-          icon={<AttendanceIcon />}
-        />
-        <StatCard
-          label="Pending Complaints"
-          value={loading ? '—' : stats.pendingComplaints}
-          sub="Awaiting review"
-          icon={<ComplaintIcon />}
-        />
-        <StatCard
-          label="Fee Defaulters"
-          value={loading ? '—' : stats.feeDefaulters}
-          sub="Fee not yet paid"
-          icon={<FeeIcon />}
-        />
-        <StatCard
-          label="Active Tests"
-          value={loading ? '—' : stats.activeTests}
-          sub="Scheduled today or upcoming"
-          icon={<TestIcon />}
-        />
+        {loading ? (
+          <>
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+          </>
+        ) : (
+          <>
+            <StatCard
+              label="Total Students"
+              value={stats.totalStudents}
+              sub={
+                stats.studentTrend !== null
+                  ? `${stats.studentTrend >= 0 ? '+' : ''}${stats.studentTrend} vs last month`
+                  : 'Enrolled in your school'
+              }
+              icon={<StudentsIcon />}
+            />
+            <StatCard
+              label="Total Teachers"
+              value={stats.totalTeachers}
+              sub="Active staff members"
+              icon={<TeacherIcon />}
+            />
+            <StatCard
+              label="Today's Attendance"
+              value={stats.attendancePct === null ? '—' : `${stats.attendancePct}%`}
+              sub="Present / total students"
+              icon={<AttendanceIcon />}
+            />
+            <StatCard
+              label="Pending Complaints"
+              value={stats.pendingComplaints}
+              sub="Awaiting review"
+              icon={<ComplaintIcon />}
+            />
+            <StatCard
+              label="Fee Defaulters"
+              value={stats.feeDefaulters}
+              sub="Fee not yet paid"
+              icon={<FeeIcon />}
+            />
+            <StatCard
+              label="Active Tests"
+              value={stats.activeTests}
+              sub="Scheduled today or upcoming"
+              icon={<TestIcon />}
+            />
+          </>
+        )}
       </div>
 
       {/* ── Quick actions ───────────────────────────────────────────────────── */}
@@ -255,7 +316,7 @@ export default function SchoolAdminDashboard() {
         </div>
 
         {auditLoading ? (
-          <div className="px-6 py-8 text-center text-sm text-gray-400">Loading activity…</div>
+          <ActivityFeedSkeleton />
         ) : auditLogs.length === 0 ? (
           <div className="px-6 py-8 text-center text-sm text-gray-400">No activity recorded yet.</div>
         ) : (
@@ -277,6 +338,42 @@ export default function SchoolAdminDashboard() {
         )}
       </div>
     </>
+  );
+}
+
+// ── Onboarding Banner ─────────────────────────────────────────────────────────
+
+function OnboardingBanner({ progress }: { progress: OnboardingProgress }) {
+  const steps = [
+    progress.school_created,
+    progress.teachers_imported,
+    progress.students_imported,
+    progress.teachers_assigned,
+  ];
+  const completedCount = steps.filter(Boolean).length;
+  const remaining = steps.length - completedCount;
+
+  return (
+    <div className="mb-6 flex items-center justify-between gap-4 px-5 py-4 bg-blue-50 border border-blue-200 rounded-xl">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+          <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+          </svg>
+        </div>
+        <p className="text-sm text-blue-800 font-medium truncate">
+          Complete your school setup —{' '}
+          <span className="font-semibold">{remaining} step{remaining !== 1 ? 's' : ''} remaining</span>
+        </p>
+      </div>
+      <Link
+        href="/admin/onboarding"
+        className="shrink-0 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+      >
+        Continue Setup →
+      </Link>
+    </div>
   );
 }
 
