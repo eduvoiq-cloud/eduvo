@@ -174,6 +174,7 @@ export default function SettingsPage() {
           <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : (
+        <>
         <form onSubmit={handleSave} className="max-w-xl space-y-6">
 
           {/* Feedback */}
@@ -395,6 +396,7 @@ export default function SettingsPage() {
             </div>
           </section>
         </div>
+        </>
       )}
 
       {/* ── Delete School Modal ─────────────────────────────────────────────── */}
