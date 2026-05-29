@@ -58,6 +58,133 @@ function todayDate(): string {
 // ── All routes require authentication ─────────────────────────────────────────
 router.use(authenticate);
 
+// ── GET /api/attendance/check ─────────────────────────────────────────────────
+/**
+ * Check existing attendance for a class on a date.
+ * Used by the dashboard for today's attendance % and by the attendance page.
+ * Returns { students: [...], existing: [...] }
+ *
+ * Query params: class_name, section (optional), date
+ * If class_name is empty, returns school-wide today summary instead.
+ */
+router.get(
+  '/check',
+  requireRole('superadmin', 'schooladmin', 'teacher'),
+  async (req: Request, res: Response) => {
+    const className = (req.query.class_name as string) ?? '';
+    const section   = (req.query.section as string) ?? '';
+    const date      = (req.query.date as string) || todayDate();
+
+    const school_id = req.user!.school_id;
+    if (!school_id) {
+      sendError(res, 'Your account is not linked to a school', 403);
+      return;
+    }
+
+    // If no class_name provided, return school-wide summary for the dashboard stat card
+    if (!className) {
+      const { data: students, error: stuErr } = await supabaseAdmin
+        .from('students')
+        .select('id')
+        .eq('school_id', school_id)
+        .eq('is_deleted', false);
+
+      if (stuErr) { sendError(res, stuErr.message, 500); return; }
+
+      const allIds = (students ?? []).map((s: { id: string }) => s.id);
+      if (allIds.length === 0) {
+        sendSuccess(res, { students: [], existing: [] });
+        return;
+      }
+
+      const { data: existing, error: attErr } = await supabaseAdmin
+        .from('attendance')
+        .select('student_id, status, source')
+        .in('student_id', allIds)
+        .eq('date', date);
+
+      if (attErr) { sendError(res, attErr.message, 500); return; }
+
+      sendSuccess(res, {
+        students: students ?? [],
+        existing: existing ?? [],
+      });
+      return;
+    }
+
+    // Specific class requested
+    let studentQuery = supabaseAdmin
+      .from('students')
+      .select('id, full_name, class_name, section')
+      .eq('school_id', school_id)
+      .eq('class_name', className)
+      .eq('is_deleted', false);
+
+    if (section) studentQuery = studentQuery.eq('section', section);
+
+    const { data: students, error: stuErr } = await studentQuery;
+    if (stuErr) { sendError(res, stuErr.message, 500); return; }
+
+    const allIds = (students ?? []).map((s: { id: string }) => s.id);
+    if (allIds.length === 0) {
+      sendSuccess(res, { students: [], existing: [] });
+      return;
+    }
+
+    const { data: existing, error: attErr } = await supabaseAdmin
+      .from('attendance')
+      .select('student_id, status, source')
+      .in('student_id', allIds)
+      .eq('date', date);
+
+    if (attErr) { sendError(res, attErr.message, 500); return; }
+
+    sendSuccess(res, {
+      students: students ?? [],
+      existing: existing ?? [],
+    });
+  }
+);
+
+// ── GET /api/attendance/bulk ──────────────────────────────────────────────────
+// Alias kept for frontend compatibility — same as /check but POST for bulk ops
+router.post(
+  '/bulk',
+  requireRole('superadmin', 'schooladmin', 'teacher'),
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      records: z.array(z.object({
+        student_id: z.string().uuid(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        status: z.enum(['present', 'absent', 'late', 'excused']),
+        notes: z.string().optional(),
+      })),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+    const userId = req.user!.id;
+    const rows = parsed.data.records.map((r) => ({
+      ...r,
+      recorded_by: userId,
+      source: 'manual',
+      created_at: new Date().toISOString(),
+    }));
+
+    const { data, error } = await supabaseAdmin
+      .from('attendance')
+      .upsert(rows, { onConflict: 'student_id,date', ignoreDuplicates: false })
+      .select();
+
+    if (error) { sendError(res, error.message, 500); return; }
+
+    sendSuccess(res, data ?? [], 'Attendance saved');
+  }
+);
+
+
+
 // ── GET /api/attendance/class ─────────────────────────────────────────────────
 /**
  * Fetch all students for a class/section with their attendance status for a date.
