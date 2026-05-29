@@ -197,7 +197,7 @@ async function seedParentUser(schoolId: string): Promise<string> {
 interface TeacherDef {
   email: string;
   name: string;
-  assignments: { subject: string; class_name: string; section: string }[];
+  assignments: { subject: string; class: string; section: string }[];
 }
 
 async function seedTeachers(
@@ -253,7 +253,7 @@ async function seedTeachers(
         .select('id')
         .eq('teacher_id', userId)
         .eq('school_id', schoolId)
-        .eq('class_name', a.class_name)
+        .eq('class', a.class)
         .eq('section', a.section)
         .eq('subject', a.subject)
         .maybeSingle();
@@ -263,13 +263,13 @@ async function seedTeachers(
       const { error } = await supabaseAdmin.from('teacher_assignments').insert({
         teacher_id: userId,
         school_id: schoolId,
-        class_name: a.class_name,
+        class: a.class,
         section: a.section,
         subject: a.subject,
       });
 
       if (error) console.warn(`  [warn] Assignment insert: ${error.message}`);
-      else console.log(`    → Assigned ${a.subject} / ${a.class_name} ${a.section}`);
+      else console.log(`    → Assigned ${a.subject} / ${a.class} ${a.section}`);
     }
   }
 
@@ -369,7 +369,7 @@ async function seedAdmin2(schoolId: string, superAdminId: string): Promise<strin
 
 interface StudentDef {
   full_name: string;
-  class_name: string;
+  class: string;
   section: string;
   roll_number: string;
   parentEmail: string;
@@ -389,7 +389,7 @@ async function seedStudents(
       .select('id')
       .eq('school_id', schoolId)
       .eq('full_name', def.full_name)
-      .eq('class_name', def.class_name)
+      .eq('class', def.class)
       .eq('section', def.section)
       .maybeSingle();
 
@@ -406,11 +406,10 @@ async function seedStudents(
       .from('students')
       .insert({
         full_name: def.full_name,
-        class_name: def.class_name,
+        class: def.class,
         section: def.section,
         roll_number: def.roll_number,
         school_id: schoolId,
-        parent_id: parentId,
         is_deleted: false,
       })
       .select('id')
@@ -432,7 +431,7 @@ async function seedStudents(
     }
 
     ids.push(student.id as string);
-    console.log(`  [done] ${def.full_name} (${def.class_name} ${def.section})`);
+    console.log(`  [done] ${def.full_name} (${def.class} ${def.section})`);
   }
 
   return ids;
@@ -670,7 +669,7 @@ async function seedFees(
 interface TestDef {
   title: string;
   subject: string;
-  class_name: string;
+  class: string;
   section: string;
   term: string;
   date: string;
@@ -744,7 +743,7 @@ async function seedTests(
       .select('id')
       .eq('school_id', schoolId)
       .eq('title', def.title)
-      .eq('class_name', def.class_name)
+      .eq('class', def.class)
       .eq('section', def.section)
       .maybeSingle();
 
@@ -759,7 +758,7 @@ async function seedTests(
       .insert({
         title: def.title,
         subject: def.subject,
-        class_name: def.class_name,
+        class: def.class,
         section: def.section,
         term: def.term,
         date: def.date,
@@ -793,7 +792,7 @@ async function seedTests(
     }
 
     testIds.push(test.id as string);
-    console.log(`  [done] Test "${def.title}" (${def.class_name} ${def.section})`);
+    console.log(`  [done] Test "${def.title}" (${def.class} ${def.section})`);
   }
 
   return testIds;
@@ -915,9 +914,9 @@ async function seedComplaints(
   console.log('\n── Complaints ───────────────────────────────────────────────');
 
   const complaintDefs = [
-    { subject: 'Homework overload', body: 'My child is getting too much homework every day.' },
-    { subject: 'Bullying concern', body: 'There seems to be a bullying issue in the classroom.' },
-    { subject: 'Fee receipt not received', body: 'I paid the fees but did not receive a receipt.' },
+    { subject: 'Homework overload', message: 'My child is getting too much homework every day.' },
+    { subject: 'Bullying concern', message: 'There seems to be a bullying issue in the classroom.' },
+    { subject: 'Fee receipt not received', message: 'I paid the fees but did not receive a receipt.' },
   ];
 
   for (let i = 0; i < complaintDefs.length; i++) {
@@ -940,7 +939,7 @@ async function seedComplaints(
 
     const { error } = await supabaseAdmin.from('complaints').insert({
       subject: def.subject,
-      body: def.body,
+      message: def.message,
       school_id: schoolId,
       submitted_by: parentId,
       student_id: studentId,
@@ -1005,9 +1004,9 @@ async function seedNotifications(
   console.log('\n── Notifications ────────────────────────────────────────────');
 
   const notifDefs = [
-    { title: 'Attendance Alert', body: 'Your child was absent today.', type: 'attendance' as const },
-    { title: 'New Test Available', body: "A new test has been published for your child's class.", type: 'reminder' as const },
-    { title: 'Fee Reminder', body: 'Term 1 fees are due. Please pay at the earliest.', type: 'reminder' as const },
+    { title: 'Attendance Alert', message: 'Your child was absent today.', type: 'attendance' as const },
+    { title: 'New Test Available', message: "A new test has been published for your child's class.", type: 'reminder' as const },
+    { title: 'Fee Reminder', message: 'Term 1 fees are due. Please pay at the earliest.', type: 'reminder' as const },
   ];
 
   for (const parentId of parentIds) {
@@ -1023,7 +1022,7 @@ async function seedNotifications(
 
       const { error } = await supabaseAdmin.from('notifications').insert({
         title: def.title,
-        body: def.body,
+        message: def.message,
         type: def.type,
         recipient_id: parentId,
         sender_id: senderId,
@@ -1151,15 +1150,15 @@ async function seedAiUsage(teacherId: string, schoolId: string): Promise<void> {
 // ── Step 16: Seed legal_pages ─────────────────────────────────────────────────
 /**
  * Inserts placeholder privacy policy and terms of service into legal_pages table.
- * Table structure assumed: id (uuid), slug (text unique), title (text),
- *                          content (text), updated_at (timestamptz)
+ * Table structure: id (uuid), page_type (text unique), title (text),
+ *                  content (text), updated_at (timestamptz)
  */
 async function seedLegalPages(): Promise<void> {
   console.log('\n── Legal Pages ──────────────────────────────────────────────');
 
   const pages = [
     {
-      slug: 'privacy-policy',
+      page_type: 'privacy_policy',
       title: 'Privacy Policy',
       content: `# Privacy Policy
 
@@ -1198,7 +1197,7 @@ We use industry-standard encryption (TLS in transit, AES-256 at rest) and role-b
 For privacy-related queries: privacy@eduvo.com`,
     },
     {
-      slug: 'terms-of-service',
+      page_type: 'terms_of_service',
       title: 'Terms of Service',
       content: `# Terms of Service
 
@@ -1247,24 +1246,23 @@ For terms-related queries: legal@eduvo.com`,
   for (const page of pages) {
     const { data: existing } = await supabaseAdmin
       .from('legal_pages')
-      .select('slug')
-      .eq('slug', page.slug)
+      .select('page_type')
+      .eq('page_type', page.page_type)
       .maybeSingle();
 
     if (existing) {
-      console.log(`  [skip] legal_pages "${page.slug}" already exists`);
+      console.log(`  [skip] legal_pages "${page.page_type}" already exists`);
       continue;
     }
 
     const { error } = await supabaseAdmin.from('legal_pages').insert({
-      slug:       page.slug,
-      title:      page.title,
+      page_type:  page.page_type,
       content:    page.content,
       updated_at: new Date().toISOString(),
     });
 
-    if (error) console.warn(`  [warn] legal_pages "${page.slug}": ${error.message}`);
-    else console.log(`  [done] legal_pages: "${page.title}"`);
+    if (error) console.warn(`  [warn] legal_pages "${page.page_type}": ${error.message}`);
+    else console.log(`  [done] legal_pages: "${page.page_type}"`);
   }
 }
 
@@ -1274,6 +1272,24 @@ async function main(): Promise<void> {
   console.log('╔══════════════════════════════════════════════════════╗');
   console.log('║       Eduvo — Comprehensive Data Seeder              ║');
   console.log('╚══════════════════════════════════════════════════════╝');
+
+  // ── Reload PostgREST schema cache ─────────────────────────────────────────
+  // Ensures all columns are visible to the Supabase JS client before any
+  // inserts run. Required when new columns were added after the last deploy.
+  try {
+    const reloadUrl = `${process.env.SUPABASE_URL}/rest/v1/`;
+    await fetch(reloadUrl, {
+      method: 'GET',
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY ?? ''}`,
+        'Accept-Profile': 'public',
+      },
+    });
+    console.log('  [info] Schema cache warmed');
+  } catch {
+    console.warn('  [warn] Schema cache reload skipped');
+  }
 
   // ── Resolve existing required users ──────────────────────────────────────
   const schoolAdminId  = await getUserIdByEmail('schooladmin@eduvo.com');
@@ -1316,25 +1332,25 @@ async function main(): Promise<void> {
       email: 'teacher@eduvo.com', // existing — just ensure assignments
       name: 'Test Teacher',
       assignments: [
-        { subject: 'Maths',   class_name: '10', section: 'A' },
-        { subject: 'Science', class_name: '10', section: 'A' },
-        { subject: 'Maths',   class_name: '10', section: 'B' },
+        { subject: 'Maths',   class: '10', section: 'A' },
+        { subject: 'Science', class: '10', section: 'A' },
+        { subject: 'Maths',   class: '10', section: 'B' },
       ],
     },
     {
       email: 'teacher2@eduvo.com',
       name: 'Teacher Two',
       assignments: [
-        { subject: 'English', class_name: '10', section: 'A' },
-        { subject: 'English', class_name: '10', section: 'B' },
+        { subject: 'English', class: '10', section: 'A' },
+        { subject: 'English', class: '10', section: 'B' },
       ],
     },
     {
       email: 'teacher3@eduvo.com',
       name: 'Teacher Three',
       assignments: [
-        { subject: 'Hindi',    class_name: '9', section: 'A' },
-        { subject: 'Gujarati', class_name: '9', section: 'A' },
+        { subject: 'Hindi',    class: '9', section: 'A' },
+        { subject: 'Gujarati', class: '9', section: 'A' },
       ],
     },
   ];
@@ -1348,24 +1364,24 @@ async function main(): Promise<void> {
       email: 'demoteacher1@eduvo.com',
       name: 'Demo Teacher One',
       assignments: [
-        { subject: 'Maths', class_name: '10', section: 'A' },
-        { subject: 'Maths', class_name: '10', section: 'B' },
+        { subject: 'Maths', class: '10', section: 'A' },
+        { subject: 'Maths', class: '10', section: 'B' },
       ],
     },
     {
       email: 'demoteacher2@eduvo.com',
       name: 'Demo Teacher Two',
       assignments: [
-        { subject: 'Science', class_name: '10', section: 'A' },
-        { subject: 'English', class_name: '10', section: 'A' },
+        { subject: 'Science', class: '10', section: 'A' },
+        { subject: 'English', class: '10', section: 'A' },
       ],
     },
     {
       email: 'demoteacher3@eduvo.com',
       name: 'Demo Teacher Three',
       assignments: [
-        { subject: 'Hindi',    class_name: '9', section: 'A' },
-        { subject: 'Gujarati', class_name: '9', section: 'A' },
+        { subject: 'Hindi',    class: '9', section: 'A' },
+        { subject: 'Gujarati', class: '9', section: 'A' },
       ],
     },
   ];
@@ -1377,23 +1393,23 @@ async function main(): Promise<void> {
   // student2@eduvo.com → maps to Vivek Rao (10A, fee NOT paid)
   const testStudentDefs: StudentDef[] = [
     // Class 9A — 5 students
-    { full_name: 'Aarav Sharma',   class_name: '9',  section: 'A', roll_number: '9A01', parentEmail: 'parent@eduvo.com' },
-    { full_name: 'Diya Patel',     class_name: '9',  section: 'A', roll_number: '9A02', parentEmail: 'parent@eduvo.com' },
-    { full_name: 'Rohan Mehta',    class_name: '9',  section: 'A', roll_number: '9A03', parentEmail: 'parent2@eduvo.com' },
-    { full_name: 'Priya Singh',    class_name: '9',  section: 'A', roll_number: '9A04', parentEmail: 'parent2@eduvo.com' },
-    { full_name: 'Karan Joshi',    class_name: '9',  section: 'A', roll_number: '9A05', parentEmail: 'parent3@eduvo.com' },
+    { full_name: 'Aarav Sharma',   class: '9',  section: 'A', roll_number: '9A01', parentEmail: 'parent@eduvo.com' },
+    { full_name: 'Diya Patel',     class: '9',  section: 'A', roll_number: '9A02', parentEmail: 'parent@eduvo.com' },
+    { full_name: 'Rohan Mehta',    class: '9',  section: 'A', roll_number: '9A03', parentEmail: 'parent2@eduvo.com' },
+    { full_name: 'Priya Singh',    class: '9',  section: 'A', roll_number: '9A04', parentEmail: 'parent2@eduvo.com' },
+    { full_name: 'Karan Joshi',    class: '9',  section: 'A', roll_number: '9A05', parentEmail: 'parent3@eduvo.com' },
     // Class 10A — 5 students
-    { full_name: 'Ananya Gupta',   class_name: '10', section: 'A', roll_number: '10A01', parentEmail: 'parent@eduvo.com' },
-    { full_name: 'Vivek Rao',      class_name: '10', section: 'A', roll_number: '10A02', parentEmail: 'parent3@eduvo.com' },
-    { full_name: 'Sneha Desai',    class_name: '10', section: 'A', roll_number: '10A03', parentEmail: 'parent4@eduvo.com' },
-    { full_name: 'Arjun Nair',     class_name: '10', section: 'A', roll_number: '10A04', parentEmail: 'parent4@eduvo.com' },
-    { full_name: 'Meera Iyer',     class_name: '10', section: 'A', roll_number: '10A05', parentEmail: 'parent5@eduvo.com' },
+    { full_name: 'Ananya Gupta',   class: '10', section: 'A', roll_number: '10A01', parentEmail: 'parent@eduvo.com' },
+    { full_name: 'Vivek Rao',      class: '10', section: 'A', roll_number: '10A02', parentEmail: 'parent3@eduvo.com' },
+    { full_name: 'Sneha Desai',    class: '10', section: 'A', roll_number: '10A03', parentEmail: 'parent4@eduvo.com' },
+    { full_name: 'Arjun Nair',     class: '10', section: 'A', roll_number: '10A04', parentEmail: 'parent4@eduvo.com' },
+    { full_name: 'Meera Iyer',     class: '10', section: 'A', roll_number: '10A05', parentEmail: 'parent5@eduvo.com' },
     // Class 10B — 5 students
-    { full_name: 'Rahul Verma',    class_name: '10', section: 'B', roll_number: '10B01', parentEmail: 'parent5@eduvo.com' },
-    { full_name: 'Pooja Agarwal',  class_name: '10', section: 'B', roll_number: '10B02', parentEmail: 'parent2@eduvo.com' },
-    { full_name: 'Siddharth Bose', class_name: '10', section: 'B', roll_number: '10B03', parentEmail: 'parent3@eduvo.com' },
-    { full_name: 'Kavya Reddy',    class_name: '10', section: 'B', roll_number: '10B04', parentEmail: 'parent4@eduvo.com' },
-    { full_name: 'Nikhil Tiwari',  class_name: '10', section: 'B', roll_number: '10B05', parentEmail: 'parent5@eduvo.com' },
+    { full_name: 'Rahul Verma',    class: '10', section: 'B', roll_number: '10B01', parentEmail: 'parent5@eduvo.com' },
+    { full_name: 'Pooja Agarwal',  class: '10', section: 'B', roll_number: '10B02', parentEmail: 'parent2@eduvo.com' },
+    { full_name: 'Siddharth Bose', class: '10', section: 'B', roll_number: '10B03', parentEmail: 'parent3@eduvo.com' },
+    { full_name: 'Kavya Reddy',    class: '10', section: 'B', roll_number: '10B04', parentEmail: 'parent4@eduvo.com' },
+    { full_name: 'Nikhil Tiwari',  class: '10', section: 'B', roll_number: '10B05', parentEmail: 'parent5@eduvo.com' },
   ];
 
   const testParentIds: Record<string, string> = {
@@ -1411,21 +1427,21 @@ async function main(): Promise<void> {
 
   // ── Students for Demo School ──────────────────────────────────────────────
   const demoStudentDefs: StudentDef[] = [
-    { full_name: 'Demo Student 1',  class_name: '9',  section: 'A', roll_number: 'D9A01',  parentEmail: 'demoparent1@eduvo.com' },
-    { full_name: 'Demo Student 2',  class_name: '9',  section: 'A', roll_number: 'D9A02',  parentEmail: 'demoparent1@eduvo.com' },
-    { full_name: 'Demo Student 3',  class_name: '9',  section: 'A', roll_number: 'D9A03',  parentEmail: 'demoparent2@eduvo.com' },
-    { full_name: 'Demo Student 4',  class_name: '9',  section: 'A', roll_number: 'D9A04',  parentEmail: 'demoparent2@eduvo.com' },
-    { full_name: 'Demo Student 5',  class_name: '9',  section: 'A', roll_number: 'D9A05',  parentEmail: 'demoparent1@eduvo.com' },
-    { full_name: 'Demo Student 6',  class_name: '10', section: 'A', roll_number: 'D10A01', parentEmail: 'demoparent1@eduvo.com' },
-    { full_name: 'Demo Student 7',  class_name: '10', section: 'A', roll_number: 'D10A02', parentEmail: 'demoparent2@eduvo.com' },
-    { full_name: 'Demo Student 8',  class_name: '10', section: 'A', roll_number: 'D10A03', parentEmail: 'demoparent2@eduvo.com' },
-    { full_name: 'Demo Student 9',  class_name: '10', section: 'A', roll_number: 'D10A04', parentEmail: 'demoparent1@eduvo.com' },
-    { full_name: 'Demo Student 10', class_name: '10', section: 'A', roll_number: 'D10A05', parentEmail: 'demoparent2@eduvo.com' },
-    { full_name: 'Demo Student 11', class_name: '10', section: 'B', roll_number: 'D10B01', parentEmail: 'demoparent1@eduvo.com' },
-    { full_name: 'Demo Student 12', class_name: '10', section: 'B', roll_number: 'D10B02', parentEmail: 'demoparent2@eduvo.com' },
-    { full_name: 'Demo Student 13', class_name: '10', section: 'B', roll_number: 'D10B03', parentEmail: 'demoparent1@eduvo.com' },
-    { full_name: 'Demo Student 14', class_name: '10', section: 'B', roll_number: 'D10B04', parentEmail: 'demoparent2@eduvo.com' },
-    { full_name: 'Demo Student 15', class_name: '10', section: 'B', roll_number: 'D10B05', parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 1',  class: '9',  section: 'A', roll_number: 'D9A01',  parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 2',  class: '9',  section: 'A', roll_number: 'D9A02',  parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 3',  class: '9',  section: 'A', roll_number: 'D9A03',  parentEmail: 'demoparent2@eduvo.com' },
+    { full_name: 'Demo Student 4',  class: '9',  section: 'A', roll_number: 'D9A04',  parentEmail: 'demoparent2@eduvo.com' },
+    { full_name: 'Demo Student 5',  class: '9',  section: 'A', roll_number: 'D9A05',  parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 6',  class: '10', section: 'A', roll_number: 'D10A01', parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 7',  class: '10', section: 'A', roll_number: 'D10A02', parentEmail: 'demoparent2@eduvo.com' },
+    { full_name: 'Demo Student 8',  class: '10', section: 'A', roll_number: 'D10A03', parentEmail: 'demoparent2@eduvo.com' },
+    { full_name: 'Demo Student 9',  class: '10', section: 'A', roll_number: 'D10A04', parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 10', class: '10', section: 'A', roll_number: 'D10A05', parentEmail: 'demoparent2@eduvo.com' },
+    { full_name: 'Demo Student 11', class: '10', section: 'B', roll_number: 'D10B01', parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 12', class: '10', section: 'B', roll_number: 'D10B02', parentEmail: 'demoparent2@eduvo.com' },
+    { full_name: 'Demo Student 13', class: '10', section: 'B', roll_number: 'D10B03', parentEmail: 'demoparent1@eduvo.com' },
+    { full_name: 'Demo Student 14', class: '10', section: 'B', roll_number: 'D10B04', parentEmail: 'demoparent2@eduvo.com' },
+    { full_name: 'Demo Student 15', class: '10', section: 'B', roll_number: 'D10B05', parentEmail: 'demoparent1@eduvo.com' },
   ];
 
   const demoParentIds: Record<string, string> = {
@@ -1452,15 +1468,15 @@ async function main(): Promise<void> {
 
   // ── Tests for Test School ─────────────────────────────────────────────────
   const testSchoolTestDefs: TestDef[] = [
-    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Hindi Mid-Term',     subject: 'Hindi',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'Gujarati Quiz 1',    subject: 'Gujarati', class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
-    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
-    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Hindi Mid-Term',     subject: 'Hindi',    class: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'Gujarati Quiz 1',    subject: 'Gujarati', class: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
   ];
 
   const testCreatorId = teacherSeedId ?? schoolAdminId;
@@ -1468,15 +1484,15 @@ async function main(): Promise<void> {
 
   // ── Tests for Demo School ─────────────────────────────────────────────────
   const demoSchoolTestDefs: TestDef[] = [
-    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Hindi Mid-Term',     subject: 'Hindi',    class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'Gujarati Quiz 1',    subject: 'Gujarati', class_name: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
-    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
-    { title: 'Maths Unit Test 1',  subject: 'Maths',    class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
-    { title: 'Science Mid-Term',   subject: 'Science',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
-    { title: 'English Quiz 1',     subject: 'English',  class_name: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class: '9',  section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Hindi Mid-Term',     subject: 'Hindi',    class: '9',  section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'Gujarati Quiz 1',    subject: 'Gujarati', class: '9',  section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class: '10', section: 'A', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class: '10', section: 'A', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class: '10', section: 'A', term: 'Term 1', date: daysAgo(10) },
+    { title: 'Maths Unit Test 1',  subject: 'Maths',    class: '10', section: 'B', term: 'Term 1', date: daysAgo(20) },
+    { title: 'Science Mid-Term',   subject: 'Science',  class: '10', section: 'B', term: 'Term 1', date: daysAgo(15) },
+    { title: 'English Quiz 1',     subject: 'English',  class: '10', section: 'B', term: 'Term 1', date: daysAgo(10) },
   ];
 
   const demoTeacher1Id = await getUserIdByEmail('demoteacher1@eduvo.com') ?? schoolAdminId;
