@@ -14,23 +14,27 @@ type Step = 'upload' | 'preview' | 'success';
 type TabFilter = 'all' | 'valid' | 'invalid' | 'duplicate';
 
 interface PreviewRow {
-  row: number;
-  student_name: string;
-  roll_no: string;
-  class: string;
-  division: string;
-  parent_name: string;
-  parent_phone: string;
+  row_number: number;
+  data: {
+    name: string;
+    roll_number: string;
+    class: string;
+    division: string;
+    parent_name: string;
+    parent_phone: string;
+    parent_email: string;
+  };
   status: 'valid' | 'invalid' | 'duplicate';
   errors: string[];
 }
 
 interface PreviewResult {
-  total: number;
-  valid: number;
-  invalid: number;
-  duplicate: number;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_rows: number;
   rows: PreviewRow[];
+  import_session_id: string;
 }
 
 interface ImportResult {
@@ -230,7 +234,7 @@ export default function ImportStudentsPage() {
   // ── Confirm import ──────────────────────────────────────────────────────
 
   async function handleImport() {
-    if (!file) return;
+    if (!preview?.import_session_id) return;
     const token = getToken();
     if (!token) return;
     setShowConfirm(false);
@@ -238,13 +242,13 @@ export default function ImportStudentsPage() {
     setError('');
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
       const res = await fetch(`${BASE_URL}/api/import/students/confirm`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ import_session_id: preview.import_session_id }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Import failed');
@@ -393,7 +397,7 @@ export default function ImportStudentsPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-xl font-bold text-green-700">{preview.valid}</p>
+                <p className="text-xl font-bold text-green-700">{preview.valid_rows}</p>
                 <p className="text-xs text-green-600">Valid rows ready to import</p>
               </div>
             </div>
@@ -404,7 +408,7 @@ export default function ImportStudentsPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-xl font-bold text-red-700">{preview.invalid}</p>
+                <p className="text-xl font-bold text-red-700">{preview.invalid_rows}</p>
                 <p className="text-xs text-red-600">Invalid rows (will be skipped)</p>
               </div>
             </div>
@@ -415,7 +419,7 @@ export default function ImportStudentsPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-xl font-bold text-orange-700">{preview.duplicate}</p>
+                <p className="text-xl font-bold text-orange-700">{preview.duplicate_rows}</p>
                 <p className="text-xs text-orange-600">Duplicate rows (will be skipped)</p>
               </div>
             </div>
@@ -426,7 +430,11 @@ export default function ImportStudentsPage() {
             {/* Tabs */}
             <div className="flex border-b border-gray-100 px-4 pt-4 gap-1">
               {(['all', 'valid', 'invalid', 'duplicate'] as TabFilter[]).map((t) => {
-                const count = t === 'all' ? preview.total : preview[t];
+                const count =
+                  t === 'all' ? preview.total_rows
+                  : t === 'valid' ? preview.valid_rows
+                  : t === 'invalid' ? preview.invalid_rows
+                  : preview.duplicate_rows;
                 const active = tab === t;
                 return (
                   <button
@@ -463,16 +471,16 @@ export default function ImportStudentsPage() {
                       <td colSpan={9} className="text-center py-10 text-sm text-gray-400">No rows in this category</td>
                     </tr>
                   ) : filteredRows.map((row) => (
-                    <tr key={row.row} className={`hover:bg-gray-50 transition-colors ${
+                    <tr key={row.row_number} className={`hover:bg-gray-50 transition-colors ${
                       row.status !== 'valid' ? 'bg-red-50/30' : ''
                     }`}>
-                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{row.row}</td>
-                      <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{row.student_name || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.roll_no || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.class || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.division || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.parent_name || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.parent_phone || '—'}</td>
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{row.row_number}</td>
+                      <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{row.data.name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.data.roll_number || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.data.class || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.data.division || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.data.parent_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.data.parent_phone || '—'}</td>
                       <td className="px-4 py-3">
                         <StatusBadge status={row.status} errors={row.errors} />
                       </td>
@@ -509,7 +517,7 @@ export default function ImportStudentsPage() {
               </button>
               <button
                 onClick={() => setShowConfirm(true)}
-                disabled={preview.valid === 0 || importing}
+                disabled={preview.valid_rows === 0 || importing}
                 className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors"
               >
                 {importing ? (
@@ -518,7 +526,7 @@ export default function ImportStudentsPage() {
                     Importing…
                   </>
                 ) : (
-                  `Import ${preview.valid} Valid Student${preview.valid !== 1 ? 's' : ''}`
+                  `Import ${preview.valid_rows} Valid Student${preview.valid_rows !== 1 ? 's' : ''}`
                 )}
               </button>
             </div>
@@ -568,12 +576,12 @@ export default function ImportStudentsPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-700">
-            Import <span className="font-semibold text-gray-900">{preview?.valid} student{preview?.valid !== 1 ? 's' : ''}</span>?
+            Import <span className="font-semibold text-gray-900">{preview?.valid_rows} student{preview?.valid_rows !== 1 ? 's' : ''}</span>?
             This cannot be undone.
           </p>
-          {(preview?.invalid ?? 0) + (preview?.duplicate ?? 0) > 0 && (
+          {(preview?.invalid_rows ?? 0) + (preview?.duplicate_rows ?? 0) > 0 && (
             <p className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
-              {(preview?.invalid ?? 0) + (preview?.duplicate ?? 0)} invalid/duplicate rows will be skipped automatically.
+              {(preview?.invalid_rows ?? 0) + (preview?.duplicate_rows ?? 0)} invalid/duplicate rows will be skipped automatically.
             </p>
           )}
           <div className="flex justify-end gap-3 pt-1">
