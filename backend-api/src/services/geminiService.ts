@@ -1,7 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-// pdf-parse ships as CJS; use require() to avoid ESM/CJS interop issues
+// pdf-parse v2.x changed its export — the function lives on .default
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse: (buffer: Buffer) => Promise<{ text: string }> = require("pdf-parse");
+const _pdfParseModule = require("pdf-parse");
+const pdfParse: (buffer: Buffer) => Promise<{ text: string }> =
+  typeof _pdfParseModule === "function"
+    ? _pdfParseModule
+    : _pdfParseModule.default ?? _pdfParseModule;
 import mammoth from "mammoth";
 import crypto from "crypto";
 import { supabase } from "../config/supabase";
