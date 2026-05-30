@@ -30,6 +30,7 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
     { label: 'Attendance', href: '/teacher/attendance' },
     { label: 'Fees', href: '/teacher/fees' },
     { label: 'Tests', href: '/teacher/tests' },
+    { label: 'AI Assistant', href: '/teacher/ai-assistant' },
     { label: 'Complaints', href: '/teacher/complaints' },
   ],
   parent: [],
