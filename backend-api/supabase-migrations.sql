@@ -25,3 +25,12 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE public.complaints ADD COLUMN IF NOT EXISTS resolution_note text;
 ALTER TABLE public.complaints ADD COLUMN IF NOT EXISTS reviewed_by uuid REFERENCES public.users(id) ON DELETE SET NULL;
 ALTER TABLE public.complaints ADD COLUMN IF NOT EXISTS reviewed_at timestamptz;
+
+-- marks: add missing notes column
+ALTER TABLE public.marks ADD COLUMN IF NOT EXISTS notes text;
+
+-- marks: update exam_type constraint to match frontend values
+-- Drop old constraint and add new one that includes unit_test, mid_term, class_test
+ALTER TABLE public.marks DROP CONSTRAINT IF EXISTS marks_exam_type_check;
+ALTER TABLE public.marks ADD CONSTRAINT marks_exam_type_check
+  CHECK (exam_type IN ('quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test'));

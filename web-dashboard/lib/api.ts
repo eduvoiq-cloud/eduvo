@@ -145,7 +145,7 @@ export interface Mark {
   score: number;
   max_score: number;
   term: string;
-  exam_type: 'quiz' | 'midterm' | 'final' | 'assignment' | 'project';
+  exam_type: 'quiz' | 'midterm' | 'final' | 'assignment' | 'project' | 'unit_test' | 'mid_term' | 'class_test';
   notes?: string;
   recorded_by: string;
   created_at: string;

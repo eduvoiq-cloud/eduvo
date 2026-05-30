@@ -17,7 +17,7 @@ const createMarkSchema = z.object({
   score: z.number().min(0).max(100),
   max_score: z.number().min(1).default(100),
   term: z.string().min(1).max(50),
-  exam_type: z.enum(['quiz', 'midterm', 'final', 'assignment', 'project']),
+  exam_type: z.enum(['quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test']),
   notes: z.string().max(1000).optional(),
 });
 

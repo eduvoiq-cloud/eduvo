@@ -203,7 +203,7 @@ export default function MarksPage() {
           await marksApi.create(token, {
             student_id: r.student.id,
             subject,
-            exam_type: examType as 'quiz' | 'midterm' | 'final' | 'assignment' | 'project',
+            exam_type: examType as 'quiz' | 'midterm' | 'final' | 'assignment' | 'project' | 'unit_test' | 'mid_term' | 'class_test',
             term,
             score: parseFloat(r.score),
             max_score: parseFloat(r.max_score),

@@ -100,7 +100,7 @@ create table if not exists public.marks (
   score        numeric(6,2) not null,
   max_score    numeric(6,2) not null default 100,
   term         text not null,
-  exam_type    text not null check (exam_type in ('quiz','midterm','final','assignment','project')),
+  exam_type    text not null check (exam_type in ('quiz','midterm','final','assignment','project','unit_test','mid_term','class_test')),
   notes        text,
   recorded_by  uuid references public.users(id) on delete set null,
   created_at   timestamptz not null default now()
