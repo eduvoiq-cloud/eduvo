@@ -90,7 +90,7 @@ async function teacherOwnsClass(
     .select('id')
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
-    .eq('class_name', className)
+    .eq('class_name', className)   // teacher_assignments has class_name (migrated)
     .eq('section', section)
     .limit(1)
     .single();
@@ -128,14 +128,14 @@ router.post('/create', requireRole('teacher', 'schooladmin', 'superadmin'), asyn
     .insert({
       title: testFields.title,
       subject_id: testFields.subject_id,
-      class_name: testFields.class,
+      class:   testFields.class,       // DB column is "class"
       section: testFields.section,
-      term: testFields.term,
-      date: testFields.date,
+      term:    testFields.term,
+      date:    testFields.date,
       time_limit_minutes: testFields.time_limit_minutes,
-      shuffle_questions: testFields.shuffle_questions,
-      shuffle_options: testFields.shuffle_options,
-      school_id: req.user!.school_id,
+      shuffle_questions:  testFields.shuffle_questions,
+      shuffle_options:    testFields.shuffle_options,
+      school_id:  req.user!.school_id,
       created_by: req.user!.id,
     })
     .select()
@@ -202,7 +202,7 @@ router.get('/my-tests', requireRole('teacher', 'schooladmin', 'superadmin'), asy
     query = query.eq('school_id', req.user!.school_id ?? '');
   }
 
-  if (className) query = query.eq('class_name', className);
+  if (className) query = query.eq('class', className);   // DB column is "class"
   if (section) query = query.eq('section', section);
   if (term) query = query.eq('term', term);
 
@@ -261,7 +261,7 @@ router.get('/student', requireRole('student'), async (req: Request, res: Respons
       questions(count)
     `)
     .eq('school_id', studentRecord.school_id)
-    .eq('class_name', studentRecord.class_name)
+    .eq('class', studentRecord.class_name)
     .eq('section', studentRecord.section)
     .order('date', { ascending: false });
 
@@ -314,10 +314,10 @@ router.post('/attempt/start', requireRole('student'), async (req: Request, res: 
   // Fetch test config
   const { data: test, error: tErr } = await supabaseAdmin
     .from('tests')
-    .select('id, class_name, section, school_id, time_limit_minutes, shuffle_questions, shuffle_options')
+    .select('id, class, section, school_id, time_limit_minutes, shuffle_questions, shuffle_options')
     .eq('id', test_id)
     .eq('school_id', studentRecord.school_id)
-    .eq('class_name', studentRecord.class_name)
+    .eq('class', studentRecord.class_name)
     .eq('section', studentRecord.section)
     .single();
 
@@ -568,7 +568,7 @@ router.post('/theory/mark', requireRole('teacher', 'schooladmin', 'superadmin'),
   // Fetch test to verify teacher assignment
   const { data: test, error: tErr } = await supabaseAdmin
     .from('tests')
-    .select('class_name, section, school_id, created_by')
+    .select('class, section, school_id, created_by')
     .eq('id', attempt.test_id)
     .single();
 
@@ -579,7 +579,7 @@ router.post('/theory/mark', requireRole('teacher', 'schooladmin', 'superadmin'),
     const allowed = await teacherOwnsClass(
       req.user!.id,
       req.user!.school_id ?? '',
-      test.class_name,
+      (test as Record<string, unknown>)['class'] as string,
       test.section
     );
     if (!allowed) {
@@ -751,6 +751,7 @@ router.get('/results/:attempt_id', requireRole('student'), async (req: Request, 
 /**
  * GET /api/tests?class_name=&section=&subject=&term=
  * Returns tests for the teacher's school with their questions embedded.
+ * Live DB uses "class" column, not "class_name".
  */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const { class_name, section, subject, term } = req.query as Record<string, string>;
@@ -762,20 +763,31 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
     .order('created_at', { ascending: false });
 
   if (req.user!.role === 'teacher') query = query.eq('created_by', req.user!.id);
-  if (class_name) query = query.eq('class_name', class_name);
-  if (section) query = query.eq('section', section);
-  if (subject) query = query.eq('subject', subject);
-  if (term) query = query.eq('term', term);
+  if (class_name) query = query.eq('class', class_name);   // DB column is "class"
+  if (section)    query = query.eq('section', section);
+  if (subject)    query = query.eq('subject', subject);
+  if (term)       query = query.eq('term', term);
 
   const { data, error } = await query;
   if (error) { sendError(res, error.message, 500); return; }
-  sendSuccess(res, data ?? []);
+
+  // Normalise: expose class_name so the frontend doesn't need to know the DB column name
+  const normalised = (data ?? []).map((t: Record<string, unknown>) => ({
+    ...t,
+    class_name: t['class'] ?? t['class_name'],
+  }));
+
+  sendSuccess(res, normalised);
 });
 
 /**
  * POST /api/tests
  * Creates a test with embedded questions using the frontend schema.
  * Body: { title, subject, class_name, section, term, date, questions[] }
+ *
+ * Live DB schema:
+ *   tests          → class (text), subject (text), subject_id (uuid nullable)
+ *   test_questions → question_text, question_type, option_a-d, correct_option (text 'a'-'d')
  */
 router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const schema = z.object({
@@ -797,34 +809,54 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { questions, ...testFields } = parsed.data;
+  const { questions, class_name, ...rest } = parsed.data;
 
+  // Insert test — DB uses "class" not "class_name"
   const { data: test, error: testErr } = await supabaseAdmin
     .from('tests')
     .insert({
-      ...testFields,
+      title:      rest.title,
+      subject:    rest.subject,
+      class:      class_name,          // live DB column name
+      section:    rest.section,
+      term:       rest.term,
+      date:       rest.date,
       school_id:  req.user!.school_id,
       created_by: req.user!.id,
     })
     .select()
     .single();
 
-  if (testErr || !test) { sendError(res, testErr?.message ?? 'Failed to create test', 500); return; }
+  if (testErr || !test) {
+    console.error('[tests] insert error:', testErr);
+    sendError(res, testErr?.message ?? 'Failed to create test', 500);
+    return;
+  }
 
-  const questionRows = questions.map((q, idx) => ({
-    test_id:        test.id,
-    order_index:    idx,
-    type:           q.type,
-    text:           q.text,
-    marks:          q.marks,
-    options:        q.options ?? null,
-    correct_option: q.correct_option ?? null,
-  }));
+  // Map options array to option_a/b/c/d columns; correct_option index → letter
+  const optionLetters = ['a', 'b', 'c', 'd'] as const;
+
+  const questionRows = questions.map((q, idx) => {
+    const opts = q.options ?? [];
+    return {
+      test_id:        test.id,
+      order_index:    idx,
+      question_text:  q.text,
+      question_type:  q.type,
+      option_a:       opts[0]?.text ?? null,
+      option_b:       opts[1]?.text ?? null,
+      option_c:       opts[2]?.text ?? null,
+      option_d:       opts[3]?.text ?? null,
+      correct_option: q.correct_option !== undefined ? optionLetters[q.correct_option] : null,
+      marks:          q.marks,
+    };
+  });
 
   const { error: qErr } = await supabaseAdmin.from('test_questions').insert(questionRows);
   if (qErr) {
+    console.error('[tests] questions insert error:', qErr);
     await supabaseAdmin.from('tests').delete().eq('id', test.id);
-    sendError(res, 'Failed to save questions', 500);
+    sendError(res, `Failed to save questions: ${qErr.message}`, 500);
     return;
   }
 
@@ -842,7 +874,10 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     .eq('id', test.id)
     .single();
 
-  sendSuccess(res, full, 'Test created', 201);
+  // Normalise class_name for frontend
+  const result = full ? { ...full, class_name: (full as Record<string, unknown>)['class'] } : full;
+
+  sendSuccess(res, result, 'Test created', 201);
 });
 
 /**
