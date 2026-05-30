@@ -8,11 +8,12 @@ import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import {
-  extractTextFromFile,
+  extractFromFile,
   generateQuestions,
   checkDailyLimit,
   getCachedResult,
   saveUsageRecord,
+  type ExtractionResult,
 } from '../services/geminiService';
 
 const router = Router();
@@ -37,7 +38,7 @@ const MAX_DAILY_GENERATIONS = parseInt(process.env.AI_MAX_DAILY_GENERATIONS ?? '
 // Keyed by extraction_id. Entries expire after EXTRACTION_CACHE_TTL_MS.
 
 interface ExtractionEntry {
-  text: string;
+  extraction: ExtractionResult;
   expiresAt: number;
   teacher_id: string;
 }
@@ -198,24 +199,24 @@ router.post(
     // Prune stale cache entries before adding a new one
     pruneExtractionCache();
 
-    let extractedText: string;
+    let extraction: ExtractionResult;
     try {
-      extractedText = await extractTextFromFile(req.file);
+      extraction = await extractFromFile(req.file);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to extract text from file';
       sendError(res, message, 422);
       return;
     }
 
-    if (!extractedText || extractedText.trim().length === 0) {
-      sendError(res, 'No readable text found in the uploaded file.', 422);
+    if (extraction.total_chars === 0) {
+      sendError(res, 'No readable content found in the uploaded file.', 422);
       return;
     }
 
     // Store in cache
     const extractionId = crypto.randomUUID();
     extractionCache.set(extractionId, {
-      text: extractedText,
+      extraction,
       expiresAt: Date.now() + EXTRACTION_CACHE_TTL_MS,
       teacher_id: req.user!.id,
     });
@@ -225,17 +226,18 @@ router.post(
       extraction_id: extractionId,
       file_name: req.file.originalname,
       file_size: req.file.size,
-      total_chars: extractedText.length,
+      content_type: extraction.type,
+      total_chars: extraction.total_chars,
     });
 
     sendSuccess(
       res,
       {
         extraction_id: extractionId,
-        text_preview: extractedText.slice(0, 500),
-        total_chars: extractedText.length,
+        content_type: extraction.type,
+        total_chars: extraction.total_chars,
       },
-      'File extracted successfully',
+      'File uploaded successfully',
       201
     );
   }
@@ -314,7 +316,7 @@ router.post(
     const promptHash = crypto
       .createHash('md5')
       .update(
-        extraction.text +
+        extraction.extraction.data +
           safeSubject +
           safeClassLevel +
           difficulty +
@@ -348,7 +350,7 @@ router.post(
     let questions;
     try {
       questions = await generateQuestions({
-        content: extraction.text,
+        extraction: extraction.extraction,
         subject: safeSubject,
         class_level: safeClassLevel,
         difficulty,

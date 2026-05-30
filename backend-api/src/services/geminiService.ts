@@ -1,9 +1,7 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, type Part } from "@google/generative-ai";
 import mammoth from "mammoth";
 import crypto from "crypto";
 import { supabase } from "../config/supabase";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfjsLib = require("pdfjs-dist");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,8 +28,21 @@ export interface GeneratedContent {
   theory_questions: TheoryQuestion[];
 }
 
+/**
+ * What gets stored in the extraction cache.
+ * PDFs are stored as base64 for direct Gemini vision.
+ * DOCX/TXT are stored as plain text.
+ */
+export interface ExtractionResult {
+  type: "pdf_base64" | "text";
+  /** base64 string for PDFs, plain text for docx/txt */
+  data: string;
+  /** character count for display (base64 length for PDFs) */
+  total_chars: number;
+}
+
 export interface GenerateQuestionsParams {
-  content: string;
+  extraction: ExtractionResult;
   subject: string;
   class_level: string;
   difficulty: "easy" | "medium" | "hard";
@@ -54,78 +65,78 @@ export interface SaveUsageParams {
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_CONTENT_CHARS = 50_000;
+const MAX_TEXT_CHARS = 50_000;
 const MAX_DAILY_GENERATIONS = parseInt(
   process.env.AI_MAX_DAILY_GENERATIONS ?? "10",
   10
 );
 
 // ---------------------------------------------------------------------------
-// 1. extractTextFromFile
+// 1. extractFromFile
 // ---------------------------------------------------------------------------
 
 /**
- * Extracts plain text from an uploaded file (PDF, DOCX, or TXT).
- * Strips excess whitespace and truncates to MAX_CONTENT_CHARS.
+ * For PDFs: returns base64-encoded file data for direct Gemini vision.
+ * For DOCX/TXT: extracts plain text as before.
+ * This handles both scanned and digital PDFs.
  */
-export async function extractTextFromFile(
+export async function extractFromFile(
   file: Express.Multer.File
-): Promise<string> {
+): Promise<ExtractionResult> {
   const mime = file.mimetype.toLowerCase();
   const originalName = (file.originalname ?? "").toLowerCase();
 
-  let raw = "";
-
+  // ── PDF: send as base64 directly to Gemini vision ──────────────────────────
   if (mime === "application/pdf" || originalName.endsWith(".pdf")) {
-    // Use pdfjs-dist directly — reliable full-text extraction across all pages
-    const loadingTask = pdfjsLib.getDocument({
-      data: new Uint8Array(file.buffer),
-      useWorkerFetch: false,
-      isEvalSupported: false,
-      useSystemFonts: true,
-    });
-    const pdf = await loadingTask.promise;
-    const pageTexts: string[] = [];
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
-      const pageText = content.items
-        .map((item: { str?: string }) => item.str ?? "")
-        .join(" ");
-      pageTexts.push(pageText);
-    }
-    raw = pageTexts.join("\n");
-    console.log(`[extractTextFromFile] PDF pages: ${pdf.numPages}, raw chars: ${raw.length}`);
-  } else if (
-    mime ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    const base64 = file.buffer.toString("base64");
+    console.log(`[extractFromFile] PDF stored as base64, size: ${file.buffer.length} bytes`);
+    return {
+      type: "pdf_base64",
+      data: base64,
+      total_chars: base64.length,
+    };
+  }
+
+  // ── DOCX: extract text with mammoth ────────────────────────────────────────
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     originalName.endsWith(".docx")
   ) {
     const result = await mammoth.extractRawText({ buffer: file.buffer });
-    raw = result.value;
-  } else if (
-    mime === "text/plain" ||
-    originalName.endsWith(".txt")
-  ) {
-    raw = file.buffer.toString("utf-8");
-  } else {
-    throw new Error(
-      `Unsupported file type: ${file.mimetype}. Please upload a PDF, DOCX, or TXT file.`
-    );
+    const cleaned = cleanText(result.value);
+    console.log(`[extractFromFile] DOCX text chars: ${cleaned.length}`);
+    return {
+      type: "text",
+      data: cleaned,
+      total_chars: cleaned.length,
+    };
   }
 
-  // Normalise whitespace
+  // ── TXT: read as utf-8 ─────────────────────────────────────────────────────
+  if (mime === "text/plain" || originalName.endsWith(".txt")) {
+    const cleaned = cleanText(file.buffer.toString("utf-8"));
+    console.log(`[extractFromFile] TXT chars: ${cleaned.length}`);
+    return {
+      type: "text",
+      data: cleaned,
+      total_chars: cleaned.length,
+    };
+  }
+
+  throw new Error(
+    `Unsupported file type: ${file.mimetype}. Please upload a PDF, DOCX, or TXT file.`
+  );
+}
+
+/** Normalise whitespace and truncate plain text. */
+function cleanText(raw: string): string {
   const cleaned = raw
     .replace(/\r\n/g, "\n")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-
-  console.log(`[extractTextFromFile] cleaned chars: ${cleaned.length}, will truncate: ${cleaned.length > MAX_CONTENT_CHARS}`);
-
-  // Truncate to control token cost
-  return cleaned.length > MAX_CONTENT_CHARS
-    ? cleaned.slice(0, MAX_CONTENT_CHARS)
+  return cleaned.length > MAX_TEXT_CHARS
+    ? cleaned.slice(0, MAX_TEXT_CHARS)
     : cleaned;
 }
 
@@ -134,14 +145,15 @@ export async function extractTextFromFile(
 // ---------------------------------------------------------------------------
 
 /**
- * Calls Gemini Flash 2.0 to generate MCQ and theory questions from content.
- * Checks the daily limit, uses cache when available, and saves usage records.
+ * Calls Gemini to generate MCQ and theory questions.
+ * For PDFs: sends the file as inlineData (vision) — works for scanned PDFs too.
+ * For text: sends as a text prompt.
  */
 export async function generateQuestions(
   params: GenerateQuestionsParams
 ): Promise<GeneratedContent> {
   const {
-    content,
+    extraction,
     subject,
     class_level,
     difficulty,
@@ -161,7 +173,7 @@ export async function generateQuestions(
 
   // Build a deterministic hash for caching
   const promptHash = buildPromptHash(
-    content,
+    extraction.data,
     subject,
     class_level,
     difficulty,
@@ -175,7 +187,12 @@ export async function generateQuestions(
     return JSON.parse(cached) as GeneratedContent;
   }
 
-  // Build prompt
+  // ── Build Gemini request ───────────────────────────────────────────────────
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
+
   const systemInstruction = [
     "You are an experienced teacher creating exam questions.",
     "Generate questions ONLY based on the provided content.",
@@ -184,14 +201,11 @@ export async function generateQuestions(
     "Return ONLY valid JSON. No markdown, no explanation.",
   ].join("\n");
 
-  const userPrompt = `<content>
-${content}
-</content>
-<instructions>
+  const instructionText = `
 Subject: ${subject}
 Class: ${class_level}
 Difficulty: ${difficulty}
-Generate ${mcq_count} MCQ questions and ${theory_count} theory questions.
+Generate ${mcq_count} MCQ questions and ${theory_count} theory questions based on the content above.
 Return this exact JSON structure:
 {
   "mcq_questions": [
@@ -212,14 +226,7 @@ Return this exact JSON structure:
       "marks": 5
     }
   ]
-}
-</instructions>`;
-
-  // Call Gemini
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured.");
-  }
+}`;
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
@@ -227,13 +234,35 @@ Return this exact JSON structure:
     systemInstruction,
   });
 
-  const result = await model.generateContent(userPrompt);
+  // Build the parts array depending on content type
+  let requestParts: Part[];
+
+  if (extraction.type === "pdf_base64") {
+    // Send PDF as inline vision data — Gemini reads it natively (scanned or digital)
+    requestParts = [
+      {
+        inlineData: {
+          mimeType: "application/pdf",
+          data: extraction.data,
+        },
+      },
+      { text: instructionText },
+    ];
+  } else {
+    // Plain text content
+    requestParts = [
+      {
+        text: `<content>\n${extraction.data}\n</content>\n${instructionText}`,
+      },
+    ];
+  }
+
+  const result = await model.generateContent({ contents: [{ role: "user", parts: requestParts }] });
   const responseText = result.response.text().trim();
 
-  // Parse JSON response
+  // Parse JSON — strip accidental markdown fences
   let parsed: GeneratedContent;
   try {
-    // Strip any accidental markdown fences just in case
     const jsonText = responseText
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "")
@@ -243,11 +272,8 @@ Return this exact JSON structure:
     throw new Error("AI returned invalid format, please retry");
   }
 
-  // Estimate token usage from response metadata (may be 0 if not provided)
-  const tokensUsed =
-    result.response.usageMetadata?.totalTokenCount ?? 0;
+  const tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
 
-  // Persist usage + cache
   await saveUsageRecord({
     user_id: teacher_id,
     school_id,
@@ -264,9 +290,6 @@ Return this exact JSON structure:
 // 3. checkDailyLimit
 // ---------------------------------------------------------------------------
 
-/**
- * Returns true if the user is still within their daily generation quota.
- */
 export async function checkDailyLimit(
   user_id: string,
   school_id: string
@@ -282,7 +305,6 @@ export async function checkDailyLimit(
     .gte("created_at", startOfDay.toISOString());
 
   if (error) {
-    // Fail open — don't block the user if the DB check fails
     console.error("[geminiService] checkDailyLimit error:", error.message);
     return true;
   }
@@ -294,10 +316,6 @@ export async function checkDailyLimit(
 // 4. getCachedResult
 // ---------------------------------------------------------------------------
 
-/**
- * Returns a cached JSON result string if one exists and is less than 24 h old.
- * Returns null otherwise.
- */
 export async function getCachedResult(
   prompt_hash: string
 ): Promise<string | null> {
@@ -325,10 +343,6 @@ export async function getCachedResult(
 // 5. saveUsageRecord
 // ---------------------------------------------------------------------------
 
-/**
- * Persists an AI usage record to the ai_usage table.
- * Used for both rate-limiting and result caching.
- */
 export async function saveUsageRecord(params: SaveUsageParams): Promise<void> {
   const { error } = await supabase.from("ai_usage").insert({
     user_id: params.user_id,
@@ -341,7 +355,6 @@ export async function saveUsageRecord(params: SaveUsageParams): Promise<void> {
   });
 
   if (error) {
-    // Log but don't throw — a failed usage record shouldn't break the response
     console.error("[geminiService] saveUsageRecord error:", error.message);
   }
 }
@@ -350,12 +363,8 @@ export async function saveUsageRecord(params: SaveUsageParams): Promise<void> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Builds a deterministic MD5 hash from the generation parameters.
- * Used as a cache key.
- */
 function buildPromptHash(
-  content: string,
+  data: string,
   subject: string,
   class_level: string,
   difficulty: string,
@@ -364,6 +373,6 @@ function buildPromptHash(
 ): string {
   return crypto
     .createHash("md5")
-    .update(content + subject + class_level + difficulty + mcq_count + theory_count)
+    .update(data + subject + class_level + difficulty + mcq_count + theory_count)
     .digest("hex");
 }
