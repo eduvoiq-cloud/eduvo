@@ -33,20 +33,31 @@ async function logAudit(
   });
 }
 
+/**
+ * The live DB has a 'message' column (NOT NULL) instead of 'body'.
+ * We normalise rows coming back from the DB so the API always returns 'body'.
+ */
+function normaliseRow(row: Record<string, unknown>) {
+  if ('message' in row && !('body' in row)) {
+    row.body = row.message;
+    delete row.message;
+  }
+  return row;
+}
+
 // -- Routes -------------------------------------------------------------------
 
 /**
  * GET /api/notifications
  * Returns notifications for the authenticated user, sorted newest first.
  * Query param: unread_only=true  -> only return unread notifications.
- * Returns: id, title, body, is_read, created_at, type
  */
 router.get('/', async (req: Request, res: Response) => {
   const unreadOnly = req.query.unread_only === 'true';
 
   let query = supabaseAdmin
     .from('notifications')
-    .select('id, title, body, is_read, created_at, type')
+    .select('id, title, message, is_read, created_at, type')
     .eq('recipient_id', req.user!.id)
     .order('created_at', { ascending: false });
 
@@ -61,7 +72,7 @@ router.get('/', async (req: Request, res: Response) => {
     return;
   }
 
-  sendSuccess(res, data ?? []);
+  sendSuccess(res, (data ?? []).map(normaliseRow));
 });
 
 /**
@@ -77,10 +88,11 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
 
   const { title, body, recipient_ids, type } = parsed.data;
 
-  // Fan out: one row per recipient
+  // Fan out: one row per recipient.
+  // DB column is 'message' (NOT NULL) — write there; 'body' column is nullable extra.
   const rows = recipient_ids.map((recipient_id) => ({
     title,
-    body,
+    message: body,
     type,
     recipient_id,
     sender_id: req.user!.id,
@@ -103,14 +115,18 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     recipient_count: recipient_ids.length,
   });
 
-  sendSuccess(res, data, `Notification sent to ${recipient_ids.length} recipient(s)`, 201);
+  sendSuccess(
+    res,
+    (data ?? []).map(normaliseRow),
+    `Notification sent to ${recipient_ids.length} recipient(s)`,
+    201
+  );
 });
 
 /**
  * PUT /api/notifications/read-all
  * Mark ALL unread notifications as read for the logged-in user.
  * NOTE: registered before /:id/read to avoid route shadowing.
- * Returns: { updated: number }
  */
 router.put('/read-all', async (req: Request, res: Response) => {
   const { data, error } = await supabaseAdmin
@@ -131,7 +147,6 @@ router.put('/read-all', async (req: Request, res: Response) => {
 /**
  * PUT /api/notifications/:id/read
  * Mark a single notification as read (is_read = true).
- * Returns the updated notification.
  */
 router.put('/:id/read', async (req: Request, res: Response) => {
   const { data, error } = await supabaseAdmin
@@ -139,7 +154,7 @@ router.put('/:id/read', async (req: Request, res: Response) => {
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq('id', req.params.id)
     .eq('recipient_id', req.user!.id)
-    .select('id, title, body, is_read, created_at, type')
+    .select('id, title, message, is_read, created_at, type')
     .single();
 
   if (error || !data) {
@@ -147,7 +162,7 @@ router.put('/:id/read', async (req: Request, res: Response) => {
     return;
   }
 
-  sendSuccess(res, data, 'Notification marked as read');
+  sendSuccess(res, normaliseRow(data as Record<string, unknown>), 'Notification marked as read');
 });
 
 /**
@@ -160,7 +175,7 @@ router.patch('/:id/read', async (req: Request, res: Response) => {
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq('id', req.params.id)
     .eq('recipient_id', req.user!.id)
-    .select('id, title, body, is_read, created_at, type')
+    .select('id, title, message, is_read, created_at, type')
     .single();
 
   if (error || !data) {
@@ -168,7 +183,7 @@ router.patch('/:id/read', async (req: Request, res: Response) => {
     return;
   }
 
-  sendSuccess(res, data, 'Notification marked as read');
+  sendSuccess(res, normaliseRow(data as Record<string, unknown>), 'Notification marked as read');
 });
 
 /**

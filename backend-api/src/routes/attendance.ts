@@ -169,7 +169,6 @@ router.post(
       ...r,
       recorded_by: userId,
       source: 'manual',
-      created_at: new Date().toISOString(),
     }));
 
     const { data, error } = await supabaseAdmin
@@ -396,8 +395,8 @@ router.post(
       status: absentSet.has(id) ? 'absent' : 'present',
       recorded_by: userId,
       source: 'manual',
-      notification_sent: false,
-      created_at: new Date().toISOString(),
+      // notification_sent defaults to false in the DB — omit here to avoid
+      // schema-cache errors if the column was recently added
     }));
 
     const { error: insertErr } = await supabaseAdmin.from('attendance').insert(rows);

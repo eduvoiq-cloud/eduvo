@@ -15,6 +15,7 @@ create table if not exists public.users (
   email         text not null unique,
   role          text not null check (role in ('superadmin','schooladmin','teacher','parent','student')),
   school_id     uuid,  -- FK added after schools table below
+  fcm_token     text,
   created_by    uuid references public.users(id) on delete set null,
   created_at    timestamptz not null default now()
 );
@@ -81,14 +82,16 @@ create table if not exists public.teacher_assignments (
 
 -- ── attendance ────────────────────────────────────────────────────────────────
 create table if not exists public.attendance (
-  id           uuid primary key default uuid_generate_v4(),
-  student_id   uuid not null references public.students(id) on delete cascade,
-  date         date not null,
-  status       text not null check (status in ('present','absent','late','excused')),
-  source       text not null default 'manual' check (source in ('manual','rfid')),
-  notes        text,
-  recorded_by  uuid references public.users(id) on delete set null,
-  created_at   timestamptz not null default now(),
+  id                  uuid primary key default uuid_generate_v4(),
+  student_id          uuid not null references public.students(id) on delete cascade,
+  date                date not null,
+  status              text not null check (status in ('present','absent','late','excused')),
+  source              text not null default 'manual' check (source in ('manual','rfid')),
+  notes               text,
+  recorded_by         uuid references public.users(id) on delete set null,
+  notification_sent   boolean not null default false,
+  updated_at          timestamptz,
+  created_at          timestamptz not null default now(),
   unique (student_id, date)
 );
 
