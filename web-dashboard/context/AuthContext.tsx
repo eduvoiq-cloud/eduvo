@@ -8,7 +8,7 @@ import React, {
   useCallback,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { authApi, type UserProfile } from '@/lib/api';
+import { authApi, registerOn401Handler, type UserProfile } from '@/lib/api';
 import { saveSession, getToken, getUser, clearSession, dashboardPath } from '@/lib/session';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -61,10 +61,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         saveSession(token, freshUser);
         setState({ user: freshUser, token, loading: false });
       })
-      .catch(() => {
-        // /me failed (expired token, network error, etc.) — keep cached user
-        // but mark loading done so the UI doesn't hang.
-        setState({ user, token, loading: false });
+      .catch((err: unknown) => {
+        // If the server explicitly rejected the token (401/403), the session
+        // is dead — clear it and send the user back to login so they get a
+        // fresh token. For network errors we keep the cached user so the app
+        // still works offline / during transient outages.
+        const message = err instanceof Error ? err.message : String(err);
+        const isAuthError =
+          message.includes('401') ||
+          message.includes('403') ||
+          message.toLowerCase().includes('unauthorized') ||
+          message.toLowerCase().includes('invalid') ||
+          message.toLowerCase().includes('expired');
+
+        if (isAuthError) {
+          clearSession();
+          setState({ user: null, token: null, loading: false });
+          router.push('/login');
+        } else {
+          // Network / server error — keep cached user, mark loading done
+          setState({ user, token, loading: false });
+        }
       });
   }, []);
 
@@ -89,6 +106,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearSession();
     setState({ user: null, token: null, loading: false });
     router.push('/login');
+  }, [router]);
+
+  // Register the global 401 handler so any API call that gets a 401
+  // mid-session (expired token) automatically clears the session and
+  // redirects to login — without needing per-call error handling.
+  useEffect(() => {
+    registerOn401Handler(() => {
+      clearSession();
+      setState({ user: null, token: null, loading: false });
+      router.push('/login');
+    });
   }, [router]);
 
   return (

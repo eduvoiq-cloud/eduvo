@@ -5,6 +5,19 @@
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
+// ── Global 401 handler ────────────────────────────────────────────────────────
+// When any API call returns 401, clear the session and redirect to login.
+// This handles tokens that expire mid-session (after the initial /me check).
+let _on401: (() => void) | null = null;
+
+export function registerOn401Handler(handler: () => void) {
+  _on401 = handler;
+}
+
+function handle401() {
+  if (_on401) _on401();
+}
+
 export type AppRole = 'superadmin' | 'schooladmin' | 'teacher' | 'parent' | 'student';
 
 export interface UserProfile {
@@ -52,7 +65,13 @@ async function request<T>(
   const json = await res.json();
 
   if (!res.ok) {
-    throw new Error(json.message ?? `Request failed: ${res.status}`);
+    // Trigger global 401 handler so any expired mid-session token
+    // clears the session and redirects to login automatically.
+    if (res.status === 401) handle401();
+
+    // Include the HTTP status in the message so callers (e.g. AuthContext)
+    // can distinguish auth failures (401/403) from other errors.
+    throw new Error(`${res.status}: ${json.message ?? `Request failed: ${res.status}`}`);
   }
 
   return json as ApiResponse<T>;
