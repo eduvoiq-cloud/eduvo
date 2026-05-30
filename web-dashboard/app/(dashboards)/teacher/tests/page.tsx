@@ -88,37 +88,43 @@ export default function TestsPage() {
       ]);
       setAssignments(aRes.data.filter((a) => a.teacher_id === user.id));
 
-      // Normalise test_questions: backend returns question_type/question_text,
-      // but the frontend types and View modal expect type/text.
-      const normalised = tRes.data.map((t) => ({
-        ...t,
-        test_questions: (t.test_questions ?? []).map((q) => {
-          const raw = q as unknown as Record<string, unknown>;
-          return {
-            ...q,
-            type: (q.type ?? raw['question_type'] ?? 'theory') as 'mcq' | 'theory',
-            text: (typeof (q as unknown as Record<string, unknown>)['text'] === 'string'
-              ? (q as unknown as Record<string, unknown>)['text']
-              : raw['question_text'] ?? '') as string,
-            // Normalise options: backend stores option_a/b/c/d, frontend expects options[]
-            options: q.type === 'mcq' || raw['question_type'] === 'mcq'
-              ? (q as unknown as { options?: { text: string }[] }).options ?? [
+      // Normalise test_questions: backend returns question_type/question_text/option_a-d,
+      // but the frontend types and View modal expect type/text/options[].
+      const normalised: Test[] = tRes.data.map((t) => {
+        const raw_t = t as unknown as Record<string, unknown>;
+        const rawQuestions = (raw_t['test_questions'] ?? []) as Record<string, unknown>[];
+        return {
+          ...t,
+          test_questions: rawQuestions.map((raw) => {
+            const qType = (raw['type'] ?? raw['question_type'] ?? 'theory') as 'mcq' | 'theory';
+            const qText = (raw['text'] ?? raw['question_text'] ?? '') as string;
+            const rawCo = raw['correct_option'];
+            const correctOption: number = typeof rawCo === 'number'
+              ? rawCo
+              : typeof rawCo === 'string'
+              ? ['a', 'b', 'c', 'd'].indexOf(rawCo)
+              : 0;
+            const options: { text: string }[] = qType === 'mcq'
+              ? (raw['options'] as { text: string }[] | undefined) ?? [
                   { text: (raw['option_a'] as string) ?? '' },
                   { text: (raw['option_b'] as string) ?? '' },
                   { text: (raw['option_c'] as string) ?? '' },
                   { text: (raw['option_d'] as string) ?? '' },
                 ]
-              : undefined,
-            // correct_option: backend stores 'a'/'b'/'c'/'d', frontend expects 0/1/2/3
-            correct_option: (() => {
-              const co = (q as unknown as Record<string, unknown>)['correct_option'];
-              if (typeof co === 'number') return co;
-              if (typeof co === 'string') return ['a','b','c','d'].indexOf(co);
-              return undefined;
-            })(),
-          };
-        }),
-      }));
+              : [];
+            return {
+              id: raw['id'] as string,
+              test_id: raw['test_id'] as string,
+              order_index: raw['order_index'] as number,
+              type: qType,
+              text: qText,
+              marks: raw['marks'] as number,
+              options,
+              correct_option: correctOption,
+            } as unknown as TestQuestion & { id: string; order_index: number; test_id: string };
+          }),
+        };
+      });
       setTests(normalised);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load tests');
