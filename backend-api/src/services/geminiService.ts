@@ -1,11 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-// pdf-parse v2.x changed its export — the function lives on .default
+// pdf-parse v2.x uses a class-based API: new PDFParse({ data: buffer }).getText()
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const _pdfParseModule = require("pdf-parse");
-const pdfParse: (buffer: Buffer) => Promise<{ text: string }> =
-  typeof _pdfParseModule === "function"
-    ? _pdfParseModule
-    : _pdfParseModule.default ?? _pdfParseModule;
+const { PDFParse } = require("pdf-parse");
 import mammoth from "mammoth";
 import crypto from "crypto";
 import { supabase } from "../config/supabase";
@@ -82,7 +78,8 @@ export async function extractTextFromFile(
   let raw = "";
 
   if (mime === "application/pdf" || originalName.endsWith(".pdf")) {
-    const result = await pdfParse(file.buffer);
+    const parser = new PDFParse({ data: file.buffer, verbosity: 0 });
+    const result = await parser.getText();
     raw = result.text;
   } else if (
     mime ===
