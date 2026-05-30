@@ -79,5 +79,69 @@ END $$;
 -- notifications: add read_at column if missing
 ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS read_at timestamptz;
 
--- Reload PostgREST schema cache so new columns are recognised immediately
+-- ── tests: create table if it was never created ───────────────────────────────
+-- The original DB may have been set up before the tests feature was added.
+CREATE TABLE IF NOT EXISTS public.tests (
+  id          uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  title       text NOT NULL,
+  subject     text NOT NULL,
+  class_name  text NOT NULL,
+  section     text NOT NULL,
+  term        text NOT NULL,
+  date        date NOT NULL,
+  school_id   uuid NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+  created_by  uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- tests: add optional columns used by the advanced /create route
+ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS time_limit_minutes integer;
+ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS shuffle_questions boolean NOT NULL DEFAULT false;
+ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS shuffle_options  boolean NOT NULL DEFAULT false;
+ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS subject_id uuid REFERENCES public.subjects(id) ON DELETE SET NULL;
+
+-- ── test_questions: create table if it was never created ─────────────────────
+-- This is the table the compatibility POST /api/tests route writes to.
+-- Without it every create/list call returns 500.
+CREATE TABLE IF NOT EXISTS public.test_questions (
+  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  test_id         uuid NOT NULL REFERENCES public.tests(id) ON DELETE CASCADE,
+  order_index     integer NOT NULL DEFAULT 0,
+  type            text NOT NULL CHECK (type IN ('mcq', 'theory')),
+  text            text NOT NULL,
+  marks           numeric(5,2) NOT NULL,
+  options         jsonb,           -- [{text: string}] × 4 for MCQ, null for theory
+  correct_option  integer,         -- 0-3 index for MCQ, null for theory
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- Enable RLS (deny direct client access — backend uses service-role key)
+ALTER TABLE public.tests          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.test_questions ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'tests' AND policyname = 'deny_all_tests'
+  ) THEN
+    CREATE POLICY "deny_all_tests" ON public.tests FOR ALL USING (false);
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'test_questions' AND policyname = 'deny_all_test_questions'
+  ) THEN
+    CREATE POLICY "deny_all_test_questions" ON public.test_questions FOR ALL USING (false);
+  END IF;
+END $$;
+
+-- Indexes for tests
+CREATE INDEX IF NOT EXISTS idx_tests_school_class    ON public.tests(school_id, class_name, section);
+CREATE INDEX IF NOT EXISTS idx_tests_created_by      ON public.tests(created_by);
+CREATE INDEX IF NOT EXISTS idx_test_questions_test_id ON public.test_questions(test_id);
+
+-- Drop the term check constraint on tests — term is free text, any value should be valid
+ALTER TABLE public.tests DROP CONSTRAINT IF EXISTS tests_term_check;
+
 NOTIFY pgrst, 'reload schema';

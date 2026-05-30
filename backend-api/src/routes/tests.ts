@@ -812,6 +812,9 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   const { questions, class_name, ...rest } = parsed.data;
 
   // Insert test — DB uses "class" not "class_name"
+  // Normalise term to title-case to satisfy the DB check constraint (e.g. "term 1" → "Term 1")
+  const normalisedTerm = rest.term.replace(/\bterm\b/i, 'Term').replace(/\bT(\d)/i, 'T$1');
+
   const { data: test, error: testErr } = await supabaseAdmin
     .from('tests')
     .insert({
@@ -819,7 +822,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
       subject:    rest.subject,
       class:      class_name,          // live DB column name
       section:    rest.section,
-      term:       rest.term,
+      term:       normalisedTerm,
       date:       rest.date,
       school_id:  req.user!.school_id,
       created_by: req.user!.id,
