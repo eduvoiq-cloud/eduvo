@@ -1,7 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-// pdf-parse v2.x uses a class-based API: new PDFParse({ data: buffer }).getText()
+// pdf-parse v1.x: require() returns the parse function directly
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { PDFParse } = require("pdf-parse");
+const pdfParse: (buffer: Buffer) => Promise<{ text: string; numpages: number }> = require("pdf-parse");
 import mammoth from "mammoth";
 import crypto from "crypto";
 import { supabase } from "../config/supabase";
@@ -78,8 +78,8 @@ export async function extractTextFromFile(
   let raw = "";
 
   if (mime === "application/pdf" || originalName.endsWith(".pdf")) {
-    const parser = new PDFParse({ data: file.buffer, verbosity: 0 });
-    const result = await parser.getText();
+    const result = await pdfParse(file.buffer);
+    console.log(`[extractTextFromFile] PDF pages: ${result.numpages}, raw chars: ${result.text.length}`);
     raw = result.text;
   } else if (
     mime ===
@@ -105,6 +105,8 @@ export async function extractTextFromFile(
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+  console.log(`[extractTextFromFile] cleaned chars: ${cleaned.length}, will truncate: ${cleaned.length > MAX_CONTENT_CHARS}`);
 
   // Truncate to control token cost
   return cleaned.length > MAX_CONTENT_CHARS
