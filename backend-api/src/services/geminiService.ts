@@ -1,10 +1,9 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-// pdf-parse v1.x: require() returns the parse function directly
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse: (buffer: Buffer) => Promise<{ text: string; numpages: number }> = require("pdf-parse");
 import mammoth from "mammoth";
 import crypto from "crypto";
 import { supabase } from "../config/supabase";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfjsLib = require("pdfjs-dist");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,9 +77,25 @@ export async function extractTextFromFile(
   let raw = "";
 
   if (mime === "application/pdf" || originalName.endsWith(".pdf")) {
-    const result = await pdfParse(file.buffer);
-    console.log(`[extractTextFromFile] PDF pages: ${result.numpages}, raw chars: ${result.text.length}`);
-    raw = result.text;
+    // Use pdfjs-dist directly — reliable full-text extraction across all pages
+    const loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(file.buffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+    const pdf = await loadingTask.promise;
+    const pageTexts: string[] = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item: { str?: string }) => item.str ?? "")
+        .join(" ");
+      pageTexts.push(pageText);
+    }
+    raw = pageTexts.join("\n");
+    console.log(`[extractTextFromFile] PDF pages: ${pdf.numPages}, raw chars: ${raw.length}`);
   } else if (
     mime ===
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
