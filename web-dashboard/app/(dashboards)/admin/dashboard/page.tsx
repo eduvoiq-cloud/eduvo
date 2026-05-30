@@ -21,7 +21,7 @@ import {
   type AuditLog,
   type OnboardingProgress,
 } from '@/lib/api';
-import { getToken } from '@/lib/session';
+import { getToken, saveSession } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
 
@@ -167,7 +167,6 @@ export default function SchoolAdminDashboard() {
           schoolId = meRes.data.school_id;
           if (schoolId) {
             // Persist the refreshed profile so future loads are instant
-            const { saveSession } = await import('@/lib/session');
             saveSession(token!, meRes.data);
           }
         } catch {

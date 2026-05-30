@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { authApi, usersApi, assignmentsApi, type Teacher, type TeacherAssignment } from '@/lib/api';
-import { getToken } from '@/lib/session';
+import { getToken, saveSession } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
 import FormField, { inputClass } from '@/components/FormField';
@@ -62,7 +62,6 @@ function TeachersPageInner() {
         const meRes = await authApi.me(token);
         schoolId = meRes.data.school_id;
         if (schoolId) {
-          const { saveSession } = await import('@/lib/session');
           saveSession(token, meRes.data);
         }
       }

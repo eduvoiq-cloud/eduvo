@@ -4,8 +4,8 @@ import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
-import { adminApi, feesApi, type AdminStudent, type FeeRecord } from '@/lib/api';
-import { getToken } from '@/lib/session';
+import { adminApi, feesApi, authApi, type AdminStudent, type FeeRecord } from '@/lib/api';
+import { getToken, saveSession } from '@/lib/session';
 import { useDebounce } from '@/lib/useDebounce';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
@@ -364,10 +364,8 @@ function StudentsPageInner() {
     try {
       // Self-heal: if school_id is missing from cached session, fetch fresh profile
       if (!user?.school_id) {
-        const { authApi: api } = await import('@/lib/api');
-        const meRes = await api.me(token);
+        const meRes = await authApi.me(token);
         if (meRes.data.school_id) {
-          const { saveSession } = await import('@/lib/session');
           saveSession(token, meRes.data);
         } else {
           setLoading(false);
