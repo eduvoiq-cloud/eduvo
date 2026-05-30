@@ -407,62 +407,6 @@ router.post('/students/restore/:id', async (req: Request, res: Response) => {
   sendSuccess(res, restored, 'Student restored');
 });
 
-// ── PUT /api/admin/students/:id/rfid ─────────────────────────────────────────
-/**
- * Register an RFID card to a student.
- * Checks rfid_uid is not already used by another student in the school.
- */
-router.put('/students/:id/rfid', async (req: Request, res: Response) => {
-  const schema = z.object({
-    rfid_uid: z.string().min(1),
-  });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
-
-  const { rfid_uid } = parsed.data;
-  const adminId  = req.user!.id;
-  const schoolId = req.user!.school_id!;
-
-  const existing = await getStudentInSchool(req.params.id as string, schoolId);
-  if (!existing) { sendError(res, 'Student not found', 404); return; }
-
-  // Check rfid_uid not already used by another student in this school
-  const { data: conflict } = await supabaseAdmin
-    .from('students')
-    .select('id, full_name')
-    .eq('rfid_uid', rfid_uid)
-    .eq('school_id', schoolId)
-    .neq('id', req.params.id)
-    .maybeSingle();
-
-  if (conflict) {
-    sendError(
-      res,
-      `RFID card is already registered to student: ${(conflict as Record<string, unknown>).full_name}`,
-      409
-    );
-    return;
-  }
-
-  const { data: updated, error } = await supabaseAdmin
-    .from('students')
-    .update({ rfid_uid })
-    .eq('id', req.params.id)
-    .select()
-    .single();
-
-  if (error) { sendError(res, error.message, 500); return; }
-
-  await logAudit(adminId, 'STUDENT_RFID_REGISTERED', 'students', {
-    student_id:   req.params.id,
-    student_name: existing.full_name,
-    rfid_uid,
-  });
-
-  sendSuccess(res, updated, 'RFID card registered');
-});
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEACHER MANAGEMENT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1177,7 +1121,6 @@ router.get('/export', async (req: Request, res: Response) => {
  * Uses raw PDF syntax — no external library required.
  *
  * Card contains: school name, student name, class, section, roll number, photo URL (as text).
- * No QR code (RFID chip is physical).
  */
 async function buildIdCardPdf(
   student: Record<string, unknown>,

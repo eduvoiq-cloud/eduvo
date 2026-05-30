@@ -41,7 +41,7 @@ function StudentTableSkeleton() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-100 bg-gray-50">
-              {['Photo', 'Name', 'Roll No', 'Class', 'Section', 'RFID', 'Fees', 'Actions'].map((h) => (
+              {['Photo', 'Name', 'Roll No', 'Class', 'Section', 'Fees', 'Actions'].map((h) => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -54,7 +54,6 @@ function StudentTableSkeleton() {
                 <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-12" /></td>
                 <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-16" /></td>
                 <td className="px-4 py-3"><div className="h-4 bg-gray-200 rounded w-8" /></td>
-                <td className="px-4 py-3"><div className="h-5 bg-gray-200 rounded-full w-24" /></td>
                 <td className="px-4 py-3"><div className="h-5 bg-gray-200 rounded-full w-16" /></td>
                 <td className="px-4 py-3"><div className="h-6 bg-gray-200 rounded w-20 ml-auto" /></td>
               </tr>
@@ -101,10 +100,10 @@ async function compressImage(file: File, maxKB = 200): Promise<string> {
 }
 
 function exportCSV(students: AdminStudent[]) {
-  const headers = ['Name', 'Roll No', 'Class', 'Section', 'RFID Status', 'Phone'];
+  const headers = ['Name', 'Roll No', 'Class', 'Section', 'Phone'];
   const rows = students.map((s) => [
     `"${s.full_name}"`, s.roll_number ?? '', s.class_name, s.section ?? '',
-    s.rfid_uid ? 'Registered' : 'Not Registered', s.phone ?? '',
+    s.phone ?? '',
   ]);
   const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -142,7 +141,6 @@ function downloadIdCard(student: AdminStudent, schoolName: string) {
       <p class="name">${student.full_name}</p>
       <p class="row">Roll No: <span>${student.roll_number ?? '—'}</span></p>
       <p class="row">Class: <span>${student.class_name}${student.section ? ' – ' + student.section : ''}</span></p>
-      <p class="row">RFID: <span>${student.rfid_uid ?? 'Not Registered'}</span></p>
     </div>
   </div>
   <div class="footer">This card is the property of ${schoolName}</div>
@@ -154,20 +152,6 @@ function downloadIdCard(student: AdminStudent, schoolName: string) {
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
-
-function RfidBadge({ uid, onClick }: { uid?: string | null; onClick?: () => void }) {
-  const registered = !!uid;
-  return (
-    <button type="button" onClick={onClick}
-      title={registered ? `UID: ${uid}` : 'Click to register RFID'}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
-        registered ? 'bg-green-100 text-green-700 hover:bg-green-200' : 'bg-red-100 text-red-600 hover:bg-red-200'
-      } ${onClick ? 'cursor-pointer' : 'cursor-default'}`}>
-      <span className={`w-1.5 h-1.5 rounded-full inline-block ${registered ? 'bg-green-500' : 'bg-red-400'}`} />
-      {registered ? 'Registered' : 'Not Registered'}
-    </button>
-  );
-}
 
 function FeeBadge({ paid }: { paid: boolean }) {
   return (
@@ -627,7 +611,6 @@ function StudentsPageInner() {
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Roll No</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Class</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Section</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">RFID</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Fees</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
                     </tr>
@@ -649,10 +632,6 @@ function StudentsPageInner() {
                         <td className="px-4 py-3 text-gray-500">{s.roll_number ?? '—'}</td>
                         <td className="px-4 py-3 text-gray-600">{s.class_name}</td>
                         <td className="px-4 py-3 text-gray-600">{s.section ?? '—'}</td>
-                        <td className="px-4 py-3">
-                          <RfidBadge uid={s.rfid_uid}
-                            onClick={() => router.push(`/admin/register-rfid?student_id=${s.id}`)} />
-                        </td>
                         <td className="px-4 py-3"><FeeBadge paid={feeMap[s.id] ?? false} /></td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1.5">

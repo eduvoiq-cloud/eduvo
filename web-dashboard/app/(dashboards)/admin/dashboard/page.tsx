@@ -74,8 +74,6 @@ function formatAuditEntry(log: AuditLog): string {
       return `${actor} recorded attendance`;
     case 'attendance_corrected':
       return `${actor} corrected an attendance record`;
-    case 'rfid_attendance':
-      return `RFID scan recorded for ${d.student_name ?? 'a student'}`;
     case 'FEE_TOGGLED':
       return `${actor} updated fee status for ${d.student_name ?? 'a student'}`;
     case 'TEST_CREATED':
@@ -486,15 +484,6 @@ function TestIcon() {
     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
         d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-    </svg>
-  );
-}
-
-function RfidIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-        d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
     </svg>
   );
 }

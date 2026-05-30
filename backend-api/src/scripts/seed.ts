@@ -11,7 +11,6 @@
  * ADDS: parent@eduvo.com, student2@eduvo.com, admin2@eduvo.com + all test data.
  *
  * CHANGES:
- *   - Removed rfid_uid from all student inserts (column no longer used)
  *   - Added onboarding_progress records for both schools
  *   - Added attendance submission records for current week (Class 10A + 10B)
  *   - Added ai_usage records for teacher (3 today = "3/10 used")
@@ -401,7 +400,6 @@ async function seedStudents(
 
     const parentId = parentIds[def.parentEmail] ?? null;
 
-    // NOTE: rfid_uid intentionally omitted — column no longer used
     const { data: student, error } = await supabaseAdmin
       .from('students')
       .insert({

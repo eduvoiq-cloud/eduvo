@@ -555,12 +555,6 @@ export default function ImportStudentsPage() {
             >
               View Students
             </button>
-            <button
-              onClick={() => router.push('/admin/register-rfid')}
-              className="px-5 py-2.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
-            >
-              Register RFID Cards
-            </button>
           </div>
         </div>
       )}

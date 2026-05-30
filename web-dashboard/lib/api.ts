@@ -124,7 +124,6 @@ export interface Student {
   email?: string;
   phone?: string;
   photo_url?: string;
-  rfid_uid?: string | null;
   created_at: string;
 }
 
@@ -174,7 +173,7 @@ export interface AttendanceRecord {
   student_id: string;
   date: string;
   status: 'present' | 'absent' | 'late' | 'excused';
-  source?: 'manual' | 'rfid';
+  source?: string;
   recorded_by?: string;
   notes?: string;
 }
@@ -477,7 +476,7 @@ export const marksApi = {
 // ── Attendance endpoints ──────────────────────────────────────────────────────
 
 export const attendanceApi = {
-  /** Check existing attendance for a class on a date (includes RFID source) */
+  /** Check existing attendance for a class on a date */
   check: (token: string, params: { class_name: string; section?: string; date: string }) => {
     const qs = new URLSearchParams({ class_name: params.class_name, date: params.date });
     if (params.section) qs.set('section', params.section);
@@ -619,7 +618,6 @@ export interface AdminStudent {
   roll_number?: string;
   phone?: string;
   photo_url?: string;
-  rfid_uid?: string | null;
   parent_id?: string | null;
   school_id: string;
   is_deleted: boolean;

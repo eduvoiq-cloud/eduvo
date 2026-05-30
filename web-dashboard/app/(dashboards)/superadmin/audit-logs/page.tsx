@@ -40,7 +40,6 @@ const ACTION_COLORS: Record<string, string> = {
   TEACHER_DELETED: 'bg-red-100 text-red-600',
   manual_attendance_batch: 'bg-blue-100 text-blue-700',
   attendance_corrected: 'bg-amber-100 text-amber-700',
-  rfid_attendance: 'bg-indigo-100 text-indigo-700',
 };
 
 function actionBadgeClass(action: string): string {

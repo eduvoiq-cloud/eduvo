@@ -39,7 +39,7 @@ async function logAudit(
 
 /**
  * GET /api/schools/list — public, no auth required.
- * Used by the RFID gate page to populate the school selector.
+ * Used by the school selector on the login page.
  * Returns only id and name.
  */
 router.get('/list', async (_req: Request, res: Response) => {
