@@ -455,24 +455,48 @@ router.post('/save-test', async (req: Request, res: Response) => {
   const schoolId = req.user!.school_id ?? '';
 
   // ── Insert test record ────────────────────────────────────────────────────
-  const { data: test, error: testErr } = await supabaseAdmin
+  // Only insert columns guaranteed to exist in the base schema.
+  // Extended columns (time_limit_minutes, shuffle_*) are added via migrations —
+  // attempt them but fall back gracefully if the migration hasn't run yet.
+  const testInsertBase = {
+    title:      sanitise(title),
+    subject:    sanitise(subject_id) || 'General', // subject_id carries the subject name
+    class:      sanitise(className),               // live DB column is "class"
+    section:    sanitise(section),
+    term:       sanitise(term),
+    date:       date || new Date().toISOString().split('T')[0],
+    school_id:  schoolId,
+    created_by: teacherId,
+    created_at: new Date().toISOString(),
+  };
+
+  // Try with extended columns first
+  let test: Record<string, unknown> | null = null;
+  let testErr: { message: string } | null = null;
+
+  const extendedResult = await supabaseAdmin
     .from('tests')
-    .insert({
-      title: sanitise(title),
-      subject: sanitise(subject_id) || 'General',  // subject_id field carries the subject name
-      class: sanitise(className),   // DB column is "class", not "class_name"
-      section: sanitise(section),
-      term: sanitise(term),
-      date: date || new Date().toISOString().split('T')[0], // use provided date or default to today
-      time_limit_minutes,
-      shuffle_questions,
-      shuffle_options,
-      school_id: schoolId,
-      created_by: teacherId,
-      created_at: new Date().toISOString(),
-    })
+    .insert({ ...testInsertBase, time_limit_minutes, shuffle_questions, shuffle_options })
     .select()
     .single();
+
+  if (extendedResult.error) {
+    // If the error is about missing columns, retry with base columns only
+    const msg = extendedResult.error.message ?? '';
+    if (msg.includes('shuffle_options') || msg.includes('shuffle_questions') || msg.includes('time_limit_minutes')) {
+      const baseResult = await supabaseAdmin
+        .from('tests')
+        .insert(testInsertBase)
+        .select()
+        .single();
+      test = baseResult.data as Record<string, unknown> | null;
+      testErr = baseResult.error;
+    } else {
+      testErr = extendedResult.error;
+    }
+  } else {
+    test = extendedResult.data as Record<string, unknown> | null;
+  }
 
   if (testErr || !test) {
     sendError(res, testErr?.message ?? 'Failed to create test', 500);
@@ -480,36 +504,38 @@ router.post('/save-test', async (req: Request, res: Response) => {
   }
 
   // ── Build question rows ───────────────────────────────────────────────────
+  // Use the same column names as the working POST /api/tests compatibility route:
+  // question_text, question_type, option_a/b/c/d, correct_option (letter), marks
   const questionRows: Record<string, unknown>[] = [];
   let orderIndex = 0;
 
   for (const q of mcq_questions) {
     questionRows.push({
-      test_id: test.id,
-      order_index: orderIndex++,
-      question_text: sanitise(q.question),
-      question_type: 'mcq',
-      option_a: sanitise(q.option_a),
-      option_b: sanitise(q.option_b),
-      option_c: sanitise(q.option_c),
-      option_d: sanitise(q.option_d),
-      correct_option: q.correct_option,
-      marks: q.marks,
+      test_id:        test.id,
+      order_index:    orderIndex++,
+      question_text:  sanitise(q.question),
+      question_type:  'mcq',
+      option_a:       sanitise(q.option_a),
+      option_b:       sanitise(q.option_b),
+      option_c:       sanitise(q.option_c),
+      option_d:       sanitise(q.option_d),
+      correct_option: q.correct_option,  // letter: 'a'|'b'|'c'|'d'
+      marks:          q.marks,
     });
   }
 
   for (const q of theory_questions) {
     questionRows.push({
-      test_id: test.id,
-      order_index: orderIndex++,
-      question_text: sanitise(q.question),
-      question_type: 'theory',
-      option_a: null,
-      option_b: null,
-      option_c: null,
-      option_d: null,
+      test_id:        test.id,
+      order_index:    orderIndex++,
+      question_text:  sanitise(q.question),
+      question_type:  'theory',
+      option_a:       null,
+      option_b:       null,
+      option_c:       null,
+      option_d:       null,
       correct_option: null,
-      marks: q.marks,
+      marks:          q.marks,
     });
   }
 
