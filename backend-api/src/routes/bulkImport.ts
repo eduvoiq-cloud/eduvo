@@ -139,13 +139,14 @@ function validateDivision(div: unknown): string | null {
 }
 
 function validateParentName(name: unknown): string | null {
-  if (typeof name !== 'string' || !name.trim()) return 'Parent Name is required';
+  if (!name || (typeof name === 'string' && !name.trim())) return null; // optional
+  if (typeof name !== 'string') return null;
   if (name.length > 100) return 'Parent Name must be max 100 characters';
   return null;
 }
 
 function validateParentPhone(phone: unknown): string | null {
-  if (typeof phone !== 'string' && typeof phone !== 'number') return 'Parent Phone is required';
+  if (!phone || (typeof phone === 'string' && !String(phone).trim())) return null; // optional
   const str = String(phone).trim();
   if (!/^\d{10}$/.test(str)) return 'Parent Phone must be exactly 10 digits';
   return null;
@@ -419,92 +420,12 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
     return;
   }
 
-  const imported: string[] = [];
   const errors: string[] = [];
 
-  // ── Step 1: Resolve / create parent users ─────────────────────────────────
-  // Collect unique parent emails to batch-lookup existing parents
-  const rowsWithData = validRows.map((row) => ({
-    row,
-    data: row.data as {
-      name: string;
-      roll_number: string;
-      class: string;
-      division: string;
-      parent_name: string;
-      parent_phone: string;
-      parent_email: string;
-    },
-  }));
-
-  const uniqueEmails = [
-    ...new Set(rowsWithData.map((r) => r.data.parent_email).filter(Boolean)),
-  ];
-
-  // Batch-fetch all existing parents in one query
-  const existingParentMap = new Map<string, string>(); // email → id
-  if (uniqueEmails.length > 0) {
-    const { data: existingParents } = await supabaseAdmin
-      .from('users')
-      .select('id, email')
-      .in('email', uniqueEmails)
-      .eq('role', 'parent');
-
-    for (const p of existingParents ?? []) {
-      existingParentMap.set(p.email.toLowerCase(), p.id);
-    }
-  }
-
-  // Create missing parent users in bulk
-  const newParentRows: {
-    id: string;
-    name: string;
-    email: string;
-    role: string;
-    school_id: string;
-    created_by: string;
-    created_at: string;
-  }[] = [];
-  const emailToNewId = new Map<string, string>();
-
-  for (const { data } of rowsWithData) {
-    if (!data.parent_email) continue;
-    const emailLower = data.parent_email.toLowerCase();
-    if (existingParentMap.has(emailLower) || emailToNewId.has(emailLower)) continue;
-    const newId = uuidv4();
-    emailToNewId.set(emailLower, newId);
-    newParentRows.push({
-      id: newId,
-      name: data.parent_name,
-      email: data.parent_email,
-      role: 'parent',
-      school_id: cached.school_id,
-      created_by: req.user!.id,
-      created_at: new Date().toISOString(),
-    });
-  }
-
-  if (newParentRows.length > 0) {
-    const { error: parentBulkErr } = await supabaseAdmin.from('users').insert(newParentRows);
-    if (parentBulkErr) {
-      // Fall back to individual inserts so partial failures don't block everything
-      for (const pr of newParentRows) {
-        const { error } = await supabaseAdmin.from('users').insert(pr);
-        if (error) {
-          errors.push(`Parent creation failed for ${pr.email}: ${error.message}`);
-          emailToNewId.delete(pr.email.toLowerCase());
-        }
-      }
-    }
-  }
-
-  // Build final email → parentId map
-  const parentIdByEmail = new Map<string, string>([
-    ...existingParentMap,
-    ...emailToNewId,
-  ]);
-
-  // ── Step 2: Build student rows for bulk insert ────────────────────────────
+  // ── Build student rows ────────────────────────────────────────────────────
+  // Parent accounts are NOT created here — bulk import only creates student
+  // records. Parent email/phone are stored on the student row so admins can
+  // send invites later via the normal invite flow.
   const studentRows: {
     id: string;
     full_name: string;
@@ -512,7 +433,6 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
     class_name: string;
     section: string;
     roll_number: string;
-    parent_id: string | null;
     phone: string;
     email: string | null;
     qr_code: string;
@@ -520,14 +440,18 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
     created_at: string;
   }[] = [];
 
-  const parentStudentLinks: { parent_id: string; student_id: string }[] = [];
+  for (const row of validRows) {
+    const data = row.data as {
+      name: string;
+      roll_number: string;
+      class: string;
+      division: string;
+      parent_name: string;
+      parent_phone: string;
+      parent_email: string;
+    };
 
-  for (const { row, data } of rowsWithData) {
     const studentId = uuidv4();
-    const parentId = data.parent_email
-      ? (parentIdByEmail.get(data.parent_email.toLowerCase()) ?? null)
-      : null;
-
     studentRows.push({
       id: studentId,
       full_name: data.name,
@@ -535,59 +459,39 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
       class_name: data.class,
       section: data.division,
       roll_number: data.roll_number,
-      parent_id: parentId,
-      phone: data.parent_phone,
+      phone: data.parent_phone || '',
       email: data.parent_email || null,
       qr_code: studentId,
       is_deleted: false,
       created_at: new Date().toISOString(),
     });
-
-    if (parentId) {
-      parentStudentLinks.push({ parent_id: parentId, student_id: studentId });
-    }
-
-    // Track row number for error reporting
-    imported.push(studentId);
-    void row; // suppress unused warning
   }
 
-  // ── Step 3: Bulk insert all students in one query ─────────────────────────
+  // ── Bulk insert students ──────────────────────────────────────────────────
+  let importedCount = 0;
+
   if (studentRows.length > 0) {
-    const { error: studentBulkErr } = await supabaseAdmin.from('students').insert(studentRows);
-    if (studentBulkErr) {
-      // Bulk insert failed — fall back to individual inserts to identify bad rows
-      const successIds = new Set<string>();
+    const { error: bulkErr } = await supabaseAdmin.from('students').insert(studentRows);
+
+    if (bulkErr) {
+      // Bulk failed — fall back to row-by-row so we can report which rows failed
+      console.error('[bulkImport] bulk insert failed, falling back to individual inserts:', bulkErr.message);
       for (let i = 0; i < studentRows.length; i++) {
         const { error } = await supabaseAdmin.from('students').insert(studentRows[i]);
         if (error) {
           errors.push(`Row ${validRows[i].row_number}: ${error.message}`);
-          // Remove from imported list
-          const idx = imported.indexOf(studentRows[i].id);
-          if (idx !== -1) imported.splice(idx, 1);
         } else {
-          successIds.add(studentRows[i].id);
+          importedCount++;
         }
-      }
-      // Only link parents for successfully inserted students
-      const filteredLinks = parentStudentLinks.filter((l) => successIds.has(l.student_id));
-      if (filteredLinks.length > 0) {
-        await supabaseAdmin.from('parent_students').insert(filteredLinks);
       }
     } else {
-      // All students inserted — bulk insert parent_students links
-      if (parentStudentLinks.length > 0) {
-        const { error: linkErr } = await supabaseAdmin.from('parent_students').insert(parentStudentLinks);
-        if (linkErr) {
-          console.error('[bulkImport] parent_students link insert failed:', linkErr.message);
-        }
-      }
+      importedCount = studentRows.length;
     }
   }
 
   // Log to audit_logs
   await logAudit(req.user!.id, 'bulk_import_students', {
-    count: imported.length,
+    count: importedCount,
     school_id: cached.school_id,
   });
 
@@ -595,8 +499,8 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
   previewCache.delete(import_session_id);
 
   sendSuccess(res, {
-    imported: imported.length,
-    skipped: validRows.length - imported.length,
+    imported: importedCount,
+    skipped: validRows.length - importedCount,
     errors,
   });
 });
