@@ -87,7 +87,39 @@ export default function TestsPage() {
         }),
       ]);
       setAssignments(aRes.data.filter((a) => a.teacher_id === user.id));
-      setTests(tRes.data);
+
+      // Normalise test_questions: backend returns question_type/question_text,
+      // but the frontend types and View modal expect type/text.
+      const normalised = tRes.data.map((t) => ({
+        ...t,
+        test_questions: (t.test_questions ?? []).map((q) => {
+          const raw = q as unknown as Record<string, unknown>;
+          return {
+            ...q,
+            type: (q.type ?? raw['question_type'] ?? 'theory') as 'mcq' | 'theory',
+            text: (typeof (q as unknown as Record<string, unknown>)['text'] === 'string'
+              ? (q as unknown as Record<string, unknown>)['text']
+              : raw['question_text'] ?? '') as string,
+            // Normalise options: backend stores option_a/b/c/d, frontend expects options[]
+            options: q.type === 'mcq' || raw['question_type'] === 'mcq'
+              ? (q as unknown as { options?: { text: string }[] }).options ?? [
+                  { text: (raw['option_a'] as string) ?? '' },
+                  { text: (raw['option_b'] as string) ?? '' },
+                  { text: (raw['option_c'] as string) ?? '' },
+                  { text: (raw['option_d'] as string) ?? '' },
+                ]
+              : undefined,
+            // correct_option: backend stores 'a'/'b'/'c'/'d', frontend expects 0/1/2/3
+            correct_option: (() => {
+              const co = (q as unknown as Record<string, unknown>)['correct_option'];
+              if (typeof co === 'number') return co;
+              if (typeof co === 'string') return ['a','b','c','d'].indexOf(co);
+              return undefined;
+            })(),
+          };
+        }),
+      }));
+      setTests(normalised);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load tests');
     } finally {
@@ -342,7 +374,7 @@ export default function TestsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${q.type === 'mcq' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                        {q.type.toUpperCase()}
+                        {(q.type ?? 'theory').toUpperCase()}
                       </span>
                       <span className="text-xs text-gray-500">{q.marks} mark{parseFloat(q.marks) !== 1 ? 's' : ''}</span>
                     </div>
@@ -464,7 +496,7 @@ export default function TestsPage() {
                         </p>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${q.type === 'mcq' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                            {q.type.toUpperCase()}
+                            {(q.type ?? 'theory').toUpperCase()}
                           </span>
                           <span className="text-xs text-gray-500">{q.marks}m</span>
                         </div>
