@@ -215,7 +215,7 @@ export default function AdminAttendancePage() {
     const token = getToken();
     if (!token || !user?.school_id) return;
     apiFetch<StudentSearchResult[]>(
-      `/api/students?school_id=${user.school_id}`,
+      `/api/students?school_id=${user.school_id}&limit=0`,
       token
     )
       .then((data) => setAllStudents(data))
@@ -232,7 +232,7 @@ export default function AdminAttendancePage() {
       // Fetch all students to get class/section list
       const students = await apiFetch<
         { id: string; class_name: string; section?: string }[]
-      >(`/api/students?school_id=${user.school_id}`, token);
+      >(`/api/students?school_id=${user.school_id}&limit=0`, token);
 
       // Build unique class+section combos
       const classMap = new Map<string, { class_name: string; section: string; ids: string[] }>();
