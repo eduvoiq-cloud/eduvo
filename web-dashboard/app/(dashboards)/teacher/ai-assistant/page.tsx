@@ -47,7 +47,7 @@ interface SaveTestForm {
   shuffle_options: boolean;
 }
 
-const TERMS = ['Term 1', 'Term 2', 'Term 3', 'Term 4'];
+const TERM_SUGGESTIONS = ['Term 1', 'Term 2', 'Term 3', 'Term 4'];
 const DIFFICULTY_OPTIONS = ['easy', 'medium', 'hard'] as const;
 type Difficulty = typeof DIFFICULTY_OPTIONS[number];
 
@@ -490,7 +490,7 @@ export default function AIAssistantPage() {
     if (!saveForm.title.trim()) { setSaveError('Test title is required.'); return; }
     if (!saveForm.class) { setSaveError('Please select a class.'); return; }
     if (!saveForm.section) { setSaveError('Please select a section.'); return; }
-    if (!saveForm.term) { setSaveError('Please select a term.'); return; }
+    if (!saveForm.term.trim()) { setSaveError('Please enter a term.'); return; }
     if (mcqQuestions.length === 0 && theoryQuestions.length === 0) {
       setSaveError('Add at least one question before saving.'); return;
     }
@@ -505,10 +505,10 @@ export default function AIAssistantPage() {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: saveForm.title.trim(),
-          subject_id: saveForm.subject_id || '00000000-0000-0000-0000-000000000000',
+          subject_id: subject || saveForm.subject_id || 'General',
           class: saveForm.class,
           section: saveForm.section,
-          term: saveForm.term,
+          term: saveForm.term.trim(),
           time_limit_minutes: saveForm.time_limit_minutes ? parseInt(saveForm.time_limit_minutes) : 60,
           shuffle_questions: saveForm.shuffle_questions,
           shuffle_options: saveForm.shuffle_options,
@@ -874,11 +874,19 @@ export default function AIAssistantPage() {
 
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Term" htmlFor="save-term" required>
-              <select id="save-term" className={inputClass} value={saveForm.term}
-                onChange={(e) => setSaveForm((f) => ({ ...f, term: e.target.value }))}>
-                <option value="">Select…</option>
-                {TERMS.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
+              <input
+                id="save-term"
+                type="text"
+                list="term-suggestions"
+                className={inputClass}
+                placeholder="e.g. Term 1, Semester 2, Annual…"
+                value={saveForm.term}
+                onChange={(e) => setSaveForm((f) => ({ ...f, term: e.target.value }))}
+                autoComplete="off"
+              />
+              <datalist id="term-suggestions">
+                {TERM_SUGGESTIONS.map((t) => <option key={t} value={t} />)}
+              </datalist>
             </FormField>
             <FormField label="Date" htmlFor="save-date">
               <input id="save-date" type="date" className={inputClass} value={saveForm.date}

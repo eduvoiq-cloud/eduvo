@@ -414,10 +414,11 @@ router.post('/save-test', async (req: Request, res: Response) => {
 
   const saveTestSchema = z.object({
     title: z.string().min(1).max(200),
-    subject_id: z.string().uuid(),
+    subject_id: z.string().max(100).default(''),   // treated as subject text; uuid validation removed
     class: z.string().min(1).max(20),
     section: z.string().min(1).max(10),
     term: z.string().min(1).max(50),
+    date: z.string().optional(),                   // ISO date string e.g. "2025-12-19"
     time_limit_minutes: z.number().int().min(1).max(300),
     shuffle_questions: z.boolean().default(false),
     shuffle_options: z.boolean().default(false),
@@ -437,6 +438,7 @@ router.post('/save-test', async (req: Request, res: Response) => {
     class: className,
     section,
     term,
+    date,
     time_limit_minutes,
     shuffle_questions,
     shuffle_options,
@@ -457,16 +459,16 @@ router.post('/save-test', async (req: Request, res: Response) => {
     .from('tests')
     .insert({
       title: sanitise(title),
-      subject_id,
-      class_name: sanitise(className),
+      subject: sanitise(subject_id) || 'General',  // subject_id field carries the subject name
+      class: sanitise(className),   // DB column is "class", not "class_name"
       section: sanitise(section),
       term: sanitise(term),
+      date: date || new Date().toISOString().split('T')[0], // use provided date or default to today
       time_limit_minutes,
       shuffle_questions,
       shuffle_options,
       school_id: schoolId,
       created_by: teacherId,
-      ai_generated: true,
       created_at: new Date().toISOString(),
     })
     .select()
@@ -492,7 +494,6 @@ router.post('/save-test', async (req: Request, res: Response) => {
       option_c: sanitise(q.option_c),
       option_d: sanitise(q.option_d),
       correct_option: q.correct_option,
-      expected_answer: null,
       marks: q.marks,
     });
   }
@@ -508,13 +509,12 @@ router.post('/save-test', async (req: Request, res: Response) => {
       option_c: null,
       option_d: null,
       correct_option: null,
-      expected_answer: sanitise(q.expected_answer),
       marks: q.marks,
     });
   }
 
   // ── Insert questions ──────────────────────────────────────────────────────
-  const { error: qErr } = await supabaseAdmin.from('questions').insert(questionRows);
+  const { error: qErr } = await supabaseAdmin.from('test_questions').insert(questionRows);
 
   if (qErr) {
     // Roll back the test header if questions fail
