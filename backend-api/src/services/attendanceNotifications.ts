@@ -13,25 +13,34 @@ import { supabaseAdmin } from '../config/supabase';
 
 // ── Firebase Admin initialisation ─────────────────────────────────────────────
 // Initialise once; guard against double-init in hot-reload environments.
+// Wrapped in try/catch so a missing or invalid key never crashes the server —
+// it just disables push notifications gracefully.
 if (!admin.apps.length) {
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
-  if (
-    !process.env.FIREBASE_PROJECT_ID ||
-    !process.env.FIREBASE_CLIENT_EMAIL ||
-    !privateKey
-  ) {
+  const isConfigured =
+    process.env.FIREBASE_PROJECT_ID &&
+    process.env.FIREBASE_CLIENT_EMAIL &&
+    privateKey &&
+    !privateKey.includes('YOUR_PRIVATE_KEY_HERE') &&
+    privateKey.includes('BEGIN');
+
+  if (!isConfigured) {
     console.warn(
-      '[FCM] Firebase env vars not set. Push notifications will be skipped.'
+      '[FCM] Firebase env vars not set or contain placeholder values. Push notifications will be skipped.'
     );
   } else {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey,
-      }),
-    });
+    try {
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          privateKey,
+        }),
+      });
+    } catch (err) {
+      console.warn('[FCM] Firebase init failed — push notifications disabled:', err instanceof Error ? err.message : err);
+    }
   }
 }
 
