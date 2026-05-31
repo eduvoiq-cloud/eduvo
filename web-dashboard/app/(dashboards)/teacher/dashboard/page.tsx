@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { complaintsApi, testsApi, type TeacherAssignment, type Student } from '@/lib/api';
+import { complaintsApi, studentsApi, testsApi, type TeacherAssignment, type Student } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
@@ -31,7 +31,7 @@ export default function TeacherDashboard() {
 
     async function fetchDashboard() {
       try {
-        // Use the teacher-specific endpoints that are properly scoped
+        // Fetch classes, complaints, and tests in parallel
         const [classesRes, complaintsRes, testsRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -43,32 +43,60 @@ export default function TeacherDashboard() {
         const myAssignments: TeacherAssignment[] = classesRes?.data ?? [];
         setAssignments(myAssignments);
 
-        // Fetch students for each unique class+section the teacher is assigned to
+        // Fetch students scoped to this teacher's assigned classes.
+        // If the teacher has assignments, fetch per class+section via the
+        // teacher-scoped endpoint. If no assignments exist yet (e.g. newly
+        // created teacher), fall back to fetching all students in the school
+        // so the dashboard never shows 0 when students do exist.
+        let uniqueStudents: Student[] = [];
+
         const classKeys = [
           ...new Map(
             myAssignments.map((a) => [`${a.class_name}||${a.section}`, a])
           ).values(),
         ];
 
-        const studentResults = await Promise.all(
-          classKeys.map((a) =>
-            fetch(
-              `${BASE_URL}/api/teacher/students?class=${encodeURIComponent(a.class_name)}&section=${encodeURIComponent(a.section)}`,
-              { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-            ).then((r) => r.json())
-          )
-        );
+        if (classKeys.length > 0) {
+          // Teacher has assignments — fetch students per assigned class/section
+          const studentResults = await Promise.all(
+            classKeys.map((a) =>
+              fetch(
+                `${BASE_URL}/api/teacher/students?class=${encodeURIComponent(a.class_name)}&section=${encodeURIComponent(a.section)}`,
+                { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+              ).then((r) => r.json())
+            )
+          );
 
-        const allStudents: Student[] = studentResults.flatMap((r) => r?.data ?? []);
-        // Deduplicate by id in case a student appears in multiple results
-        const uniqueStudents = [...new Map(allStudents.map((s) => [s.id, s])).values()];
+          const allStudents: Student[] = studentResults.flatMap((r) => r?.data ?? []);
+          // Deduplicate by id in case a student appears in multiple results
+          uniqueStudents = [...new Map(allStudents.map((s) => [s.id, s])).values()];
+        } else {
+          // No assignments yet — fall back to all students in the school
+          // so the count is accurate even before class assignments are set up
+          try {
+            const studentsRes = await studentsApi.list(token!, {
+              school_id: user!.school_id!,
+              limit: 0,
+            });
+            const raw = studentsRes.data;
+            uniqueStudents = Array.isArray(raw)
+              ? (raw as Student[])
+              : ((raw as { data: Student[] })?.data ?? []);
+          } catch {
+            // Non-critical — leave uniqueStudents as []
+          }
+        }
+
         setStudents(uniqueStudents);
 
         setPendingComplaints(complaintsRes.data.length);
 
+        // Count tests scheduled this month (use `date` field, not `created_at`)
         const now = new Date();
-        const thisMonth = testsRes.data.filter((t) => {
-          const d = new Date(t.created_at);
+        const thisMonth = (testsRes.data ?? []).filter((t) => {
+          const dateStr = t.date ?? t.created_at;
+          if (!dateStr) return false;
+          const d = new Date(dateStr);
           return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
         });
         setTestsThisMonth(thisMonth.length);
