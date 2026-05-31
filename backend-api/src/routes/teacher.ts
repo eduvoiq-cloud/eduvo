@@ -153,7 +153,7 @@ router.get('/students', async (req: Request, res: Response) => {
 
   const { data, error } = await supabaseAdmin
     .from('students')
-    .select('id, full_name, class_name, section, date_of_birth, email, phone, photo_url')
+    .select('id, full_name, class_name, section, date_of_birth, phone_number, photo_url')
     .eq('school_id', req.user!.school_id ?? '')
     .eq('class_name', className)
     .eq('section', section)
