@@ -33,7 +33,7 @@ export default function ComplaintsPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await complaintsApi.list(token, { status: filterStatus || undefined });
+      const res = await complaintsApi.list(token, { status: filterStatus || undefined, role: 'teacher' });
       setComplaints(res.data);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load complaints');

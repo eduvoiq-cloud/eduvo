@@ -187,7 +187,7 @@ export default function SchoolAdminDashboard() {
         studentsApi.list(token!, { school_id: schoolId, limit: 0 }),
         usersApi.list(token!, { role: 'teacher', school_id: schoolId }),
         attendanceApi.check(token!, { class_name: '', date: today }).catch(() => null),
-        complaintsApi.list(token!, { status: 'pending' }).catch(() => ({ data: [] as Complaint[] })),
+        complaintsApi.list(token!, { status: 'pending', role: 'schooladmin' }).catch(() => ({ data: [] as Complaint[] })),
         feesApi.list(token!),
         testsApi.list(token!),
       ])

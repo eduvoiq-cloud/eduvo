@@ -3,10 +3,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { assignmentsApi, studentsApi, complaintsApi, testsApi, type TeacherAssignment, type Student } from '@/lib/api';
+import { complaintsApi, testsApi, type TeacherAssignment, type Student } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
+
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 export default function TeacherDashboard() {
   const { user } = useAuth();
@@ -19,34 +21,61 @@ export default function TeacherDashboard() {
   useEffect(() => {
     const token = getToken();
     if (!token || !user?.school_id) return;
-    Promise.all([
-      assignmentsApi.list(token, user.school_id),
-      studentsApi.list(token, user.school_id),
-      complaintsApi.list(token, { status: 'pending' }),
-      testsApi.list(token),
-    ])
-      .then(([aRes, sRes, cRes, tRes]) => {
-        setAssignments(aRes.data.filter((a) => a.teacher_id === user.id));
-        setStudents((sRes.data as unknown as Student[]) ?? []);
-        setPendingComplaints(cRes.data.length);
-        // Count tests created this calendar month
+
+    async function fetchDashboard() {
+      try {
+        // Use the teacher-specific endpoints that are properly scoped
+        const [classesRes, complaintsRes, testsRes] = await Promise.all([
+          fetch(`${BASE_URL}/api/teacher/my-classes`, {
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          }).then((r) => r.json()),
+          complaintsApi.list(token!, { status: 'pending', role: user!.role }),
+          testsApi.list(token!),
+        ]);
+
+        const myAssignments: TeacherAssignment[] = classesRes?.data ?? [];
+        setAssignments(myAssignments);
+
+        // Fetch students for each unique class+section the teacher is assigned to
+        const classKeys = [
+          ...new Map(
+            myAssignments.map((a) => [`${a.class_name}||${a.section}`, a])
+          ).values(),
+        ];
+
+        const studentResults = await Promise.all(
+          classKeys.map((a) =>
+            fetch(
+              `${BASE_URL}/api/teacher/students?class=${encodeURIComponent(a.class_name)}&section=${encodeURIComponent(a.section)}`,
+              { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+            ).then((r) => r.json())
+          )
+        );
+
+        const allStudents: Student[] = studentResults.flatMap((r) => r?.data ?? []);
+        // Deduplicate by id in case a student appears in multiple results
+        const uniqueStudents = [...new Map(allStudents.map((s) => [s.id, s])).values()];
+        setStudents(uniqueStudents);
+
+        setPendingComplaints(complaintsRes.data.length);
+
         const now = new Date();
-        const thisMonth = tRes.data.filter((t) => {
+        const thisMonth = testsRes.data.filter((t) => {
           const d = new Date(t.created_at);
           return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
         });
         setTestsThisMonth(thisMonth.length);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      } catch (err) {
+        console.error('[TeacherDashboard] fetch error:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchDashboard();
   }, [user]);
 
-  // Students in teacher's assigned classes
-  const myClassKeys = new Set(assignments.map((a) => `${a.class_name}||${a.section}`));
-  const myStudents = students.filter((s) =>
-    myClassKeys.has(`${s.class_name}||${s.section ?? ''}`) ||
-    myClassKeys.has(`${s.class_name}||`)
-  );
+  // Students are already fetched scoped to teacher's classes — no client-side filter needed
   const uniqueClasses = [...new Set(assignments.map((a) => `${a.class_name} ${a.section}`))];
 
   return (
@@ -57,7 +86,7 @@ export default function TeacherDashboard() {
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label="My Students" value={loading ? '—' : myStudents.length}
+        <StatCard label="My Students" value={loading ? '—' : students.length}
           sub="Across your classes" icon={<StudentsIcon />} />
         <StatCard label="Classes Assigned" value={loading ? '—' : uniqueClasses.length}
           sub="Class + section pairs" icon={<ClassIcon />} />
