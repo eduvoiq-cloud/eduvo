@@ -23,14 +23,29 @@ export default function TeacherDashboard() {
     if (authLoading) return;
 
     const token = getToken();
-    if (!token || !user?.school_id) {
-      // Auth is done but no valid session — stop the loading spinner
+    if (!token) {
       setLoading(false);
       return;
     }
 
     async function fetchDashboard() {
       try {
+        // If school_id is missing from the cached session, fetch fresh profile first
+        let schoolId = user?.school_id ?? null;
+        if (!schoolId) {
+          try {
+            const meRes = await fetch(`${BASE_URL}/api/auth/me`, {
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            }).then(r => r.json());
+            schoolId = meRes?.data?.school_id ?? null;
+          } catch { /* ignore */ }
+        }
+
+        if (!schoolId) {
+          // Still no school_id — account not linked to a school
+          setLoading(false);
+          return;
+        }
         // Fetch classes, complaints, and tests in parallel.
         // Each call is individually guarded so one failure never kills the whole dashboard.
         const [classesRes, complaintsRes, testsRes] = await Promise.all([
@@ -81,7 +96,7 @@ export default function TeacherDashboard() {
           // so the count is accurate even before class assignments are set up
           try {
             const studentsRes = await studentsApi.list(token!, {
-              school_id: user!.school_id!,
+              school_id: schoolId,
               limit: 0,
             });
             const raw = studentsRes.data;
