@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // force rebuild: env vars are baked at build time
 };
 
 export default nextConfig;
