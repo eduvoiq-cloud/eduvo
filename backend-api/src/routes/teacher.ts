@@ -76,7 +76,9 @@ async function logAudit(
   });
 }
 
-/** Verify teacher is assigned to a given class+section (optionally subject). */
+/** Verify teacher is assigned to a given class+section (optionally subject).
+ *  The teacher_assignments table uses the column name `class` (not `class_name`).
+ */
 async function verifyAssignment(
   teacherId: string,
   schoolId: string,
@@ -89,7 +91,7 @@ async function verifyAssignment(
     .select('id')
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
-    .eq('class_name', className)
+    .eq('class', className)
     .eq('section', section);
 
   if (subject) query = query.eq('subject', subject);
@@ -103,6 +105,8 @@ async function verifyAssignment(
 /**
  * GET /api/teacher/my-classes
  * Returns all class+section+subject assignments for the logged-in teacher.
+ * Normalises the response so `class_name` is always present (the DB column
+ * is named `class` but the frontend expects `class_name`).
  */
 router.get('/my-classes', async (req: Request, res: Response) => {
   const { data, error } = await supabaseAdmin
@@ -110,10 +114,17 @@ router.get('/my-classes', async (req: Request, res: Response) => {
     .select('*')
     .eq('teacher_id', req.user!.id)
     .eq('school_id', req.user!.school_id ?? '')
-    .order('class_name');
+    .order('class');
 
   if (error) { sendError(res, error.message, 500); return; }
-  sendSuccess(res, data ?? []);
+
+  // Normalise: expose both `class` and `class_name` so any consumer works
+  const normalised = (data ?? []).map((row: Record<string, unknown>) => ({
+    ...row,
+    class_name: row.class_name ?? row.class,
+  }));
+
+  sendSuccess(res, normalised);
 });
 
 /**

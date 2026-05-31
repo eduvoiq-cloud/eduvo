@@ -52,7 +52,12 @@ export default function TeacherDashboard() {
 
         const classKeys = [
           ...new Map(
-            myAssignments.map((a) => [`${a.class_name}||${a.section}`, a])
+            myAssignments.map((a) => {
+              // DB column is `class` but we normalise to `class_name` in the API response.
+              // Guard against both shapes just in case.
+              const cn = (a.class_name ?? (a as unknown as Record<string, string>).class) as string;
+              return [`${cn}||${a.section}`, { ...a, class_name: cn }];
+            })
           ).values(),
         ];
 
@@ -111,7 +116,10 @@ export default function TeacherDashboard() {
   }, [user, authLoading]);
 
   // Students are already fetched scoped to teacher's classes — no client-side filter needed
-  const uniqueClasses = [...new Set(assignments.map((a) => `${a.class_name} ${a.section}`))];
+  const uniqueClasses = [...new Set(assignments.map((a) => {
+    const cn = a.class_name ?? (a as unknown as Record<string, string>).class;
+    return `${cn} ${a.section}`;
+  }))];
 
   return (
     <>
@@ -138,17 +146,20 @@ export default function TeacherDashboard() {
             <h2 className="text-sm font-semibold text-gray-900">My Assignments</h2>
           </div>
           <div className="divide-y divide-gray-50">
-            {assignments.map((a) => (
+            {assignments.map((a) => {
+              const cn = a.class_name ?? (a as unknown as Record<string, string>).class;
+              return (
               <div key={a.id} className="flex items-center justify-between px-6 py-3">
                 <div>
-                  <p className="text-sm font-medium text-gray-900">{a.class_name} · {a.section}</p>
+                  <p className="text-sm font-medium text-gray-900">{cn} · {a.section}</p>
                   <p className="text-xs text-gray-400">{a.subject}</p>
                 </div>
                 <span className="text-xs text-gray-500">
-                  {students.filter((s) => s.class_name === a.class_name && (s.section ?? '') === a.section).length} students
+                  {students.filter((s) => s.class_name === cn && (s.section ?? '') === a.section).length} students
                 </span>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
