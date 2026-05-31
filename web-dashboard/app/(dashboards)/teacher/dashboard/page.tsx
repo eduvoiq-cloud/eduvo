@@ -11,7 +11,7 @@ import StatCard from '@/components/StatCard';
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
 
 export default function TeacherDashboard() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [pendingComplaints, setPendingComplaints] = useState(0);
@@ -19,8 +19,15 @@ export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Wait for auth to finish rehydrating before fetching
+    if (authLoading) return;
+
     const token = getToken();
-    if (!token || !user?.school_id) return;
+    if (!token || !user?.school_id) {
+      // Auth is done but no valid session — stop the loading spinner
+      setLoading(false);
+      return;
+    }
 
     async function fetchDashboard() {
       try {
@@ -73,7 +80,7 @@ export default function TeacherDashboard() {
     }
 
     fetchDashboard();
-  }, [user]);
+  }, [user, authLoading]);
 
   // Students are already fetched scoped to teacher's classes — no client-side filter needed
   const uniqueClasses = [...new Set(assignments.map((a) => `${a.class_name} ${a.section}`))];
@@ -81,7 +88,7 @@ export default function TeacherDashboard() {
   return (
     <>
       <PageHeader
-        title={`Welcome back, ${user?.name}`}
+        title={user?.name ? `Welcome back, ${user.name}` : 'Welcome back'}
         description="Your classes and student overview"
       />
 
