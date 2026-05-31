@@ -594,16 +594,27 @@ export interface AuditLog {
 // ── Complaints endpoints ──────────────────────────────────────────────────────
 
 export const complaintsApi = {
-  list: (token: string, params?: { status?: string }) => {
+  /**
+   * List complaints. Role-aware:
+   * - teacher  → GET /api/complaints/teacher
+   * - schooladmin / superadmin → GET /api/complaints/admin
+   * Falls back to /api/complaints/teacher when role is not provided.
+   */
+  list: (token: string, params?: { status?: string; role?: string }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     const query = qs.toString() ? `?${qs.toString()}` : '';
-    return request<Complaint[]>(`/api/complaints${query}`, { method: 'GET' }, token);
+
+    const role = params?.role;
+    const subPath =
+      role === 'schooladmin' || role === 'superadmin' ? '/admin' : '/teacher';
+
+    return request<Complaint[]>(`/api/complaints${subPath}${query}`, { method: 'GET' }, token);
   },
 
   updateStatus: (token: string, id: string, payload: { status: Complaint['status']; resolution_note?: string }) =>
     request<Complaint>(`/api/complaints/${id}/status`, {
-      method: 'PATCH',
+      method: 'PUT',
       body: JSON.stringify(payload),
     }, token),
 };
