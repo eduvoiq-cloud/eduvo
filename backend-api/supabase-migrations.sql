@@ -145,3 +145,119 @@ CREATE INDEX IF NOT EXISTS idx_test_questions_test_id ON public.test_questions(t
 ALTER TABLE public.tests DROP CONSTRAINT IF EXISTS tests_term_check;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── timetable: create table ───────────────────────────────────────────────────
+-- One row per period slot (class + section + day + period_number).
+-- subject_id references subjects; teacher_id references users.
+CREATE TABLE IF NOT EXISTS public.timetable (
+  id             uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  school_id      uuid NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+  class_name     text NOT NULL,
+  section        text NOT NULL,
+  day_of_week    text NOT NULL CHECK (day_of_week IN ('monday','tuesday','wednesday','thursday','friday','saturday')),
+  period_number  integer NOT NULL CHECK (period_number > 0),
+  start_time     text NOT NULL,   -- HH:MM
+  end_time       text NOT NULL,   -- HH:MM
+  subject_id     uuid NOT NULL REFERENCES public.subjects(id) ON DELETE RESTRICT,
+  teacher_id     uuid NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  created_by     uuid REFERENCES public.users(id) ON DELETE SET NULL,
+  updated_at     timestamptz,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  -- No two periods can occupy the same slot for the same class
+  UNIQUE (school_id, class_name, section, day_of_week, period_number)
+);
+
+-- Enable RLS (backend uses service-role key which bypasses RLS)
+ALTER TABLE public.timetable ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'timetable' AND policyname = 'deny_all_timetable'
+  ) THEN
+    CREATE POLICY "deny_all_timetable" ON public.timetable FOR ALL USING (false);
+  END IF;
+END $$;
+
+-- Indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_timetable_class_section
+  ON public.timetable(school_id, class_name, section);
+
+CREATE INDEX IF NOT EXISTS idx_timetable_teacher
+  ON public.timetable(teacher_id);
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── homework: create table ────────────────────────────────────────────────────
+-- One row per homework assignment. Submissions are Phase 2.
+CREATE TABLE IF NOT EXISTS public.homework (
+  id          uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  school_id   uuid NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+  subject_id  uuid NOT NULL REFERENCES public.subjects(id) ON DELETE RESTRICT,
+  class_name  text NOT NULL,
+  section     text NOT NULL,
+  title       text NOT NULL,
+  description text,
+  due_date    date NOT NULL,
+  file_url    text,                          -- Supabase Storage URL (optional)
+  created_by  uuid NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  updated_at  timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- students table needs an fcm_token column for direct student push notifications
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS fcm_token text;
+
+-- Enable RLS (backend uses service-role key which bypasses RLS)
+ALTER TABLE public.homework ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'homework' AND policyname = 'deny_all_homework'
+  ) THEN
+    CREATE POLICY "deny_all_homework" ON public.homework FOR ALL USING (false);
+  END IF;
+END $$;
+
+-- Indexes for common query patterns
+CREATE INDEX IF NOT EXISTS idx_homework_school_class
+  ON public.homework(school_id, class_name, section);
+
+CREATE INDEX IF NOT EXISTS idx_homework_due_date
+  ON public.homework(due_date);
+
+CREATE INDEX IF NOT EXISTS idx_homework_created_by
+  ON public.homework(created_by);
+
+-- ── homework_acknowledgements: create table ───────────────────────────────────
+-- Student marks homework as "seen". One row per (homework, student) pair.
+CREATE TABLE IF NOT EXISTS public.homework_acknowledgements (
+  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  homework_id     uuid NOT NULL REFERENCES public.homework(id) ON DELETE CASCADE,
+  student_id      uuid NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
+  acknowledged_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (homework_id, student_id)
+);
+
+ALTER TABLE public.homework_acknowledgements ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'homework_acknowledgements'
+      AND policyname = 'deny_all_homework_acknowledgements'
+  ) THEN
+    CREATE POLICY "deny_all_homework_acknowledgements"
+      ON public.homework_acknowledgements FOR ALL USING (false);
+  END IF;
+END $$;
+
+-- Index for fast pending-count lookups
+CREATE INDEX IF NOT EXISTS idx_hw_ack_student
+  ON public.homework_acknowledgements(student_id, homework_id);
+
+NOTIFY pgrst, 'reload schema';

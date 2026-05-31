@@ -41,6 +41,8 @@ import performanceRoutes from './routes/performance';
 import bulkImportRoutes from './routes/bulkImport';
 import onboardingRoutes from './routes/onboarding';
 import aiAssistantRoutes from './routes/aiAssistant';
+import timetableRoutes from './routes/timetable';
+import homeworkRoutes from './routes/homework';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -241,6 +243,8 @@ async function startServer() {
   app.use('/api/import', bulkImportRoutes);
   app.use('/api/onboarding', onboardingRoutes);
   app.use('/api/ai', aiAssistantRoutes);
+  app.use('/api/timetable', timetableRoutes);
+  app.use('/api/homework', homeworkRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

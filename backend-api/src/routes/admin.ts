@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import bcrypt from 'bcrypt';
 import * as firebaseAdmin from 'firebase-admin';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { sendSMS } from '../services/smsService';
 
 const router = Router();
 
@@ -139,9 +141,12 @@ router.get('/students', async (req: Request, res: Response) => {
 // ── POST /api/admin/students ──────────────────────────────────────────────────
 /**
  * Add a new student.
+ * - phone_number is required — it is the login phone for the student/parent account.
+ * - Default password = last 5 digits of phone_number (bcrypt hashed, rounds 10).
+ * - is_first_login = true so the app prompts a password change on first login.
+ * - Sends a welcome SMS to the parent phone via MSG91 (best-effort).
  * - Inserts into students table with school_id from the logged-in admin.
  * - Auto-generates qr_code = student UUID.
- * - If parent_email provided: links existing parent or creates + invites new one.
  * - Logs to audit_logs.
  */
 router.post('/students', async (req: Request, res: Response) => {
@@ -150,32 +155,73 @@ router.post('/students', async (req: Request, res: Response) => {
     class:        z.string().min(1),
     section:      z.string().min(1),
     roll_number:  z.string().optional(),
-    parent_phone: z.string().optional(),
+    phone_number: z.string().regex(/^\d{10}$/, 'phone_number must be exactly 10 digits'),
     parent_email: z.string().email().optional(),
     photo_url:    z.string().optional(),
+    date_of_birth: z.string().optional(), // YYYY-MM-DD or DD/MM/YYYY accepted
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { name, class: className, section, roll_number, parent_phone, parent_email, photo_url } =
+  const { name, class: className, section, roll_number, phone_number, parent_email, photo_url, date_of_birth } =
     parsed.data;
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
 
-  // Insert student (qr_code will be set to the generated UUID after insert)
+  // Check phone not already registered to another student in this school
+  const { data: phoneConflict } = await supabaseAdmin
+    .from('students')
+    .select('id')
+    .eq('school_id', schoolId)
+    .eq('phone_number', phone_number)
+    .eq('is_deleted', false)
+    .maybeSingle();
+
+  if (phoneConflict) {
+    sendError(res, 'A student with this phone number already exists in your school', 409);
+    return;
+  }
+
+  // Default password = last 5 digits of phone
+  const defaultPassword = phone_number.slice(-5);
+  let passwordHash: string;
+  try {
+    passwordHash = await bcrypt.hash(defaultPassword, 10);
+  } catch (hashErr) {
+    sendError(res, 'Failed to hash password', 500);
+    return;
+  }
+
+  // Normalise date_of_birth: accept DD/MM/YYYY → convert to YYYY-MM-DD
+  let dobIso: string | null = null;
+  if (date_of_birth) {
+    const ddmmyyyy = date_of_birth.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (ddmmyyyy) {
+      dobIso = `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
+    } else if (/^\d{4}-\d{2}-\d{2}$/.test(date_of_birth)) {
+      dobIso = date_of_birth;
+    }
+    // If neither format matches, ignore silently (not required for manual add)
+  }
+
+  // Insert student
   const { data: student, error: insertErr } = await supabaseAdmin
     .from('students')
     .insert({
-      full_name:   name,
-      class_name:  className,
+      full_name:      name,
+      class_name:     className,
       section,
-      roll_number,
-      phone:       parent_phone ?? null,
-      photo_url:   photo_url ?? null,
-      school_id:   schoolId,
-      is_deleted:  false,
-      created_at:  new Date().toISOString(),
+      roll_number:    roll_number ?? null,
+      phone_number,
+      phone:          phone_number, // keep legacy column in sync
+      date_of_birth:  dobIso,
+      password_hash:  passwordHash,
+      is_first_login: true,
+      photo_url:      photo_url ?? null,
+      school_id:      schoolId,
+      is_deleted:     false,
+      created_at:     new Date().toISOString(),
     })
     .select()
     .single();
@@ -191,9 +237,8 @@ router.post('/students', async (req: Request, res: Response) => {
     .update({ qr_code: student.id })
     .eq('id', student.id);
 
-  // ── Parent linking ────────────────────────────────────────────────────────
+  // ── Parent linking (optional, by email) ──────────────────────────────────
   if (parent_email) {
-    // Check if a parent user already exists with this email
     const { data: existingParent } = await supabaseAdmin
       .from('users')
       .select('id')
@@ -202,19 +247,16 @@ router.post('/students', async (req: Request, res: Response) => {
       .maybeSingle();
 
     if (existingParent) {
-      // Link existing parent → student
       await supabaseAdmin
         .from('parent_students')
         .insert({ parent_id: existingParent.id, student_id: student.id })
         .select();
 
-      // Also update students.parent_id for quick lookups
       await supabaseAdmin
         .from('students')
         .update({ parent_id: existingParent.id })
         .eq('id', student.id);
     } else {
-      // Create new parent auth account
       const tempPassword = generateTempPassword();
       const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
         email:         parent_email,
@@ -225,7 +267,6 @@ router.post('/students', async (req: Request, res: Response) => {
       if (!authErr && authData?.user) {
         const parentUserId = authData.user.id;
 
-        // Insert users profile row
         await supabaseAdmin.from('users').insert({
           id:         parentUserId,
           name:       `Parent of ${name}`,
@@ -236,7 +277,6 @@ router.post('/students', async (req: Request, res: Response) => {
           created_at: new Date().toISOString(),
         });
 
-        // Link parent → student
         await supabaseAdmin
           .from('parent_students')
           .insert({ parent_id: parentUserId, student_id: student.id });
@@ -246,7 +286,6 @@ router.post('/students', async (req: Request, res: Response) => {
           .update({ parent_id: parentUserId })
           .eq('id', student.id);
 
-        // Store invite token so parent can reset password via /register-parent flow
         const inviteToken = `${parentUserId}-${Date.now()}`;
         await supabaseAdmin.from('invites').insert({
           token:      inviteToken,
@@ -256,7 +295,6 @@ router.post('/students', async (req: Request, res: Response) => {
           created_at: new Date().toISOString(),
         });
 
-        // Send invite email via Supabase Auth magic link (best-effort)
         await supabaseAdmin.auth.admin.generateLink({
           type:  'magiclink',
           email: parent_email,
@@ -265,13 +303,33 @@ router.post('/students', async (req: Request, res: Response) => {
     }
   }
 
+  // ── Fetch school name for SMS ─────────────────────────────────────────────
+  const { data: school } = await supabaseAdmin
+    .from('schools')
+    .select('name')
+    .eq('id', schoolId)
+    .maybeSingle();
+  const schoolName = (school as Record<string, unknown> | null)?.name as string ?? 'your school';
+
+  // ── Send welcome SMS (best-effort) ────────────────────────────────────────
+  const smsMessage =
+    `Welcome to Eduvo! Your child ${name} has been added to ${schoolName}. ` +
+    `Download Eduvo app and login with: Phone: ${phone_number} Password: ${defaultPassword} ` +
+    `Please change your password after first login.`;
+
+  try {
+    await sendSMS(phone_number, smsMessage);
+  } catch (smsErr) {
+    console.error('[admin] Welcome SMS failed for student:', name, smsErr);
+  }
+
   await logAudit(adminId, 'STUDENT_CREATED', 'students', {
     student_id:   student.id,
     student_name: name,
     school_id:    schoolId,
     class:        className,
     section,
-    roll_number,
+    roll_number:  roll_number ?? null,
     parent_email: parent_email ?? null,
   });
 

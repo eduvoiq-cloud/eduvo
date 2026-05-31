@@ -36,6 +36,28 @@ export const loginRateLimit = rateLimit({
 });
 
 /**
+ * Student login rate limit — max 10 per hour, keyed by phone_number + IP.
+ * Falls back to IP-only if phone_number is absent.
+ */
+export const studentLoginRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  keyGenerator: (req: Request) => {
+    const phone =
+      typeof req.body?.phone_number === 'string'
+        ? req.body.phone_number.trim()
+        : '';
+    return phone ? `student_login:${phone}` : `student_login:ip:${req.ip ?? 'unknown'}`;
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many login attempts for this account. Please try again later.',
+  },
+});
+
+/**
  * Parent registration rate limit — max 5 per hour per IP.
  */
 export const registerRateLimit = rateLimit({

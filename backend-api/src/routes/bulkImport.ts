@@ -2,12 +2,14 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { v4 as uuidv4 } from 'uuid';
+import bcrypt from 'bcrypt';
 import rateLimit from 'express-rate-limit';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError } from '../utils/response';
 import { templateDownloadRateLimit } from '../middleware/rateLimit';
+import { sendSMS } from '../services/smsService';
 
 const router = Router();
 
@@ -162,6 +164,71 @@ function validateParentEmail(email: unknown): string | null {
   return null;
 }
 
+/**
+ * Validate Parent Phone for the phone-login system.
+ * Required, exactly 10 digits, numbers only.
+ */
+function validateLoginPhone(phone: unknown): string | null {
+  if (!phone || (typeof phone === 'string' && !String(phone).trim())) {
+    return 'Parent Phone is required (used as login phone number)';
+  }
+  const str = String(phone).trim();
+  if (!/^\d{10}$/.test(str)) return 'Parent Phone must be exactly 10 digits (numbers only)';
+  return null;
+}
+
+/**
+ * Validate Date of Birth in DD/MM/YYYY format.
+ * Returns an error string or null if valid.
+ * Also checks student age is between 3 and 25 years.
+ */
+function validateDateOfBirth(dob: unknown): { error: string | null; parsed: string | null } {
+  if (!dob || (typeof dob === 'string' && !String(dob).trim())) {
+    return { error: 'Date of Birth is required (format: DD/MM/YYYY)', parsed: null };
+  }
+
+  const str = String(dob).trim();
+
+  // Accept DD/MM/YYYY
+  const match = str.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) {
+    return { error: 'Date of Birth must be in DD/MM/YYYY format', parsed: null };
+  }
+
+  const day   = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year  = parseInt(match[3], 10);
+
+  // Basic range checks
+  if (month < 1 || month > 12) return { error: 'Date of Birth has invalid month', parsed: null };
+  if (day < 1 || day > 31)     return { error: 'Date of Birth has invalid day', parsed: null };
+
+  const date = new Date(year, month - 1, day);
+  // Verify the date didn't roll over (e.g. 31/02)
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return { error: 'Date of Birth is not a valid calendar date', parsed: null };
+  }
+
+  // Age sanity check: student must be between 3 and 25 years old
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  const monthDiff = today.getMonth() - (month - 1);
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < day)) {
+    age--;
+  }
+
+  if (age < 3)  return { error: 'Student must be at least 3 years old', parsed: null };
+  if (age > 25) return { error: 'Student must be 25 years old or younger', parsed: null };
+
+  // Return ISO format YYYY-MM-DD for DB storage
+  const parsed = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return { error: null, parsed };
+}
+
 function validateTeacherName(name: unknown): string | null {
   if (typeof name !== 'string' || !name.trim()) return 'Teacher Name is required';
   if (name.length > 100) return 'Teacher Name must be max 100 characters';
@@ -197,7 +264,8 @@ function validateAssignedClasses(classes: unknown): string | null {
 router.get('/students/template', templateDownloadRateLimit, (_req: Request, res: Response) => {
   const wb = XLSX.utils.book_new();
 
-  // Header row
+  // Header row — Parent Phone IS the login phone number for the student account.
+  // Date of Birth format: DD/MM/YYYY
   const headers = [
     'Student Name',
     'Roll Number',
@@ -205,13 +273,13 @@ router.get('/students/template', templateDownloadRateLimit, (_req: Request, res:
     'Division',
     'Parent Name',
     'Parent Phone',
-    'Parent Email',
+    'Date of Birth (DD/MM/YYYY)',
   ];
 
-  // Example rows (grey background in Excel is not supported via XLSX, but we add examples)
+  // Example rows
   const exampleRows = [
-    ['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', 'jane@example.com'],
-    ['Alice Smith', 'R002', '10', 'B', 'Bob Smith', '9876543211', 'bob@example.com'],
+    ['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', '15/08/2010'],
+    ['Alice Smith', 'R002', '10', 'B', 'Bob Smith', '9876543211', '22/03/2011'],
   ];
 
   const data = [headers, ...exampleRows];
@@ -269,7 +337,7 @@ router.post(
     // Fetch existing roll numbers for this school to check DB duplicates
     const { data: existingStudents, error: dbErr } = await supabaseAdmin
       .from('students')
-      .select('roll_number, class_name')
+      .select('roll_number, class_name, phone_number')
       .eq('school_id', school_id)
       .eq('is_deleted', false);
 
@@ -285,21 +353,30 @@ router.post(
         .map((s) => `${String(s.roll_number).toLowerCase()}|${String(s.class_name).toLowerCase()}`)
     );
 
-    // Track roll numbers seen within this file for intra-file duplicate detection
+    // Build a set of existing phone numbers for duplicate check
+    const existingPhones = new Set<string>(
+      (existingStudents ?? [])
+        .filter((s) => s.phone_number)
+        .map((s) => String(s.phone_number).trim())
+    );
+
+    // Track roll numbers and phones seen within this file for intra-file duplicate detection
     const seenInFile = new Set<string>();
+    const seenPhonesInFile = new Set<string>();
     const previewRows: PreviewRow[] = [];
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
       const rowNumber = i + 2; // Excel row number (header is row 1)
 
+      // Columns: Student Name | Roll Number | Class | Division | Parent Name | Parent Phone | Date of Birth
       const studentName = row[0];
-      const rollNumber = row[1];
-      const className = row[2];
-      const division = row[3];
-      const parentName = row[4];
+      const rollNumber  = row[1];
+      const className   = row[2];
+      const division    = row[3];
+      const parentName  = row[4];
       const parentPhone = row[5];
-      const parentEmail = row[6];
+      const dateOfBirth = row[6];
 
       const errors: string[] = [];
 
@@ -319,58 +396,77 @@ router.post(
       const parentNameErr = validateParentName(parentName);
       if (parentNameErr) errors.push(parentNameErr);
 
-      const parentPhoneErr = validateParentPhone(parentPhone);
-      if (parentPhoneErr) errors.push(parentPhoneErr);
+      // Parent Phone is now REQUIRED (login phone)
+      const phoneErr = validateLoginPhone(parentPhone);
+      if (phoneErr) errors.push(phoneErr);
 
-      const parentEmailErr = validateParentEmail(parentEmail);
-      if (parentEmailErr) errors.push(parentEmailErr);
+      // Date of Birth is REQUIRED
+      const { error: dobErr, parsed: parsedDob } = validateDateOfBirth(dateOfBirth);
+      if (dobErr) errors.push(dobErr);
 
       // Normalize for duplicate checks
-      const rollStr = String(rollNumber).trim().toLowerCase();
+      const rollStr  = String(rollNumber).trim().toLowerCase();
       const classStr = String(className).trim().toLowerCase();
-      const key = `${rollStr}|${classStr}`;
+      const key      = `${rollStr}|${classStr}`;
+      const phoneStr = String(parentPhone || '').trim();
 
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
 
-      // Check for duplicates
+      // Check for roll number duplicates
       if (seenInFile.has(key)) {
         errors.push('Duplicate roll number within this file');
         status = 'duplicate';
       } else if (existingSet.has(key)) {
         errors.push('Roll number already exists in database for this class');
         status = 'duplicate';
-      } else if (errors.length > 0) {
+      }
+
+      // Check for phone number duplicates (only if phone is valid)
+      if (phoneStr && /^\d{10}$/.test(phoneStr)) {
+        if (seenPhonesInFile.has(phoneStr)) {
+          errors.push('Duplicate phone number within this file');
+          if (status === 'valid') status = 'duplicate';
+        } else if (existingPhones.has(phoneStr)) {
+          errors.push('Phone number already registered to another student');
+          if (status === 'valid') status = 'duplicate';
+        }
+      }
+
+      if (status === 'valid' && errors.length > 0) {
         status = 'invalid';
-      } else {
+      }
+
+      if (status === 'valid') {
         seenInFile.add(key);
+        if (phoneStr) seenPhonesInFile.add(phoneStr);
       }
 
       previewRows.push({
         row_number: rowNumber,
         data: {
-          name: String(studentName || '').trim(),
-          roll_number: String(rollNumber || '').trim(),
-          class: String(className || '').trim(),
-          division: String(division || '').trim().toUpperCase(),
-          parent_name: String(parentName || '').trim(),
-          parent_phone: String(parentPhone || '').trim(),
-          parent_email: String(parentEmail || '').trim(),
+          name:          String(studentName || '').trim(),
+          roll_number:   String(rollNumber || '').trim(),
+          class:         String(className || '').trim(),
+          division:      String(division || '').trim().toUpperCase(),
+          parent_name:   String(parentName || '').trim(),
+          parent_phone:  phoneStr,
+          date_of_birth: parsedDob ?? String(dateOfBirth || '').trim(), // ISO if valid, raw if not
         },
         status,
         errors,
       });
     }
 
-    const validRows = previewRows.filter((r) => r.status === 'valid').length;
-    const invalidRows = previewRows.filter((r) => r.status === 'invalid').length;
-    const duplicateRows = previewRows.filter((r) => r.status === 'duplicate').length;
+    const validRows      = previewRows.filter((r) => r.status === 'valid').length;
+    const invalidRows    = previewRows.filter((r) => r.status === 'invalid').length;
+    const duplicateRows  = previewRows.filter((r) => r.status === 'duplicate').length;
 
     const preview: PreviewResponse = {
-      total_rows: previewRows.length,
-      valid_rows: validRows,
-      invalid_rows: invalidRows,
+      total_rows:     previewRows.length,
+      valid_rows:     validRows,
+      invalid_rows:   invalidRows,
       duplicate_rows: duplicateRows,
-      rows: previewRows,
+      rows:           previewRows,
     };
 
     // Cache the preview for 10 minutes
@@ -420,78 +516,97 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
     return;
   }
 
+  // Fetch school name for the welcome SMS
+  const { data: school } = await supabaseAdmin
+    .from('schools')
+    .select('name')
+    .eq('id', cached.school_id)
+    .maybeSingle();
+  const schoolName = (school as Record<string, unknown> | null)?.name as string ?? 'your school';
+
   const errors: string[] = [];
+  let importedCount = 0;
 
-  // ── Build student rows ────────────────────────────────────────────────────
-  // Parent accounts are NOT created here — bulk import only creates student
-  // records. Parent email/phone are stored on the student row so admins can
-  // send invites later via the normal invite flow.
-  const studentRows: {
-    id: string;
-    full_name: string;
-    school_id: string;
-    class_name: string;
-    section: string;
-    roll_number: string;
-    phone: string;
-    email: string | null;
-    qr_code: string;
-    is_deleted: boolean;
-    created_at: string;
-  }[] = [];
-
+  // ── Insert students one-by-one so we can send SMS per student ────────────────
+  // (Bulk insert is skipped here because each row needs a bcrypt hash + SMS)
   for (const row of validRows) {
     const data = row.data as {
-      name: string;
-      roll_number: string;
-      class: string;
-      division: string;
-      parent_name: string;
-      parent_phone: string;
-      parent_email: string;
+      name:          string;
+      roll_number:   string;
+      class:         string;
+      division:      string;
+      parent_name:   string;
+      parent_phone:  string;
+      date_of_birth: string; // YYYY-MM-DD (already parsed in preview)
     };
 
     const studentId = uuidv4();
-    studentRows.push({
-      id: studentId,
-      full_name: data.name,
-      school_id: cached.school_id,
-      class_name: data.class,
-      section: data.division,
-      roll_number: data.roll_number,
-      phone: data.parent_phone || '',
-      email: data.parent_email || null,
-      qr_code: studentId,
-      is_deleted: false,
-      created_at: new Date().toISOString(),
+    const phone     = data.parent_phone;
+
+    // Default password = last 5 digits of phone number
+    const defaultPassword = phone.slice(-5);
+    let passwordHash: string;
+    try {
+      passwordHash = await bcrypt.hash(defaultPassword, 10);
+    } catch (hashErr) {
+      errors.push(`Row ${row.row_number}: Failed to hash password — ${hashErr instanceof Error ? hashErr.message : String(hashErr)}`);
+      continue;
+    }
+
+    const { error: insertErr } = await supabaseAdmin.from('students').insert({
+      id:             studentId,
+      full_name:      data.name,
+      school_id:      cached.school_id,
+      class_name:     data.class,
+      section:        data.division,
+      roll_number:    data.roll_number,
+      phone_number:   phone,
+      phone:          phone,          // keep legacy column in sync if it exists
+      date_of_birth:  data.date_of_birth,
+      password_hash:  passwordHash,
+      is_first_login: true,
+      qr_code:        studentId,
+      is_deleted:     false,
+      created_at:     new Date().toISOString(),
+    });
+
+    if (insertErr) {
+      errors.push(`Row ${row.row_number}: ${insertErr.message}`);
+      continue;
+    }
+
+    importedCount++;
+
+    // ── Send welcome SMS (best-effort — never fail the import) ────────────────
+    const smsMessage =
+      `Welcome to Eduvo! Your child ${data.name} has been added to ${schoolName}. ` +
+      `Download Eduvo app and login with: Phone: ${phone} Password: ${defaultPassword} ` +
+      `Please change your password after first login.`;
+
+    try {
+      const smsSent = await sendSMS(phone, smsMessage);
+      if (!smsSent) {
+        console.warn(`[bulkImport] SMS not sent for student "${data.name}" (phone: ...${phone.slice(-4)})`);
+      }
+    } catch (smsErr) {
+      // Log but never fail the import
+      console.error(`[bulkImport] SMS error for student "${data.name}":`, smsErr);
+    }
+
+    // ── Audit log per student ─────────────────────────────────────────────────
+    await logAudit(req.user!.id, 'bulk_import_student_created', {
+      student_id:   studentId,
+      student_name: data.name,
+      school_id:    cached.school_id,
+      class:        data.class,
+      section:      data.division,
+      roll_number:  data.roll_number,
     });
   }
 
-  // ── Bulk insert students ──────────────────────────────────────────────────
-  let importedCount = 0;
-
-  if (studentRows.length > 0) {
-    const { error: bulkErr } = await supabaseAdmin.from('students').insert(studentRows);
-
-    if (bulkErr) {
-      // Bulk failed — fall back to row-by-row so we can report which rows failed
-      console.error('[bulkImport] bulk insert failed, falling back to individual inserts:', bulkErr.message);
-      for (let i = 0; i < studentRows.length; i++) {
-        const { error } = await supabaseAdmin.from('students').insert(studentRows[i]);
-        if (error) {
-          errors.push(`Row ${validRows[i].row_number}: ${error.message}`);
-        } else {
-          importedCount++;
-        }
-      }
-    } else {
-      importedCount = studentRows.length;
-    }
-  }
-
-  // Log to audit_logs
+  // Summary audit log
   await logAudit(req.user!.id, 'bulk_import_students', {
-    count: importedCount,
+    count:     importedCount,
     school_id: cached.school_id,
   });
 
@@ -500,7 +615,7 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
 
   sendSuccess(res, {
     imported: importedCount,
-    skipped: validRows.length - importedCount,
+    skipped:  validRows.length - importedCount,
     errors,
   });
 });
