@@ -12,6 +12,7 @@ const apiClient: AxiosInstance = axios.create({
   timeout: 15000,
   headers: {
     'Content-Type': 'application/json',
+    'X-Token-Type': 'student',
   },
 });
 
@@ -32,7 +33,7 @@ apiClient.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      // Token expired or invalid — clear auth state
+      // Token expired or invalid — clear auth state, AppNavigator will redirect to Login
       useAuthStore.getState().logout();
     }
     return Promise.reject(error);

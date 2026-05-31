@@ -81,22 +81,25 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 // ── Send FCM token to backend ─────────────────────────────────────────────────
 
 /**
- * Registers the device push token with the backend so the server can send
- * targeted push notifications to this device.
+ * Registers the device push token with the backend for the student.
  *
- * Endpoint: POST /api/users/fcm-token
- * Body:     { fcm_token: string }
+ * Endpoint: POST /api/users/fcm-token-student
+ * Body:     { student_id: string, fcm_token: string }
  *
  * Call this after the user logs in and a token is obtained.
  */
 export async function sendFcmTokenToBackend(
+  studentId: string,
   token: string,
   // Accept apiClient as a parameter to avoid a circular import
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   apiClient: any
 ): Promise<void> {
   try {
-    await apiClient.post('/api/users/fcm-token', { fcm_token: token });
+    await apiClient.post('/api/users/fcm-token-student', {
+      student_id: studentId,
+      fcm_token: token,
+    });
     console.log('[Notifications] FCM token registered with backend.');
   } catch (error: any) {
     console.warn('[Notifications] Failed to register FCM token:', error.message);
@@ -116,7 +119,6 @@ export function addNotificationReceivedListener(
   return Notifications.addNotificationReceivedListener((notification) => {
     const { title, body } = notification.request.content;
 
-    // Show an in-app alert for foreground notifications
     Alert.alert(
       title ?? 'New Notification',
       body ?? '',
@@ -124,7 +126,6 @@ export function addNotificationReceivedListener(
       { cancelable: true }
     );
 
-    // Also call any custom handler the caller provided
     handler?.(notification);
   });
 }
@@ -142,9 +143,9 @@ export function addNotificationResponseListener(
   return Notifications.addNotificationResponseReceivedListener((response) => {
     console.log('[Notifications] Tapped:', response.notification.request.content.title);
 
-    // Navigate to the Notifications tab so the user sees the full list
+    // Navigate to the Notifications screen inside the More tab
     if (navigationRef?.isReady()) {
-      navigationRef.navigate('Notifications' as never);
+      navigationRef.navigate('More' as never);
     }
 
     handler?.(response);

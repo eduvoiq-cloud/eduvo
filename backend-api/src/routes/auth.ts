@@ -188,7 +188,6 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
 
   if (studentError || !student) {
     await logAudit(null, 'STUDENT_LOGIN_FAILED', {
-      phone_number,
       reason: 'student_not_found',
     });
     // Generic message — don't reveal whether the phone exists
@@ -199,7 +198,6 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
   // 2. Verify password
   if (!student.password_hash) {
     await logAudit(student.id, 'STUDENT_LOGIN_FAILED', {
-      phone_number,
       reason: 'no_password_set',
     });
     sendError(res, 'Password not set. Contact your school administrator.', 403);
@@ -209,7 +207,6 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
   const passwordMatch = await bcrypt.compare(password, student.password_hash);
   if (!passwordMatch) {
     await logAudit(student.id, 'STUDENT_LOGIN_FAILED', {
-      phone_number,
       reason: 'wrong_password',
     });
     sendError(res, 'Invalid phone number or password', 401);
@@ -225,7 +222,7 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
     return;
   }
 
-  await logAudit(student.id, 'STUDENT_LOGIN_SUCCESS', { phone_number });
+  await logAudit(student.id, 'STUDENT_LOGIN_SUCCESS', {});
 
   sendSuccess(res, {
     token,
@@ -413,9 +410,18 @@ router.post(
  */
 router.get('/me', authenticateAny, (req: Request, res: Response) => {
   if (req.tokenType === 'student') {
+    const s = req.student!;
     sendSuccess(res, {
       token_type: 'student',
-      student: req.student,
+      student: {
+        id: s.id,
+        name: s.name,
+        class_name: s.class_name,
+        section: s.section,
+        school_id: s.school_id,
+        is_first_login: s.is_first_login,
+        // phone_number intentionally omitted — only shown on own profile endpoint
+      },
     });
   } else {
     sendSuccess(res, {

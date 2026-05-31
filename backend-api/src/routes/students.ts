@@ -60,7 +60,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
 
   let query = supabaseAdmin
     .from('students')
-    .select('*', { count: 'exact' })
+    .select('id, full_name, roll_number, class_name, section, school_id, date_of_birth, parent_id, is_first_login, is_deleted, created_at', { count: 'exact' })
     .eq('is_deleted', false)
     .order('full_name');
 
@@ -106,7 +106,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
 router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher', 'parent'), async (req: Request, res: Response) => {
   const { data, error } = await supabaseAdmin
     .from('students')
-    .select('*')
+    .select('id, full_name, roll_number, class_name, section, school_id, date_of_birth, phone_number, parent_id, is_first_login, is_deleted, created_at')
     .eq('id', req.params.id)
     .eq('is_deleted', false)
     .single();

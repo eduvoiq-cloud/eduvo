@@ -100,6 +100,12 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     return;
   }
 
+  // Score cannot exceed max_score
+  if (parsed.data.score > parsed.data.max_score) {
+    sendError(res, `Score (${parsed.data.score}) cannot exceed max score (${parsed.data.max_score})`, 400);
+    return;
+  }
+
   const { data, error } = await supabaseAdmin
     .from('marks')
     .insert({ ...parsed.data, recorded_by: req.user!.id })
@@ -126,6 +132,29 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
     return;
+  }
+
+  // If both score and max_score are provided, validate score <= max_score
+  if (
+    parsed.data.score !== undefined &&
+    parsed.data.max_score !== undefined &&
+    parsed.data.score > parsed.data.max_score
+  ) {
+    sendError(res, `Score (${parsed.data.score}) cannot exceed max score (${parsed.data.max_score})`, 400);
+    return;
+  }
+
+  // If only score is provided, fetch existing max_score to validate
+  if (parsed.data.score !== undefined && parsed.data.max_score === undefined) {
+    const { data: existing } = await supabaseAdmin
+      .from('marks')
+      .select('max_score')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (existing && parsed.data.score > (existing as { max_score: number }).max_score) {
+      sendError(res, `Score (${parsed.data.score}) cannot exceed existing max score (${(existing as { max_score: number }).max_score})`, 400);
+      return;
+    }
   }
 
   const { data, error } = await supabaseAdmin

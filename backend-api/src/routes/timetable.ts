@@ -230,6 +230,9 @@ router.get(
       teacher_name: (r.users as { name: string } | null)?.name ?? null,
     }));
 
+    // Timetable rarely changes — cache for 1 hour to reduce server load
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+
     sendSuccess(res, groupByDay(rows));
   }
 );

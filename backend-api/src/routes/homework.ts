@@ -316,19 +316,20 @@ router.get(
     cutoffDate.setDate(cutoffDate.getDate() - 7);
     const cutoff = cutoffDate.toISOString().slice(0, 10);
 
-    // Fetch homework with subject and teacher info
+    // Fetch homework with subject, teacher info, and acknowledgement status in one query
+    // Uses LEFT JOIN on homework_acknowledgements filtered by student_id to avoid N+1 queries
+    const selectFields = isStudent && studentId
+      ? `id, title, description, due_date, file_url, created_at,
+         subjects ( name ),
+         users ( name ),
+         homework_acknowledgements!left ( student_id )`
+      : `id, title, description, due_date, file_url, created_at,
+         subjects ( name ),
+         users ( name )`;
+
     const { data: homeworkList, error: hwErr } = await supabaseAdmin
       .from('homework')
-      .select(`
-        id,
-        title,
-        description,
-        due_date,
-        file_url,
-        created_at,
-        subjects ( name ),
-        users ( name )
-      `)
+      .select(selectFields)
       .eq('school_id', schoolId)
       .eq('class_name', className)
       .eq('section', section)
@@ -342,19 +343,8 @@ router.get(
 
     const list = homeworkList ?? [];
 
-    // For student tokens, fetch acknowledgements
-    let ackSet = new Set<string>();
-    if (isStudent && studentId && list.length > 0) {
-      const hwIds = list.map((h: { id: string }) => h.id);
-      const { data: acks } = await supabaseAdmin
-        .from('homework_acknowledgements')
-        .select('homework_id')
-        .eq('student_id', studentId)
-        .in('homework_id', hwIds);
-      ackSet = new Set((acks ?? []).map((a: { homework_id: string }) => a.homework_id));
-    }
-
     // Supabase infers joined relations as arrays; cast through unknown to our shape
+    type AckRow = { student_id: string } | null;
     type HwRow = {
       id: string;
       title: string;
@@ -364,19 +354,30 @@ router.get(
       created_at: string;
       subjects: { name: string } | null;
       users: { name: string } | null;
+      homework_acknowledgements?: AckRow[] | null;
     };
 
-    const result = (list as unknown as HwRow[]).map((h) => ({
-      id: h.id,
-      title: h.title,
-      description: h.description ?? null,
-      subject_name: h.subjects?.name ?? null,
-      teacher_name: h.users?.name ?? null,
-      due_date: h.due_date,
-      file_url: h.file_url ?? null,
-      acknowledged: isStudent ? ackSet.has(h.id) : undefined,
-      created_at: h.created_at,
-    }));
+    const result = (list as unknown as HwRow[]).map((h) => {
+      // When joined, homework_acknowledgements is an array filtered by student_id
+      // (Supabase returns all acks for the homework unless we filter — we filter below)
+      const acknowledged = isStudent && studentId
+        ? (h.homework_acknowledgements ?? []).some(
+            (a) => a !== null && a.student_id === studentId
+          )
+        : undefined;
+
+      return {
+        id: h.id,
+        title: h.title,
+        description: h.description ?? null,
+        subject_name: h.subjects?.name ?? null,
+        teacher_name: h.users?.name ?? null,
+        due_date: h.due_date,
+        file_url: h.file_url ?? null,
+        acknowledged,
+        created_at: h.created_at,
+      };
+    });
 
     sendSuccess(res, result);
   }
@@ -756,6 +757,77 @@ router.post(
     }
 
     sendSuccess(res, { success: true }, 'Homework acknowledged');
+  }
+);
+
+// ── GET /api/homework/acknowledgements/:homework_id ───────────────────────────
+/**
+ * Get acknowledgement count for a specific homework item.
+ * Auth: teacher/schooladmin/superadmin token.
+ * Returns: { acknowledged_count, total_students }
+ */
+router.get(
+  '/acknowledgements/:homework_id',
+  authenticate,
+  requireRole('teacher', 'schooladmin', 'superadmin'),
+  async (req: Request, res: Response) => {
+    const homeworkId = req.params.homework_id;
+    const userId = req.user!.id;
+    const userRole = req.user!.role;
+
+    // Fetch homework to get class/section/school
+    const { data: homework, error: hwErr } = await supabaseAdmin
+      .from('homework')
+      .select('id, class_name, section, school_id, created_by')
+      .eq('id', homeworkId)
+      .single();
+
+    if (hwErr || !homework) {
+      sendError(res, 'Homework not found', 404);
+      return;
+    }
+
+    // Teachers can only view acknowledgements for their own homework
+    if (userRole === 'teacher' && homework.created_by !== userId) {
+      sendError(res, 'Access denied', 403);
+      return;
+    }
+
+    // schooladmin can only view homework in their school
+    if (userRole === 'schooladmin' && homework.school_id !== req.user!.school_id) {
+      sendError(res, 'Access denied', 403);
+      return;
+    }
+
+    // Count total students in this class/section
+    const { count: totalStudents, error: stuErr } = await supabaseAdmin
+      .from('students')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', homework.school_id)
+      .eq('class_name', homework.class_name)
+      .eq('section', homework.section)
+      .eq('is_deleted', false);
+
+    if (stuErr) {
+      sendError(res, stuErr.message, 500);
+      return;
+    }
+
+    // Count acknowledgements for this homework
+    const { count: ackCount, error: ackErr } = await supabaseAdmin
+      .from('homework_acknowledgements')
+      .select('id', { count: 'exact', head: true })
+      .eq('homework_id', homeworkId);
+
+    if (ackErr) {
+      sendError(res, ackErr.message, 500);
+      return;
+    }
+
+    sendSuccess(res, {
+      acknowledged_count: ackCount ?? 0,
+      total_students: totalStudents ?? 0,
+    });
   }
 );
 

@@ -91,6 +91,38 @@ CREATE INDEX IF NOT EXISTS ai_usage_prompt_hash
 CREATE INDEX IF NOT EXISTS teacher_assignments_teacher
   ON teacher_assignments (teacher_id, school_id);
 
+-- ── timetable ─────────────────────────────────────────────────────────────────
+
+-- Fast class/section/day lookup (used by GET /api/timetable/class)
+CREATE INDEX IF NOT EXISTS timetable_lookup
+  ON timetable (school_id, class_name, section, day_of_week);
+
+-- ── homework ──────────────────────────────────────────────────────────────────
+
+-- Fast class/section/due_date lookup (used by GET /api/homework/class)
+CREATE INDEX IF NOT EXISTS homework_class_due
+  ON homework (school_id, class_name, section, due_date);
+
+-- Fast acknowledgement lookup per student (used by homework /class JOIN and pending-count)
+CREATE INDEX IF NOT EXISTS homework_ack_student
+  ON homework_acknowledgements (student_id, homework_id);
+
+-- ── students (additional) ─────────────────────────────────────────────────────
+
+-- Fast phone number lookup (used by student login)
+CREATE INDEX IF NOT EXISTS students_phone_lookup
+  ON students (phone_number);
+
+-- ── complaints ────────────────────────────────────────────────────────────────
+
+-- Fast teacher complaints lookup (used by GET /api/complaints/teacher)
+CREATE INDEX IF NOT EXISTS complaints_teacher
+  ON complaints (teacher_id, status);
+
+-- Fast school-level complaints lookup (used by GET /api/complaints/admin)
+CREATE INDEX IF NOT EXISTS complaints_school
+  ON complaints (school_id, recipient_type, status);
+
 -- ============================================================
 -- NOTE: The gin_trgm_ops index requires the pg_trgm extension.
 -- Enable it first if not already active:

@@ -19,8 +19,6 @@ import apiClient from '../../api/client';
 const MAX_ATTEMPTS = 10;
 const LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
 const PRIMARY = '#3b82f6';
-
-const TERMS_URL = 'https://eduvo.in/terms-of-service';
 const PRIVACY_URL = 'https://eduvo.in/privacy-policy';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -29,12 +27,15 @@ interface LoginResponse {
   success: boolean;
   data: {
     token: string;
-    user: {
+    must_change_password: boolean;
+    student: {
       id: string;
       name: string;
-      email: string;
-      role: 'superadmin' | 'schooladmin' | 'teacher' | 'parent' | 'student';
-      school_id: string | null;
+      phone: string;
+      class: string;
+      section: string;
+      school_id: string;
+      roll_number?: string | null;
     };
   };
   message?: string;
@@ -43,13 +44,12 @@ interface LoginResponse {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Attempt tracking (in-memory; resets on app restart, which is acceptable)
   const attemptCount = useRef(0);
   const lockoutUntil = useRef<number | null>(null);
 
@@ -60,7 +60,6 @@ export default function LoginScreen() {
   const isLockedOut = (): boolean => {
     if (lockoutUntil.current === null) return false;
     if (Date.now() < lockoutUntil.current) return true;
-    // Lockout expired — reset
     lockoutUntil.current = null;
     attemptCount.current = 0;
     return false;
@@ -76,7 +75,6 @@ export default function LoginScreen() {
   const handleLogin = async () => {
     setErrorMessage('');
 
-    // Lockout check
     if (isLockedOut()) {
       setErrorMessage(
         `Too many attempts. Try again in ${remainingLockoutMinutes()} minute(s).`
@@ -84,9 +82,12 @@ export default function LoginScreen() {
       return;
     }
 
-    // Basic validation
-    if (!email.trim()) {
-      setErrorMessage('Please enter your email address.');
+    if (!phone.trim()) {
+      setErrorMessage('Please enter your phone number.');
+      return;
+    }
+    if (phone.trim().length < 10) {
+      setErrorMessage('Please enter a valid 10-digit phone number.');
       return;
     }
     if (!password.trim()) {
@@ -96,26 +97,30 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      const response = await apiClient.post<LoginResponse>('/api/auth/login', {
-        email: email.trim().toLowerCase(),
+      const response = await apiClient.post<LoginResponse>('/api/auth/login/student', {
+        phone: phone.trim(),
         password,
       });
 
-      const { token, user } = response.data.data;
+      const { token, student, must_change_password } = response.data.data;
 
-      // Only parent and student roles are allowed on the mobile app
-      if (user.role !== 'parent' && user.role !== 'student') {
-        setErrorMessage(
-          'This app is for parents and students only. Please use the web dashboard.'
-        );
-        return;
-      }
-
-      // Success — reset attempt counter and persist auth state
       attemptCount.current = 0;
       lockoutUntil.current = null;
-      login(user, token);
-      // Navigation is handled automatically by AppNavigator based on auth state
+
+      login(
+        {
+          id: student.id,
+          name: student.name,
+          phone: student.phone,
+          class: student.class,
+          section: student.section,
+          school_id: student.school_id,
+          roll_number: student.roll_number,
+        },
+        token,
+        must_change_password
+      );
+      // AppNavigator handles routing based on isFirstLogin
     } catch (error: any) {
       attemptCount.current += 1;
 
@@ -148,23 +153,22 @@ export default function LoginScreen() {
         <Text style={styles.logo}>Eduvo</Text>
 
         {/* Subtitle */}
-        <Text style={styles.subtitle}>Welcome Back</Text>
+        <Text style={styles.subtitle}>Student / Parent Login</Text>
 
-        {/* Email input */}
+        {/* Phone input */}
         <TextInput
           style={styles.input}
-          placeholder="Email address"
+          placeholder="Phone number"
           placeholderTextColor="#9CA3AF"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoCorrect={false}
-          value={email}
+          keyboardType="number-pad"
+          maxLength={10}
+          value={phone}
           onChangeText={(v) => {
-            setEmail(v);
+            setPhone(v.replace(/[^0-9]/g, ''));
             setErrorMessage('');
           }}
           editable={!loading}
-          accessibilityLabel="Email address"
+          accessibilityLabel="Phone number"
         />
 
         {/* Password input with show/hide toggle */}
@@ -214,26 +218,20 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
 
-        {/* Terms & Privacy footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>By logging in you agree to our </Text>
-          <TouchableOpacity
-            onPress={() => Linking.openURL(TERMS_URL)}
-            accessibilityRole="link"
-            accessibilityLabel="Terms of Service"
-          >
-            <Text style={styles.footerLink}>Terms of Service</Text>
-          </TouchableOpacity>
-          <Text style={styles.footerText}> and </Text>
-          <TouchableOpacity
-            onPress={() => Linking.openURL(PRIVACY_URL)}
-            accessibilityRole="link"
-            accessibilityLabel="Privacy Policy"
-          >
-            <Text style={styles.footerLink}>Privacy Policy</Text>
-          </TouchableOpacity>
-          <Text style={styles.footerText}>.</Text>
-        </View>
+        {/* Forgot password hint */}
+        <Text style={styles.forgotText}>
+          Forgot password? Contact your school.
+        </Text>
+
+        {/* Privacy policy link */}
+        <TouchableOpacity
+          style={styles.privacyLink}
+          onPress={() => Linking.openURL(PRIVACY_URL)}
+          accessibilityRole="link"
+          accessibilityLabel="Privacy Policy"
+        >
+          <Text style={styles.privacyText}>Privacy Policy</Text>
+        </TouchableOpacity>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -260,7 +258,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   subtitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '500',
     color: '#374151',
     textAlign: 'center',
@@ -323,18 +321,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  footer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginTop: 24,
+  forgotText: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 20,
   },
-  footerText: {
-    fontSize: 12,
-    color: '#9CA3AF',
+  privacyLink: {
+    alignSelf: 'center',
+    marginTop: 12,
   },
-  footerLink: {
+  privacyText: {
     fontSize: 12,
     color: PRIMARY,
     fontWeight: '500',

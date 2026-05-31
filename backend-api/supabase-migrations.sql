@@ -261,3 +261,40 @@ CREATE INDEX IF NOT EXISTS idx_hw_ack_student
   ON public.homework_acknowledgements(student_id, homework_id);
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── complaints: add student-facing complaint fields ───────────────────────────
+-- Adds recipient_type, teacher_id, message, and response_message columns
+-- to support the two-recipient complaint system (class_teacher | school_admin).
+
+-- recipient_type: who the complaint is directed to
+ALTER TABLE public.complaints
+  ADD COLUMN IF NOT EXISTS recipient_type text
+  CHECK (recipient_type IN ('class_teacher', 'school_admin'));
+
+-- teacher_id: set when recipient_type = 'class_teacher', null for school_admin
+ALTER TABLE public.complaints
+  ADD COLUMN IF NOT EXISTS teacher_id uuid
+  REFERENCES public.users(id) ON DELETE SET NULL;
+
+-- message: the complaint body from the student (max 1000 chars enforced in API)
+-- Kept separate from the existing 'body' column (used by old parent complaints)
+ALTER TABLE public.complaints
+  ADD COLUMN IF NOT EXISTS message text;
+
+-- response_message: optional reply from teacher/admin when updating status
+ALTER TABLE public.complaints
+  ADD COLUMN IF NOT EXISTS response_message text;
+
+-- Indexes for the new query patterns
+CREATE INDEX IF NOT EXISTS idx_complaints_teacher_id
+  ON public.complaints(teacher_id)
+  WHERE teacher_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_complaints_student_id
+  ON public.complaints(student_id)
+  WHERE student_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_complaints_recipient_type
+  ON public.complaints(school_id, recipient_type, status);
+
+NOTIFY pgrst, 'reload schema';

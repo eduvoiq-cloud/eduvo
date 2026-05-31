@@ -8,51 +8,52 @@ import { useAuthStore } from '../store/authStore';
 
 // Auth screens
 import LoginScreen from '../screens/auth/LoginScreen';
+import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
 
-// Parent screens
-import ParentDashboardScreen from '../screens/parent/DashboardScreen';
-import ParentAttendanceScreen from '../screens/parent/AttendanceScreen';
-import ParentNotificationsScreen from '../screens/parent/NotificationsScreen';
-import ParentPerformanceScreen from '../screens/parent/PerformanceScreen';
+// Main screens
+import DashboardScreen from '../screens/main/DashboardScreen';
+import AttendanceScreen from '../screens/main/AttendanceScreen';
+import MarksScreen from '../screens/main/MarksScreen';
+import TimetableScreen from '../screens/main/TimetableScreen';
+import HomeworkScreen from '../screens/main/HomeworkScreen';
+import TestsScreen from '../screens/main/TestsScreen';
+import ComplaintsScreen from '../screens/main/ComplaintsScreen';
+import NotificationsScreen from '../screens/main/NotificationsScreen';
+import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
 
-// Student screens
-import StudentDashboardScreen from '../screens/student/DashboardScreen';
-import StudentMarksScreen from '../screens/student/MarksScreen';
-import StudentTestsScreen from '../screens/student/TestsScreen';
-import TestAttemptScreen, { TestMeta } from '../screens/student/TestAttemptScreen';
+// Settings screens
+import SettingsScreen from '../screens/settings/SettingsScreen';
+import LinkChildScreen from '../screens/settings/LinkChildScreen';
 
 // ── Stack param lists ─────────────────────────────────────────────────────────
 
 export type AuthStackParamList = {
   Login: undefined;
+  ChangePassword: undefined;
 };
 
-export type ParentTabParamList = {
-  Dashboard: undefined;
+export type MainTabParamList = {
+  Home: undefined;
   Attendance: undefined;
-  Notifications: undefined;
-  Performance: undefined;
-};
-
-export type StudentTabParamList = {
-  Dashboard: undefined;
   Marks: undefined;
-  Tests: undefined;
+  More: undefined;
 };
 
-export type StudentStackParamList = {
-  StudentTabs: undefined;
+export type MainStackParamList = {
+  MainTabs: undefined;
   TestAttempt: { test: TestMeta };
+  ChangePassword: undefined;
+  LinkChild: undefined;
 };
 
 // ── Navigators ────────────────────────────────────────────────────────────────
 
 const AuthStack = createStackNavigator<AuthStackParamList>();
-const ParentTab = createBottomTabNavigator<ParentTabParamList>();
-const StudentTab = createBottomTabNavigator<StudentTabParamList>();
-const StudentStack = createStackNavigator<StudentStackParamList>();
+const MainTab = createBottomTabNavigator<MainTabParamList>();
+const MainStack = createStackNavigator<MainStackParamList>();
 
-// ── Tab icon helper (text-based, no icon library dependency) ──────────────────
+// ── Tab icon helper ───────────────────────────────────────────────────────────
+
 function TabIcon({ label, focused }: { label: string; focused: boolean }) {
   return (
     <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>{label}</Text>
@@ -60,18 +61,68 @@ function TabIcon({ label, focused }: { label: string; focused: boolean }) {
 }
 
 // ── Auth navigator ────────────────────────────────────────────────────────────
+
 function AuthNavigator() {
   return (
     <AuthStack.Navigator screenOptions={{ headerShown: false }}>
       <AuthStack.Screen name="Login" component={LoginScreen} />
+      <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
     </AuthStack.Navigator>
   );
 }
 
-// ── Parent tab navigator ──────────────────────────────────────────────────────
-function ParentNavigator() {
+// ── "More" stack — groups secondary screens under the More tab ────────────────
+
+const MoreStack = createStackNavigator();
+
+function MoreNavigator() {
   return (
-    <ParentTab.Navigator
+    <MoreStack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: '#1D4ED8' },
+        headerTintColor: '#FFFFFF',
+        headerTitleStyle: { fontWeight: '600' },
+      }}
+    >
+      <MoreStack.Screen
+        name="MoreHome"
+        component={SettingsScreen}
+        options={{ title: 'Settings' }}
+      />
+      <MoreStack.Screen
+        name="Timetable"
+        component={TimetableScreen}
+        options={{ title: 'Timetable' }}
+      />
+      <MoreStack.Screen
+        name="Homework"
+        component={HomeworkScreen}
+        options={{ title: 'Homework' }}
+      />
+      <MoreStack.Screen
+        name="Tests"
+        component={TestsScreen}
+        options={{ title: 'Tests' }}
+      />
+      <MoreStack.Screen
+        name="Complaints"
+        component={ComplaintsScreen}
+        options={{ title: 'Complaints' }}
+      />
+      <MoreStack.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{ title: 'Notifications' }}
+      />
+    </MoreStack.Navigator>
+  );
+}
+
+// ── Main bottom tab navigator ─────────────────────────────────────────────────
+
+function MainTabNavigator() {
+  return (
+    <MainTab.Navigator
       screenOptions={{
         headerStyle: { backgroundColor: '#1D4ED8' },
         headerTintColor: '#FFFFFF',
@@ -81,120 +132,105 @@ function ParentNavigator() {
         tabBarStyle: { paddingBottom: 4 },
       }}
     >
-      <ParentTab.Screen
-        name="Dashboard"
-        component={ParentDashboardScreen}
+      <MainTab.Screen
+        name="Home"
+        component={DashboardScreen}
         options={{
           title: 'Home',
           tabBarIcon: ({ focused }) => <TabIcon label="🏠" focused={focused} />,
         }}
       />
-      <ParentTab.Screen
+      <MainTab.Screen
         name="Attendance"
-        component={ParentAttendanceScreen}
+        component={AttendanceScreen}
         options={{
           title: 'Attendance',
           tabBarIcon: ({ focused }) => <TabIcon label="📅" focused={focused} />,
         }}
       />
-      <ParentTab.Screen
-        name="Notifications"
-        component={ParentNotificationsScreen}
-        options={{
-          title: 'Notifications',
-          tabBarIcon: ({ focused }) => <TabIcon label="🔔" focused={focused} />,
-        }}
-      />
-      <ParentTab.Screen
-        name="Performance"
-        component={ParentPerformanceScreen}
-        options={{
-          title: 'Performance',
-          tabBarIcon: ({ focused }) => <TabIcon label="📈" focused={focused} />,
-        }}
-      />
-    </ParentTab.Navigator>
-  );
-}
-
-// ── Student tab navigator ─────────────────────────────────────────────────────
-function StudentTabNavigator() {
-  return (
-    <StudentTab.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: '#1D4ED8' },
-        headerTintColor: '#FFFFFF',
-        headerTitleStyle: { fontWeight: '600' },
-        tabBarActiveTintColor: '#1D4ED8',
-        tabBarInactiveTintColor: '#9CA3AF',
-        tabBarStyle: { paddingBottom: 4 },
-      }}
-    >
-      <StudentTab.Screen
-        name="Dashboard"
-        component={StudentDashboardScreen}
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ focused }) => <TabIcon label="🏠" focused={focused} />,
-        }}
-      />
-      <StudentTab.Screen
+      <MainTab.Screen
         name="Marks"
-        component={StudentMarksScreen}
+        component={MarksScreen}
         options={{
           title: 'Marks',
           tabBarIcon: ({ focused }) => <TabIcon label="📊" focused={focused} />,
         }}
       />
-      <StudentTab.Screen
-        name="Tests"
-        component={StudentTestsScreen}
+      <MainTab.Screen
+        name="More"
+        component={MoreNavigator}
         options={{
-          title: 'Tests',
-          tabBarIcon: ({ focused }) => <TabIcon label="📝" focused={focused} />,
+          headerShown: false,
+          title: 'More',
+          tabBarIcon: ({ focused }) => <TabIcon label="☰" focused={focused} />,
         }}
       />
-    </StudentTab.Navigator>
+    </MainTab.Navigator>
   );
 }
 
-function StudentNavigator() {
+// ── Main stack navigator (wraps tabs + modal screens) ────────────────────────
+
+function MainNavigator() {
   return (
-    <StudentStack.Navigator screenOptions={{ headerShown: false }}>
-      <StudentStack.Screen name="StudentTabs" component={StudentTabNavigator} />
-      <StudentStack.Screen
+    <MainStack.Navigator screenOptions={{ headerShown: false }}>
+      <MainStack.Screen name="MainTabs" component={MainTabNavigator} />
+      <MainStack.Screen
         name="TestAttempt"
         component={TestAttemptScreen}
         options={{ headerShown: false }}
       />
-    </StudentStack.Navigator>
+      <MainStack.Screen
+        name="ChangePassword"
+        component={ChangePasswordScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Change Password',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
+      <MainStack.Screen
+        name="LinkChild"
+        component={LinkChildScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Link Another Child',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
+    </MainStack.Navigator>
   );
 }
 
 // ── Root navigator ────────────────────────────────────────────────────────────
+
 interface AppNavigatorProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   navigationRef?: React.RefObject<NavigationContainerRef<any>>;
 }
 
 export default function AppNavigator({ navigationRef }: AppNavigatorProps) {
-  const { isLoggedIn, user } = useAuthStore();
+  const { isLoggedIn, isFirstLogin } = useAuthStore();
 
   const renderNavigator = () => {
-    if (!isLoggedIn || !user) {
+    if (!isLoggedIn) {
       return <AuthNavigator />;
     }
 
-    switch (user.role) {
-      case 'parent':
-        return <ParentNavigator />;
-      case 'student':
-        return <StudentNavigator />;
-      default:
-        // Roles not supported on mobile (superadmin, schooladmin, teacher)
-        // Logout and show login screen
-        return <AuthNavigator />;
+    if (isFirstLogin) {
+      // Force password change — cannot navigate away
+      return (
+        <AuthStack.Navigator screenOptions={{ headerShown: false }}>
+          <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+        </AuthStack.Navigator>
+      );
     }
+
+    return <MainNavigator />;
   };
 
   return (

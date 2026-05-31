@@ -4,25 +4,27 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type AppRole = 'superadmin' | 'schooladmin' | 'teacher' | 'parent' | 'student';
-
-export interface AuthUser {
+export interface StudentUser {
   id: string;
   name: string;
-  email: string;
-  role: AppRole;
-  school_id: string | null;
+  phone: string;
+  class: string;
+  section: string;
+  school_id: string;
+  roll_number?: string | null;
 }
 
 interface AuthState {
-  user: AuthUser | null;
+  student: StudentUser | null;
   token: string | null;
   isLoggedIn: boolean;
+  isFirstLogin: boolean;
 }
 
 interface AuthActions {
-  login: (user: AuthUser, token: string) => void;
+  login: (student: StudentUser, token: string, isFirstLogin?: boolean) => void;
   logout: () => void;
+  markPasswordChanged: () => void;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -31,18 +33,24 @@ export const useAuthStore = create<AuthState & AuthActions>()(
   persist(
     (set) => ({
       // Initial state
-      user: null,
+      student: null,
       token: null,
       isLoggedIn: false,
+      isFirstLogin: false,
 
-      // Set user + token, mark as logged in
-      login: (user: AuthUser, token: string) => {
-        set({ user, token, isLoggedIn: true });
+      // Save student + token, mark as logged in
+      login: (student: StudentUser, token: string, isFirstLogin = false) => {
+        set({ student, token, isLoggedIn: true, isFirstLogin });
       },
 
       // Clear all auth state
       logout: () => {
-        set({ user: null, token: null, isLoggedIn: false });
+        set({ student: null, token: null, isLoggedIn: false, isFirstLogin: false });
+      },
+
+      // Called after successful password change on first login
+      markPasswordChanged: () => {
+        set({ isFirstLogin: false });
       },
     }),
     {

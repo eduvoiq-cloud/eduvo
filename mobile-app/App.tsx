@@ -15,6 +15,7 @@ import apiClient from './src/api/client';
 
 export default function App() {
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
+  const student = useAuthStore((state) => state.student);
   const notificationListener = useRef<Notifications.EventSubscription | null>(null);
   const responseListener = useRef<Notifications.EventSubscription | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,11 +30,11 @@ export default function App() {
 
   useEffect(() => {
     // Register for push notifications when user is logged in
-    if (isLoggedIn) {
+    if (isLoggedIn && student?.id) {
       registerForPushNotificationsAsync().then((token) => {
         if (token) {
           // Send the FCM/Expo push token to the backend so it can target this device
-          sendFcmTokenToBackend(token, apiClient);
+          sendFcmTokenToBackend(student.id, token, apiClient);
         }
       });
     }
@@ -48,7 +49,7 @@ export default function App() {
       notificationListener.current?.remove();
       responseListener.current?.remove();
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, student?.id]);
 
   return (
     <>
