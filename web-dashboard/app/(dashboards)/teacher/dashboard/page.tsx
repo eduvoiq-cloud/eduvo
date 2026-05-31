@@ -31,13 +31,14 @@ export default function TeacherDashboard() {
 
     async function fetchDashboard() {
       try {
-        // Fetch classes, complaints, and tests in parallel
+        // Fetch classes, complaints, and tests in parallel.
+        // Each call is individually guarded so one failure never kills the whole dashboard.
         const [classesRes, complaintsRes, testsRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          }).then((r) => r.json()),
-          complaintsApi.list(token!, { status: 'pending', role: user!.role }),
-          testsApi.list(token!),
+          }).then((r) => r.json()).catch(() => ({ data: [] })),
+          complaintsApi.list(token!, { status: 'pending', role: user!.role }).catch(() => ({ data: [] })),
+          testsApi.list(token!).catch(() => ({ data: [] })),
         ]);
 
         const myAssignments: TeacherAssignment[] = classesRes?.data ?? [];

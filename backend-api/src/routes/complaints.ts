@@ -33,7 +33,7 @@ const createComplaintSchema = z.object({
 
 const updateStatusSchema = z.object({
   status: z.enum(['pending', 'reviewed', 'resolved']),
-  response_message: z.string().max(2000).optional(),
+  resolution_note: z.string().max(2000).optional(),
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -264,8 +264,9 @@ router.get(
         subject,
         message,
         status,
+        resolution_note,
         recipient_type,
-        response_message,
+        teacher_id,
         reviewed_at,
         created_at,
         students!complaints_student_id_fkey (
@@ -275,8 +276,7 @@ router.get(
           section
         )
       `)
-      .eq('teacher_id', req.user!.id)
-      .eq('recipient_type', 'class_teacher')
+      .eq('school_id', req.user!.school_id ?? '')
       .order('created_at', { ascending: false });
 
     if (status && ['pending', 'reviewed', 'resolved', 'all'].includes(status)) {
@@ -299,8 +299,7 @@ router.get(
         subject: row.subject,
         message: row.message,
         status: row.status,
-        recipient_type: row.recipient_type,
-        response_message: row.response_message,
+        resolution_note: row.resolution_note,
         reviewed_at: row.reviewed_at,
         created_at: row.created_at,
         student_name: student?.full_name ?? null,
@@ -338,8 +337,9 @@ router.get(
         subject,
         message,
         status,
+        resolution_note,
         recipient_type,
-        response_message,
+        teacher_id,
         reviewed_at,
         created_at,
         students!complaints_student_id_fkey (
@@ -349,7 +349,6 @@ router.get(
           section
         )
       `)
-      .eq('recipient_type', 'school_admin')
       .order('created_at', { ascending: false });
 
     // Scope to school (superadmin can see all if no school_id)
@@ -376,8 +375,7 @@ router.get(
         subject: row.subject,
         message: row.message,
         status: row.status,
-        recipient_type: row.recipient_type,
-        response_message: row.response_message,
+        resolution_note: row.resolution_note,
         reviewed_at: row.reviewed_at,
         created_at: row.created_at,
         student_name: student?.full_name ?? null,
@@ -401,7 +399,7 @@ router.get(
   async (req: Request, res: Response) => {
     const { data, error } = await supabaseAdmin
       .from('complaints')
-      .select('id, subject, message, recipient_type, status, response_message, reviewed_at, created_at')
+      .select('id, subject, message, recipient_type, status, resolution_note, reviewed_at, created_at')
       .eq('student_id', req.student!.id)
       .order('created_at', { ascending: false });
 
@@ -431,14 +429,14 @@ router.put(
       return;
     }
 
-    const { status, response_message } = parsed.data;
+    const { status, resolution_note } = parsed.data;
     const userId = req.user!.id;
     const userRole = req.user!.role;
 
     // Fetch the complaint to verify ownership and get current state
     const { data: complaint, error: fetchErr } = await supabaseAdmin
       .from('complaints')
-      .select('id, school_id, status, recipient_type, teacher_id, student_id')
+      .select('id, school_id, status, submitted_by, teacher_id, student_id')
       .eq('id', req.params.id)
       .single();
 
@@ -453,22 +451,6 @@ router.put(
       return;
     }
 
-    // Role-based access: teacher can only update complaints sent to them specifically
-    if (userRole === 'teacher') {
-      if (complaint.recipient_type !== 'class_teacher' || complaint.teacher_id !== userId) {
-        sendError(res, 'You can only update complaints that were sent to you', 403);
-        return;
-      }
-    }
-
-    // school_admin can only update complaints sent to school admin
-    if (userRole === 'schooladmin') {
-      if (complaint.recipient_type !== 'school_admin') {
-        sendError(res, 'School admins can only update complaints sent to school admin', 403);
-        return;
-      }
-    }
-
     const oldStatus = complaint.status;
 
     // Update the complaint
@@ -476,12 +458,12 @@ router.put(
       .from('complaints')
       .update({
         status,
-        response_message: response_message ?? null,
+        resolution_note: resolution_note ?? null,
         reviewed_by: userId,
         reviewed_at: new Date().toISOString(),
       })
       .eq('id', req.params.id)
-      .select('id, status, response_message, reviewed_at')
+      .select('id, status, resolution_note, reviewed_at')
       .single();
 
     if (updateErr) {
@@ -495,8 +477,8 @@ router.put(
         complaint.school_id,
         complaint.student_id,
         `Your complaint has been ${status}`,
-        response_message
-          ? `Your complaint has been ${status}. Response: ${response_message}`
+        resolution_note
+          ? `Your complaint has been ${status}. Response: ${resolution_note}`
           : `Your complaint has been ${status}.`
       );
     }
