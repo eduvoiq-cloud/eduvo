@@ -249,7 +249,7 @@ export interface Complaint {
 
 export const authApi = {
   login: (email: string, password: string) =>
-    request<LoginResponse>('/api/auth/login', {
+    request<LoginResponse>('/api/auth/login/staff', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),
