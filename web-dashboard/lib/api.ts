@@ -3,7 +3,10 @@
  * Never calls Supabase directly.
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+// In local dev, NEXT_PUBLIC_API_URL=http://localhost:3001 (set in .env.local).
+// On Vercel, this env var is intentionally NOT set — requests use a relative
+// base URL so Next.js rewrites in next.config.ts proxy them to Railway.
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 // ── Global 401 handler ────────────────────────────────────────────────────────
 // When any API call returns 401, clear the session and redirect to login.
