@@ -10,7 +10,7 @@ export const globalRateLimit = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Too many requests. Please try again later.',
@@ -30,7 +30,7 @@ export const loginRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Too many login attempts for this account. Please try again later.',
@@ -53,7 +53,7 @@ export const studentLoginRateLimit = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Too many login attempts for this account. Please try again later.',
@@ -69,7 +69,7 @@ export const registerRateLimit = rateLimit({
   keyGenerator: (req: Request) => `register:${req.ip ?? 'unknown'}`,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Too many registration attempts. Please try again later.',
@@ -85,7 +85,7 @@ export const templateDownloadRateLimit = rateLimit({
   keyGenerator: (req: Request) => `template:${req.ip ?? 'unknown'}`,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Too many template download requests. Please try again later.',
@@ -102,7 +102,7 @@ export const authRateLimit = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Too many authentication attempts. Please try again later.',

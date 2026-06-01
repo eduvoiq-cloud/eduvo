@@ -14,7 +14,7 @@ const teacherRateLimit = rateLimit({
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: { success: false, message: 'Too many requests. Please slow down.' },
 });
 

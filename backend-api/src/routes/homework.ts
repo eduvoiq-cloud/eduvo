@@ -22,7 +22,7 @@ const createHomeworkRateLimit = rateLimit({
   keyGenerator: (req) => `hw_create:${req.user?.id ?? req.ip ?? 'unknown'}`,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Homework creation limit reached (20 per day). Try again tomorrow.',

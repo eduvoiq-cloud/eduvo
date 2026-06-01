@@ -17,7 +17,7 @@ const submitRateLimit = rateLimit({
   keyGenerator: (req) => req.user?.id ?? req.ip ?? 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false },
+  validate: false,
   message: {
     success: false,
     message: 'Attendance submission limit reached (10 per day). Try again tomorrow.',
