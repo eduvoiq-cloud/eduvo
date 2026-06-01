@@ -162,7 +162,7 @@ export default function SchoolAdminDashboard() {
       if (!schoolId) {
         try {
           const meRes = await authApi.me(token!);
-          schoolId = meRes.data.school_id;
+          schoolId = meRes.data.user.school_id;
           if (schoolId) {
             // Persist the refreshed profile so future loads are instant
             saveSession(token!, meRes.data);
