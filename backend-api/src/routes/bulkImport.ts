@@ -76,6 +76,7 @@ const importRateLimit = rateLimit({
   keyGenerator: (req) => req.user?.school_id ?? req.ip ?? 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     message: 'Import limit reached. Maximum 3 imports per hour per school.',
@@ -969,6 +970,7 @@ const marksImportRateLimit = rateLimit({
   keyGenerator: (req) => `marks_import:${req.user?.id ?? req.ip ?? 'unknown'}`,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     message: 'Marks import limit reached. Maximum 10 mark imports per teacher per day.',

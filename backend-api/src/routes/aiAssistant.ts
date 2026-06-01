@@ -92,6 +92,7 @@ const uploadRateLimit = rateLimit({
   keyGenerator: (req) => `upload:${req.user?.id ?? req.ip ?? 'unknown'}`,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     message: 'Upload limit reached (20 per hour). Please try again later.',
@@ -105,6 +106,7 @@ const generateRateLimit = rateLimit({
   keyGenerator: (req) => `generate:${req.user?.id ?? req.ip ?? 'unknown'}`,
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     message: `Daily limit of ${MAX_DAILY_GENERATIONS} generations reached. Resets tomorrow.`,

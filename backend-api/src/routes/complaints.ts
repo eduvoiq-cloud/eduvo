@@ -15,6 +15,7 @@ const complaintRateLimit = rateLimit({
   keyGenerator: (req) => req.student?.id ?? req.ip ?? 'unknown',
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
   message: {
     success: false,
     message: 'Complaint limit reached (3 per day). Please try again tomorrow.',
