@@ -60,9 +60,9 @@ function TeachersPageInner() {
       let schoolId = user?.school_id ?? null;
       if (!schoolId) {
         const meRes = await authApi.me(token);
-        schoolId = meRes.data.school_id;
+        schoolId = meRes.data.user.school_id;
         if (schoolId) {
-          saveSession(token, meRes.data);
+          saveSession(token, meRes.data.user);
         }
       }
       if (!schoolId) { setLoading(false); return; }

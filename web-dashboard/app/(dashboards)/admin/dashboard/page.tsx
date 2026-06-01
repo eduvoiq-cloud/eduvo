@@ -165,7 +165,7 @@ export default function SchoolAdminDashboard() {
           schoolId = meRes.data.user.school_id;
           if (schoolId) {
             // Persist the refreshed profile so future loads are instant
-            saveSession(token!, meRes.data);
+            saveSession(token!, meRes.data.user);
           }
         } catch {
           // Can't reach server — nothing to show

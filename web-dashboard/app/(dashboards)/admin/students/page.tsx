@@ -349,8 +349,8 @@ function StudentsPageInner() {
       // Self-heal: if school_id is missing from cached session, fetch fresh profile
       if (!user?.school_id) {
         const meRes = await authApi.me(token);
-        if (meRes.data.school_id) {
-          saveSession(token, meRes.data);
+        if (meRes.data.user.school_id) {
+          saveSession(token, meRes.data.user);
         } else {
           setLoading(false);
           return;
