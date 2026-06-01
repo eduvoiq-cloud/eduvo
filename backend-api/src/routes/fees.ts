@@ -18,8 +18,8 @@ const toggleFeeSchema = z.object({
 });
 
 const updatePaymentSchema = z.object({
-  term: z.string().min(1).max(50),
-  academic_year: z.string().min(1).max(20),
+  term: z.string().max(50).optional(),
+  academic_year: z.string().max(20).optional(),
   total_fee_amount: z.number().min(0),
   amount_paid: z.number().min(0),
   notes: z.string().max(500).optional(),
@@ -143,14 +143,13 @@ router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'tea
     .from('student_fees')
     .upsert({
       student_id: req.params.student_id,
-      term: parsed.data.term,
-      academic_year: parsed.data.academic_year,
+      term: parsed.data.term ?? null,
+      academic_year: parsed.data.academic_year ?? null,
       total_fee_amount: parsed.data.total_fee_amount,
       amount_paid: parsed.data.amount_paid,
       fee_paid: feePaid,
       notes: parsed.data.notes ?? null,
       updated_by: req.user!.id,
-      updated_at: new Date().toISOString(),
     }, { onConflict: 'student_id,term,academic_year' })
     .select()
     .single();
@@ -200,7 +199,6 @@ router.post('/:student_id/toggle', requireRole('superadmin', 'schooladmin', 'tea
       fee_paid: parsed.data.fee_paid,
       notes: parsed.data.notes ?? null,
       updated_by: req.user!.id,
-      updated_at: new Date().toISOString(),
     }, { onConflict: 'student_id,term,academic_year' })
     .select()
     .single();

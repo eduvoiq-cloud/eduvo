@@ -309,3 +309,25 @@ CREATE INDEX IF NOT EXISTS idx_complaints_recipient_type
   ON public.complaints(school_id, recipient_type, status);
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── student_fees: make term/academic_year optional, add updated_at ────────────
+-- term and academic_year are no longer required — fees can be recorded without
+-- specifying a term. updated_at is added so the backend can track last update.
+ALTER TABLE public.student_fees
+  ALTER COLUMN term DROP NOT NULL;
+
+ALTER TABLE public.student_fees
+  ALTER COLUMN academic_year DROP NOT NULL;
+
+ALTER TABLE public.student_fees
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+
+-- Drop the old unique constraint that required term+academic_year, replace with
+-- a partial unique index that handles nulls correctly.
+ALTER TABLE public.student_fees
+  DROP CONSTRAINT IF EXISTS student_fees_student_id_term_academic_year_key;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fees_unique_student_term_year
+  ON public.student_fees(student_id, COALESCE(term, ''), COALESCE(academic_year, ''));
+
+NOTIFY pgrst, 'reload schema';

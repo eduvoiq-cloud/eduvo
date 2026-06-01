@@ -36,14 +36,6 @@ function UpdatePaymentModal({ record, term, academicYear, onClose, onSaved }: Up
     const total = parseFloat(totalFee);
     const paid = parseFloat(amountPaid);
 
-    if (!term || term.trim() === '') {
-      setError('Term is required. Please enter a term (e.g. Term 1) in the filter above.');
-      return;
-    }
-    if (!academicYear || academicYear.trim() === '') {
-      setError('Academic year is required. Please enter a year (e.g. 2024/2025) in the filter above.');
-      return;
-    }
     if (isNaN(total) || total < 0) {
       setError('Total fee amount must be a valid non-negative number.');
       return;
@@ -63,8 +55,8 @@ function UpdatePaymentModal({ record, term, academicYear, onClose, onSaved }: Up
     setError('');
     try {
       await feesApi.updatePayment(token, record.student_id, {
-        term,
-        academic_year: academicYear,
+        ...(term ? { term } : {}),
+        ...(academicYear ? { academic_year: academicYear } : {}),
         total_fee_amount: total,
         amount_paid: paid,
       });

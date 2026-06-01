@@ -523,8 +523,8 @@ export const feesApi = {
     token: string,
     studentId: string,
     payload: {
-      term: string;
-      academic_year: string;
+      term?: string;
+      academic_year?: string;
       total_fee_amount: number;
       amount_paid: number;
       notes?: string;
