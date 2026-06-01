@@ -139,15 +139,18 @@ router.get('/my-classes', async (req: Request, res: Response) => {
     .select('*')
     .eq('teacher_id', req.user!.id)
     .eq('school_id', req.user!.school_id ?? '')
-    .order('class_name');
+    .order('created_at', { ascending: true });
 
   if (error) { sendError(res, error.message, 500); return; }
 
   // Normalise: expose both `class` and `class_name` so any consumer works
   const normalised = (data ?? []).map((row: Record<string, unknown>) => ({
     ...row,
-    class_name: row.class_name ?? row.class,
+    class_name: (row.class_name ?? row.class) as string,
   }));
+
+  // Sort by class_name client-side after normalisation
+  normalised.sort((a, b) => String(a.class_name ?? '').localeCompare(String(b.class_name ?? '')));
 
   sendSuccess(res, normalised);
 });
