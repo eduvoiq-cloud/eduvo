@@ -56,6 +56,36 @@ function todayDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * Check if a teacher is assigned to a class+section.
+ * Tries `class_name` first (used by all insert paths), then falls back to
+ * the legacy `class` column in case the migration hasn't been run yet.
+ */
+async function isTeacherAssigned(
+  teacherId: string,
+  className: string,
+  section: string
+): Promise<boolean> {
+  const { data: byClassName } = await supabaseAdmin
+    .from('teacher_assignments')
+    .select('id')
+    .eq('teacher_id', teacherId)
+    .eq('class_name', className)
+    .eq('section', section)
+    .limit(1);
+  if ((byClassName ?? []).length > 0) return true;
+
+  // Fallback for DBs where only the legacy `class` column is populated
+  const { data: byClass } = await supabaseAdmin
+    .from('teacher_assignments')
+    .select('id')
+    .eq('teacher_id', teacherId)
+    .eq('class', className)
+    .eq('section', section)
+    .limit(1);
+  return (byClass ?? []).length > 0;
+}
+
 // ── All routes require authentication ─────────────────────────────────────────
 router.use(authenticate);
 
@@ -225,15 +255,8 @@ router.get(
 
     // Teachers can only view their assigned classes
     if (req.user!.role === 'teacher') {
-      const { data: assignment } = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('id')
-        .eq('teacher_id', req.user!.id)
-        .eq('class_name', className)
-        .eq('section', section)
-        .maybeSingle();
-
-      if (!assignment) {
+      const assigned = await isTeacherAssigned(req.user!.id, className, section);
+      if (!assigned) {
         sendError(res, 'You are not assigned to this class', 403);
         return;
       }
@@ -341,15 +364,8 @@ router.post(
 
     // Teachers must be assigned to this class
     if (userRole === 'teacher') {
-      const { data: assignment } = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('id')
-        .eq('teacher_id', userId)
-        .eq('class_name', className)
-        .eq('section', section)
-        .maybeSingle();
-
-      if (!assignment) {
+      const assigned = await isTeacherAssigned(userId, className, section);
+      if (!assigned) {
         sendError(res, 'You are not assigned to this class', 403);
         return;
       }
@@ -483,15 +499,8 @@ router.put(
         return;
       }
 
-      const { data: assignment } = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('id')
-        .eq('teacher_id', userId)
-        .eq('class_name', student.class_name)
-        .eq('section', student.section)
-        .maybeSingle();
-
-      if (!assignment) {
+      const assigned = await isTeacherAssigned(userId, student.class_name, student.section);
+      if (!assigned) {
         sendError(res, 'You are not assigned to this student\'s class', 403);
         return;
       }
@@ -664,15 +673,8 @@ router.get(
 
     // Teachers can only view their assigned classes
     if (req.user!.role === 'teacher') {
-      const { data: assignment } = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('id')
-        .eq('teacher_id', req.user!.id)
-        .eq('class_name', className)
-        .eq('section', section)
-        .maybeSingle();
-
-      if (!assignment) {
+      const assigned = await isTeacherAssigned(req.user!.id, className, section);
+      if (!assigned) {
         sendError(res, 'You are not assigned to this class', 403);
         return;
       }

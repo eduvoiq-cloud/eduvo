@@ -86,7 +86,8 @@ async function logAudit(
 }
 
 /** Verify teacher is assigned to a given class+section (optionally subject).
- *  The teacher_assignments table uses the column name `class_name`.
+ *  Queries both `class_name` and `class` columns to handle DBs where either
+ *  column may be populated (migration may or may not have been run).
  */
 async function verifyAssignment(
   teacherId: string,
@@ -95,6 +96,7 @@ async function verifyAssignment(
   section: string,
   subject?: string
 ): Promise<boolean> {
+  // Try class_name first (new column, used by all insert paths)
   let query = supabaseAdmin
     .from('teacher_assignments')
     .select('id')
@@ -105,8 +107,22 @@ async function verifyAssignment(
 
   if (subject) query = query.eq('subject', subject);
 
-  const { data } = await query.limit(1);
-  return (data ?? []).length > 0;
+  const { data: byClassName } = await query.limit(1);
+  if ((byClassName ?? []).length > 0) return true;
+
+  // Fallback: try legacy `class` column in case migration hasn't run
+  let fallbackQuery = supabaseAdmin
+    .from('teacher_assignments')
+    .select('id')
+    .eq('teacher_id', teacherId)
+    .eq('school_id', schoolId)
+    .eq('class', className)
+    .eq('section', section);
+
+  if (subject) fallbackQuery = fallbackQuery.eq('subject', subject);
+
+  const { data: byClass } = await fallbackQuery.limit(1);
+  return (byClass ?? []).length > 0;
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
