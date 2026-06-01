@@ -408,7 +408,7 @@ export default function MarksImportPage() {
             <FormField label="Class" htmlFor="mi-class" required>
               <select id="mi-class" className={inputClass} disabled={loadingAssignments}
                 value={filterClass}
-                onChange={(e) => { setFilterClass(e.target.value); setFilterSection(''); setSubjectId(''); }}>
+                onChange={(e) => { setFilterClass(e.target.value); setFilterSection(''); setSubject(''); }}>
                 <option value="">{loadingAssignments ? 'Loading…' : 'Select class…'}</option>
                 {myClasses.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -417,7 +417,7 @@ export default function MarksImportPage() {
             <FormField label="Section" htmlFor="mi-section" required>
               <select id="mi-section" className={inputClass} disabled={!filterClass}
                 value={filterSection}
-                onChange={(e) => { setFilterSection(e.target.value); setSubjectId(''); }}>
+                onChange={(e) => { setFilterSection(e.target.value); setSubject(''); }}>
                 <option value="">Select section…</option>
                 {sectionsForClass.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>

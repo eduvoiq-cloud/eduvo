@@ -42,9 +42,8 @@ interface CachedMarksPreview {
 
 const router = Router();
 
-// ── All routes require authentication + school_admin role ─────────────────────
+// ── All routes require authentication ────────────────────────────────────────
 router.use(authenticate);
-router.use(requireRole('schooladmin'));
 
 // ── In-memory session cache (TTL: 10 minutes) ─────────────────────────────────
 interface CachedPreview {
@@ -297,7 +296,7 @@ function validateAssignedClasses(classes: unknown): string | null {
 }
 
 // ── GET /api/import/students/template ─────────────────────────────────────────
-router.get('/students/template', templateDownloadRateLimit, (_req: Request, res: Response) => {
+router.get('/students/template', requireRole('superadmin', 'schooladmin'), templateDownloadRateLimit, (_req: Request, res: Response) => {
   const wb = XLSX.utils.book_new();
 
   // Header row — Parent Phone IS the login phone number for the student account.
@@ -333,6 +332,7 @@ router.get('/students/template', templateDownloadRateLimit, (_req: Request, res:
 // ── POST /api/import/students/preview ─────────────────────────────────────────
 router.post(
   '/students/preview',
+  requireRole('superadmin', 'schooladmin'),
   importRateLimit,
   upload.single('file'),
   async (req: Request, res: Response) => {
@@ -522,7 +522,7 @@ router.post(
 );
 
 // ── POST /api/import/students/confirm ─────────────────────────────────────────
-router.post('/students/confirm', async (req: Request, res: Response) => {
+router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
   const { import_session_id } = req.body;
 
   if (!import_session_id || typeof import_session_id !== 'string') {
@@ -657,7 +657,7 @@ router.post('/students/confirm', async (req: Request, res: Response) => {
 });
 
 // ── GET /api/import/teachers/template ─────────────────────────────────────────
-router.get('/teachers/template', templateDownloadRateLimit, (_req: Request, res: Response) => {
+router.get('/teachers/template', requireRole('superadmin', 'schooladmin'), templateDownloadRateLimit, (_req: Request, res: Response) => {
   const wb = XLSX.utils.book_new();
 
   const headers = [
@@ -688,6 +688,7 @@ router.get('/teachers/template', templateDownloadRateLimit, (_req: Request, res:
 // ── POST /api/import/teachers/preview ─────────────────────────────────────────
 router.post(
   '/teachers/preview',
+  requireRole('superadmin', 'schooladmin'),
   importRateLimit,
   upload.single('file'),
   async (req: Request, res: Response) => {
@@ -824,7 +825,7 @@ router.post(
 );
 
 // ── POST /api/import/teachers/confirm ─────────────────────────────────────────
-router.post('/teachers/confirm', async (req: Request, res: Response) => {
+router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
   const { import_session_id } = req.body;
 
   if (!import_session_id || typeof import_session_id !== 'string') {
