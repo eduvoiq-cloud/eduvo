@@ -1023,30 +1023,17 @@ router.get(
   requireRole('teacher', 'schooladmin', 'superadmin'),
   templateDownloadRateLimit,
   async (req: Request, res: Response) => {
-    const { class: className, section, subject_id, exam_type, term } = req.query as Record<string, string>;
+    const { class: className, section, subject: subjectName, exam_type, term } = req.query as Record<string, string>;
 
     // Validate required query params
-    if (!className || !section || !subject_id || !exam_type || !term) {
-      sendError(res, 'Query params required: class, section, subject_id, exam_type, term', 400);
+    if (!className || !section || !subjectName || !exam_type || !term) {
+      sendError(res, 'Query params required: class, section, subject, exam_type, term', 400);
       return;
     }
 
     const school_id = req.user!.school_id;
     if (!school_id) {
       sendError(res, 'Your account is not linked to a school.', 403);
-      return;
-    }
-
-    // Fetch subject name
-    const { data: subject, error: subjectErr } = await supabaseAdmin
-      .from('subjects')
-      .select('id, name')
-      .eq('id', subject_id)
-      .eq('school_id', school_id)
-      .maybeSingle();
-
-    if (subjectErr || !subject) {
-      sendError(res, 'Subject not found or does not belong to your school.', 404);
       return;
     }
 
@@ -1057,13 +1044,16 @@ router.get(
         school_id,
         className,
         section,
-        subject.name
+        subjectName
       );
       if (!assigned) {
         sendError(res, 'You are not assigned to this class and subject.', 403);
         return;
       }
     }
+
+    // Use subject name directly — no subjects table needed
+    const subject = { name: subjectName };
 
     // Fetch students for this class and section
     const { data: students, error: studentsErr } = await supabaseAdmin
@@ -1169,30 +1159,20 @@ router.post(
       return;
     }
 
-    const { class: className, section, subject_id, exam_type, term, test_name, date } =
+    const { class: className, section, subject: subjectName, exam_type, term, test_name, date } =
       req.body as Record<string, string>;
 
-    if (!className || !section || !subject_id || !exam_type || !term || !test_name || !date) {
+    if (!className || !section || !subjectName || !exam_type || !term || !test_name || !date) {
       sendError(
         res,
-        'Required fields: class, section, subject_id, exam_type, term, test_name, date',
+        'Required fields: class, section, subject, exam_type, term, test_name, date',
         400
       );
       return;
     }
 
-    // Fetch subject
-    const { data: subject, error: subjectErr } = await supabaseAdmin
-      .from('subjects')
-      .select('id, name')
-      .eq('id', subject_id)
-      .eq('school_id', school_id)
-      .maybeSingle();
-
-    if (subjectErr || !subject) {
-      sendError(res, 'Subject not found or does not belong to your school.', 404);
-      return;
-    }
+    // Use subject name directly — no subjects table needed
+    const subject = { name: subjectName, id: '' };
 
     // For teachers: verify assignment
     if (req.user!.role === 'teacher') {
@@ -1201,7 +1181,7 @@ router.post(
         school_id,
         className,
         section,
-        subject.name
+        subjectName
       );
       if (!assigned) {
         sendError(res, 'You are not assigned to this class and subject.', 403);
@@ -1387,7 +1367,7 @@ router.post(
       teacher_id: req.user!.id,
       type: 'marks',
       subject_name: subject.name,
-      subject_id: subject.id,
+      subject_id: '',
       class_name: className,
       section,
       exam_type,

@@ -21,10 +21,7 @@ const EXAM_LABELS: Record<string, string> = {
 const TERMS = ['term_1', 'term_2', 'term_3'] as const;
 const TERM_LABELS: Record<string, string> = { term_1: 'Term 1', term_2: 'Term 2', term_3: 'Term 3' };
 
-interface Subject {
-  id: string;
-  name: string;
-}
+// Subject names come from teacher_assignments — no separate subjects table needed
 
 interface MarksPreviewRow {
   roll_number: string;
@@ -196,15 +193,16 @@ export default function MarksImportPage() {
   const router = useRouter();
   const { user } = useAuth();
 
-  // ── Assignments + subjects ──────────────────────────────────────────────────
+  // ── Assignments ─────────────────────────────────────────────────────────────
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
 
   // ── Step 1 — Configure ──────────────────────────────────────────────────────
   const [filterClass, setFilterClass] = useState('');
   const [filterSection, setFilterSection] = useState('');
-  const [subjectId, setSubjectId] = useState('');
+  const [subject, setSubject] = useState('');
+  const [customSubject, setCustomSubject] = useState('');
+  const [useCustomSubject, setUseCustomSubject] = useState(false);
   const [examType, setExamType] = useState<typeof EXAM_TYPES[number]>('unit_test');
   const [term, setTerm] = useState<typeof TERMS[number]>('term_1');
   const [testName, setTestName] = useState('');
@@ -227,20 +225,14 @@ export default function MarksImportPage() {
 
   const [step, setStep] = useState<Step>('configure');
 
-  // ── Load assignments + subjects ─────────────────────────────────────────────
+  // ── Load assignments only ───────────────────────────────────────────────────
 
   useEffect(() => {
     const token = getToken();
     if (!token || !user?.school_id) return;
-    Promise.all([
-      assignmentsApi.list(token, user.school_id),
-      fetch(`${BASE_URL}/api/subjects?school_id=${user.school_id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => r.json()),
-    ])
-      .then(([assignRes, subjectRes]) => {
-        setAssignments(assignRes.data.filter((a) => a.teacher_id === user.id));
-        setSubjects((subjectRes.data as Subject[]) ?? []);
+    assignmentsApi.list(token, user.school_id)
+      .then((res) => {
+        setAssignments(res.data.filter((a) => a.teacher_id === user.id));
       })
       .catch(() => {})
       .finally(() => setLoadingAssignments(false));
@@ -252,14 +244,19 @@ export default function MarksImportPage() {
   const sectionsForClass = [...new Set(
     assignments.filter((a) => a.class_name === filterClass).map((a) => a.section)
   )].sort();
-  const subjectsForClassSection = subjects.filter((s) =>
-    assignments.some((a) => a.class_name === filterClass && a.section === filterSection && a.subject === s.name)
-  );
+  const subjectsForClassSection = [...new Set(
+    assignments
+      .filter((a) => a.class_name === filterClass && a.section === filterSection)
+      .map((a) => a.subject)
+  )].sort();
+
+  // The effective subject name (from dropdown or custom text input)
+  const effectiveSubject = useCustomSubject ? customSubject.trim() : subject;
 
   // ── Download template ───────────────────────────────────────────────────────
 
   const handleDownloadTemplate = useCallback(async () => {
-    if (!filterClass || !filterSection || !subjectId || !examType || !term) {
+    if (!filterClass || !filterSection || !effectiveSubject || !examType || !term) {
       setConfigError('Please fill in all fields before downloading the template.');
       return;
     }
@@ -271,7 +268,7 @@ export default function MarksImportPage() {
       const qs = new URLSearchParams({
         class: filterClass,
         section: filterSection,
-        subject_id: subjectId,
+        subject: effectiveSubject,
         exam_type: examType,
         term,
       });
@@ -286,7 +283,7 @@ export default function MarksImportPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `marks_template_${filterClass}${filterSection}_${examType}_${term}.xlsx`;
+      a.download = `marks_template_${filterClass}${filterSection}_${effectiveSubject}_${examType}_${term}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err: unknown) {
@@ -294,10 +291,10 @@ export default function MarksImportPage() {
     } finally {
       setDownloading(false);
     }
-  }, [filterClass, filterSection, subjectId, examType, term]);
+  }, [filterClass, filterSection, effectiveSubject, examType, term]);
 
   function handleProceedToUpload() {
-    if (!filterClass || !filterSection || !subjectId || !examType || !term || !testName.trim() || !testDate) {
+    if (!filterClass || !filterSection || !effectiveSubject || !examType || !term || !testName.trim() || !testDate) {
       setConfigError('Please fill in all required fields.');
       return;
     }
@@ -318,7 +315,7 @@ export default function MarksImportPage() {
       fd.append('file', file);
       fd.append('class', filterClass);
       fd.append('section', filterSection);
-      fd.append('subject_id', subjectId);
+      fd.append('subject', effectiveSubject);
       fd.append('exam_type', examType);
       fd.append('term', term);
       fd.append('test_name', testName.trim());
@@ -338,7 +335,7 @@ export default function MarksImportPage() {
     } finally {
       setPreviewing(false);
     }
-  }, [file, filterClass, filterSection, subjectId, examType, term, testName, testDate]);
+  }, [file, filterClass, filterSection, effectiveSubject, examType, term, testName, testDate]);
 
   // ── Confirm import ──────────────────────────────────────────────────────────
 
@@ -375,6 +372,9 @@ export default function MarksImportPage() {
     setConfigError('');
     setUploadError('');
     setImportError('');
+    setSubject('');
+    setCustomSubject('');
+    setUseCustomSubject(false);
   }
 
   // ── Row color ───────────────────────────────────────────────────────────────
@@ -424,12 +424,31 @@ export default function MarksImportPage() {
             </FormField>
 
             <FormField label="Subject" htmlFor="mi-subject" required>
-              <select id="mi-subject" className={inputClass} disabled={!filterSection}
-                value={subjectId}
-                onChange={(e) => setSubjectId(e.target.value)}>
-                <option value="">Select subject…</option>
-                {subjectsForClassSection.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              {!useCustomSubject ? (
+                <div className="space-y-1.5">
+                  <select id="mi-subject" className={inputClass} disabled={!filterSection}
+                    value={subject}
+                    onChange={(e) => setSubject(e.target.value)}>
+                    <option value="">{!filterSection ? 'Select section first…' : 'Select subject…'}</option>
+                    {subjectsForClassSection.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  <button type="button" onClick={() => { setUseCustomSubject(true); setSubject(''); }}
+                    className="text-xs text-blue-600 hover:underline">
+                    + Type a different subject
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <input id="mi-subject" type="text" className={inputClass}
+                    placeholder="e.g. Mathematics"
+                    value={customSubject}
+                    onChange={(e) => setCustomSubject(e.target.value)} />
+                  <button type="button" onClick={() => { setUseCustomSubject(false); setCustomSubject(''); }}
+                    className="text-xs text-gray-500 hover:underline">
+                    ← Pick from assigned subjects
+                  </button>
+                </div>
+              )}
             </FormField>
 
             <FormField label="Exam Type" htmlFor="mi-examtype" required>
