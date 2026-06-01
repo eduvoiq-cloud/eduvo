@@ -262,6 +262,17 @@ CREATE INDEX IF NOT EXISTS idx_hw_ack_student
 
 NOTIFY pgrst, 'reload schema';
 
+-- ── student_fees: add payment amount columns ──────────────────────────────────
+-- Adds total_fee_amount and amount_paid so teachers can track partial payments.
+-- fee_paid is now derived: amount_paid >= total_fee_amount (when both are set).
+ALTER TABLE public.student_fees
+  ADD COLUMN IF NOT EXISTS total_fee_amount numeric(12,2);
+
+ALTER TABLE public.student_fees
+  ADD COLUMN IF NOT EXISTS amount_paid numeric(12,2) NOT NULL DEFAULT 0;
+
+NOTIFY pgrst, 'reload schema';
+
 -- ── complaints: add student-facing complaint fields ───────────────────────────
 -- Adds recipient_type, teacher_id, message, and response_message columns
 -- to support the two-recipient complaint system (class_teacher | school_admin).

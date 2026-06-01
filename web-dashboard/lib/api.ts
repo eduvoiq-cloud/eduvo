@@ -189,11 +189,16 @@ export interface FeeRecord {
   class_name: string;
   section: string;
   fee_paid: boolean;
+  total_fee_amount: number | null;
+  amount_paid: number;
+  payment_status: 'paid' | 'partial' | 'unpaid';
   fee_record: {
     id: string;
     term: string;
     academic_year: string;
     fee_paid: boolean;
+    total_fee_amount?: number | null;
+    amount_paid?: number;
     notes?: string;
   } | null;
 }
@@ -510,6 +515,22 @@ export const feesApi = {
     const query = qs.toString() ? `?${qs.toString()}` : '';
     return request<FeeRecord[]>(`/api/fees${query}`, { method: 'GET' }, token);
   },
+
+  updatePayment: (
+    token: string,
+    studentId: string,
+    payload: {
+      term: string;
+      academic_year: string;
+      total_fee_amount: number;
+      amount_paid: number;
+      notes?: string;
+    }
+  ) =>
+    request<FeeRecord>(`/api/fees/${studentId}/payment`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, token),
 
   toggle: (token: string, studentId: string, payload: { fee_paid: boolean; term: string; academic_year: string; notes?: string }) =>
     request<FeeRecord>(`/api/fees/${studentId}/toggle`, {

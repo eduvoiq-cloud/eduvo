@@ -17,6 +17,14 @@ const toggleFeeSchema = z.object({
   notes: z.string().max(500).optional(),
 });
 
+const updatePaymentSchema = z.object({
+  term: z.string().min(1).max(50),
+  academic_year: z.string().min(1).max(20),
+  total_fee_amount: z.number().min(0),
+  amount_paid: z.number().min(0),
+  notes: z.string().max(500).optional(),
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function logAudit(userId: string, action: string, details: Record<string, unknown> = {}) {
@@ -62,23 +70,110 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
   const { data: fees, error: fErr } = await feeQuery;
   if (fErr) { sendError(res, fErr.message, 500); return; }
 
-  // Merge: one row per student, with fee status
+  // Merge: one row per student, with fee status and amounts
   const feeMap = new Map((fees ?? []).map((f: { student_id: string }) => [f.student_id, f]));
-  const result = students.map((s: { id: string; full_name: string; class_name: string; section: string }) => ({
-    student_id: s.id,
-    full_name: s.full_name,
-    class_name: s.class_name,
-    section: s.section,
-    fee_record: feeMap.get(s.id) ?? null,
-    fee_paid: (feeMap.get(s.id) as { fee_paid?: boolean } | undefined)?.fee_paid ?? false,
-  }));
+  const result = students.map((s: { id: string; full_name: string; class_name: string; section: string }) => {
+    const feeRow = feeMap.get(s.id) as {
+      fee_paid?: boolean;
+      total_fee_amount?: number | null;
+      amount_paid?: number | null;
+      term?: string;
+      academic_year?: string;
+      notes?: string;
+      id?: string;
+    } | undefined;
+
+    const totalFee = feeRow?.total_fee_amount ?? null;
+    const amountPaid = feeRow?.amount_paid ?? 0;
+
+    // Derive payment status
+    let paymentStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
+    if (totalFee !== null && totalFee > 0) {
+      if (amountPaid >= totalFee) paymentStatus = 'paid';
+      else if (amountPaid > 0) paymentStatus = 'partial';
+    } else if (feeRow?.fee_paid) {
+      paymentStatus = 'paid';
+    }
+
+    return {
+      student_id: s.id,
+      full_name: s.full_name,
+      class_name: s.class_name,
+      section: s.section,
+      fee_record: feeRow ?? null,
+      fee_paid: paymentStatus === 'paid',
+      total_fee_amount: totalFee,
+      amount_paid: amountPaid,
+      payment_status: paymentStatus,
+    };
+  });
 
   sendSuccess(res, result);
 });
 
 /**
+ * PUT /api/fees/:student_id/payment
+ * Upserts a fee record with total amount and amount paid.
+ * Automatically derives fee_paid from the amounts.
+ */
+router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const parsed = updatePaymentSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  if (parsed.data.amount_paid > parsed.data.total_fee_amount) {
+    sendError(res, 'Amount paid cannot exceed total fee amount', 400);
+    return;
+  }
+
+  // Verify student belongs to teacher's school
+  const { data: student } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, school_id, class_name, section')
+    .eq('id', req.params.student_id)
+    .single();
+
+  if (!student || student.school_id !== req.user!.school_id) {
+    sendError(res, 'Student not found in your school', 404);
+    return;
+  }
+
+  const feePaid = parsed.data.amount_paid >= parsed.data.total_fee_amount;
+
+  const { data, error } = await supabaseAdmin
+    .from('student_fees')
+    .upsert({
+      student_id: req.params.student_id,
+      term: parsed.data.term,
+      academic_year: parsed.data.academic_year,
+      total_fee_amount: parsed.data.total_fee_amount,
+      amount_paid: parsed.data.amount_paid,
+      fee_paid: feePaid,
+      notes: parsed.data.notes ?? null,
+      updated_by: req.user!.id,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'student_id,term,academic_year' })
+    .select()
+    .single();
+
+  if (error) { sendError(res, error.message, 500); return; }
+
+  await logAudit(req.user!.id, 'FEE_PAYMENT_UPDATED', {
+    student_id: req.params.student_id,
+    student_name: student.full_name,
+    total_fee_amount: parsed.data.total_fee_amount,
+    amount_paid: parsed.data.amount_paid,
+    fee_paid: feePaid,
+    term: parsed.data.term,
+    academic_year: parsed.data.academic_year,
+  });
+
+  sendSuccess(res, data, 'Payment updated successfully');
+});
+
+/**
  * POST /api/fees/:student_id/toggle
  * Upserts a fee record for a student (paid / unpaid).
+ * Legacy endpoint — kept for backward compatibility.
  */
 router.post('/:student_id/toggle', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const parsed = toggleFeeSchema.safeParse(req.body);
