@@ -86,7 +86,7 @@ async function logAudit(
 }
 
 /** Verify teacher is assigned to a given class+section (optionally subject).
- *  The teacher_assignments table uses the column name `class` (not `class_name`).
+ *  The teacher_assignments table uses the column name `class_name`.
  */
 async function verifyAssignment(
   teacherId: string,
@@ -100,7 +100,7 @@ async function verifyAssignment(
     .select('id')
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
-    .eq('class', className)
+    .eq('class_name', className)
     .eq('section', section);
 
   if (subject) query = query.eq('subject', subject);
@@ -123,7 +123,7 @@ router.get('/my-classes', async (req: Request, res: Response) => {
     .select('*')
     .eq('teacher_id', req.user!.id)
     .eq('school_id', req.user!.school_id ?? '')
-    .order('class');
+    .order('class_name');
 
   if (error) { sendError(res, error.message, 500); return; }
 
