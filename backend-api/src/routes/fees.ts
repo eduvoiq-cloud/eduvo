@@ -113,8 +113,8 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
 
 /**
  * PUT /api/fees/:student_id/payment
- * Upserts a fee record with total amount and amount paid.
- * Automatically derives fee_paid from the amounts.
+ * Creates or updates a fee record with total amount and amount paid.
+ * Uses select → update/insert instead of upsert to avoid constraint issues.
  */
 router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const parsed = updatePaymentSchema.safeParse(req.body);
@@ -138,26 +138,60 @@ router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'tea
   }
 
   const feePaid = parsed.data.amount_paid >= parsed.data.total_fee_amount;
+  const studentId = req.params.student_id;
 
-  const { data, error } = await supabaseAdmin
+  // Check if a fee record already exists for this student
+  let existingQuery = supabaseAdmin
     .from('student_fees')
-    .upsert({
-      student_id: req.params.student_id,
-      term: parsed.data.term ?? null,
-      academic_year: parsed.data.academic_year ?? null,
-      total_fee_amount: parsed.data.total_fee_amount,
-      amount_paid: parsed.data.amount_paid,
-      fee_paid: feePaid,
-      notes: parsed.data.notes ?? null,
-      updated_by: req.user!.id,
-    }, { onConflict: 'student_id,term,academic_year' })
-    .select()
-    .single();
+    .select('id')
+    .eq('student_id', studentId);
+
+  if (parsed.data.term) {
+    existingQuery = existingQuery.eq('term', parsed.data.term);
+  }
+  if (parsed.data.academic_year) {
+    existingQuery = existingQuery.eq('academic_year', parsed.data.academic_year);
+  }
+
+  const { data: existing } = await existingQuery.maybeSingle();
+
+  let data: unknown;
+  let error: { message: string } | null;
+
+  const payload = {
+    total_fee_amount: parsed.data.total_fee_amount,
+    amount_paid: parsed.data.amount_paid,
+    fee_paid: feePaid,
+    notes: parsed.data.notes ?? null,
+    updated_by: req.user!.id,
+  };
+
+  if (existing?.id) {
+    // Update existing record
+    ({ data, error } = await supabaseAdmin
+      .from('student_fees')
+      .update(payload)
+      .eq('id', existing.id)
+      .select()
+      .single());
+  } else {
+    // Insert new record
+    ({ data, error } = await supabaseAdmin
+      .from('student_fees')
+      .insert({
+        student_id: studentId,
+        term: parsed.data.term ?? 'General',
+        academic_year: parsed.data.academic_year ?? new Date().getFullYear().toString(),
+        ...payload,
+      })
+      .select()
+      .single());
+  }
 
   if (error) { sendError(res, error.message, 500); return; }
 
   await logAudit(req.user!.id, 'FEE_PAYMENT_UPDATED', {
-    student_id: req.params.student_id,
+    student_id: studentId,
     student_name: student.full_name,
     total_fee_amount: parsed.data.total_fee_amount,
     amount_paid: parsed.data.amount_paid,
