@@ -229,7 +229,7 @@ router.get(
         .from('teacher_assignments')
         .select('id')
         .eq('teacher_id', req.user!.id)
-        .eq('class_name', className)
+        .eq('class', className)
         .eq('section', section)
         .maybeSingle();
 
@@ -345,7 +345,7 @@ router.post(
         .from('teacher_assignments')
         .select('id')
         .eq('teacher_id', userId)
-        .eq('class_name', className)
+        .eq('class', className)
         .eq('section', section)
         .maybeSingle();
 
@@ -487,7 +487,7 @@ router.put(
         .from('teacher_assignments')
         .select('id')
         .eq('teacher_id', userId)
-        .eq('class_name', student.class_name)
+        .eq('class', student.class_name)
         .eq('section', student.section)
         .maybeSingle();
 
@@ -668,7 +668,7 @@ router.get(
         .from('teacher_assignments')
         .select('id')
         .eq('teacher_id', req.user!.id)
-        .eq('class_name', className)
+        .eq('class', className)
         .eq('section', section)
         .maybeSingle();
 
