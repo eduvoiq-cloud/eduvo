@@ -6,7 +6,7 @@ import { feesApi, settingsApi, type FeeRecord } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 interface MyClass {
   class_name: string;

@@ -31,7 +31,7 @@ function todayStr(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 async function apiFetch<T>(path: string, options: RequestInit, token: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {

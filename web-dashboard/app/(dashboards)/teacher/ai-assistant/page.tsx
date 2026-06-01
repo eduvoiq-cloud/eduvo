@@ -51,7 +51,7 @@ const TERM_SUGGESTIONS = ['Term 1', 'Term 2', 'Term 3', 'Term 4'];
 const DIFFICULTY_OPTIONS = ['easy', 'medium', 'hard'] as const;
 type Difficulty = typeof DIFFICULTY_OPTIONS[number];
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 // ── Small reusable UI pieces ──────────────────────────────────────────────────
 

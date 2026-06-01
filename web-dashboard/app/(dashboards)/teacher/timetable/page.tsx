@@ -75,7 +75,7 @@ function UploadTimetableModal({ open, onClose, selectedClass, selectedSection }:
       if (selectedSection) formData.append('section', selectedSection);
 
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001'}/api/timetable/upload`,
+        `${process.env.NEXT_PUBLIC_API_URL ?? ''}/api/timetable/upload`,
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
@@ -231,7 +231,7 @@ const DAY_LABELS: Record<Day, string> = {
   thursday: 'Thu', friday: 'Fri', saturday: 'Sat',
 };
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

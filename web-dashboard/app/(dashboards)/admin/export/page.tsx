@@ -11,7 +11,7 @@ import { useAuth } from '@/context/AuthContext';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001';
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 export default function ExportPage() {
   const { user } = useAuth();
