@@ -263,7 +263,7 @@ export const authApi = {
     request<null>('/api/auth/logout', { method: 'POST' }, token),
 
   me: (token: string) =>
-    request<UserProfile>('/api/auth/me', { method: 'GET' }, token),
+    request<{ token_type: string; user: UserProfile }>('/api/auth/me', { method: 'GET' }, token),
 
   /** Create a new user account (admin-only) */
   createUser: (

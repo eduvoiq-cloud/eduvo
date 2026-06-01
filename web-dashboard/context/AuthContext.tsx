@@ -56,7 +56,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     authApi.me(token)
       .then((res) => {
-        const freshUser = res.data;
+        // /me returns { token_type: 'staff', user: {...} }
+        const freshUser: UserProfile = res.data.user;
         // Persist the refreshed profile so future loads are up-to-date
         saveSession(token, freshUser);
         setState({ user: freshUser, token, loading: false });
