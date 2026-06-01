@@ -263,9 +263,9 @@ export default function FeesPage() {
   useEffect(() => { fetchFees(); }, [fetchFees]);
 
   // ── Summary counts ────────────────────────────────────────────────────────
-  const paidCount = feeRecords.filter((r) => r.payment_status === 'paid').length;
-  const partialCount = feeRecords.filter((r) => r.payment_status === 'partial').length;
-  const unpaidCount = feeRecords.filter((r) => r.payment_status === 'unpaid').length;
+  const paidCount = feeRecords.filter((r) => (r.payment_status ?? (r.fee_paid ? 'paid' : 'unpaid')) === 'paid').length;
+  const partialCount = feeRecords.filter((r) => (r.payment_status ?? '') === 'partial').length;
+  const unpaidCount = feeRecords.filter((r) => (r.payment_status ?? (r.fee_paid ? 'paid' : 'unpaid')) === 'unpaid').length;
 
   return (
     <>
@@ -382,9 +382,14 @@ export default function FeesPage() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {feeRecords.map((r) => {
-                  const total = r.total_fee_amount;
-                  const paid = r.amount_paid ?? 0;
+                  const total = (r.total_fee_amount != null && !isNaN(Number(r.total_fee_amount)))
+                    ? Number(r.total_fee_amount)
+                    : null;
+                  const paid = (r.amount_paid != null && !isNaN(Number(r.amount_paid)))
+                    ? Number(r.amount_paid)
+                    : 0;
                   const remaining = total !== null ? Math.max(0, total - paid) : null;
+                  const status = r.payment_status ?? (r.fee_paid ? 'paid' : 'unpaid');
 
                   return (
                     <tr key={r.student_id} className="hover:bg-gray-50 transition-colors">
@@ -425,7 +430,7 @@ export default function FeesPage() {
 
                       {/* Status */}
                       <td className="px-4 py-3 text-center">
-                        <StatusBadge status={r.payment_status} />
+                        <StatusBadge status={status as 'paid' | 'partial' | 'unpaid'} />
                       </td>
 
                       {/* Action */}
