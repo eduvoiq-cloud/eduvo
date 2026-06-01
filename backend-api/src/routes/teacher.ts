@@ -40,6 +40,14 @@ const toggleFeeSchema = z.object({
   fee_paid: z.boolean(),
 });
 
+const updatePaymentSchema = z.object({
+  term: z.string().min(1).max(50),
+  academic_year: z.string().min(1).max(20),
+  total_fee_amount: z.number().min(0),
+  amount_paid: z.number().min(0),
+  notes: z.string().max(500).optional(),
+});
+
 const manualAttendanceSchema = z.object({
   attendances: z.array(z.object({
     student_id: z.string().uuid(),
@@ -303,6 +311,64 @@ router.post('/fee', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, data, `Fee marked as ${fee_paid ? 'paid' : 'unpaid'}`);
+});
+
+/**
+ * PUT /api/teacher/fees/:student_id/payment
+ * Upsert a fee record with total amount and amount paid.
+ * Automatically derives fee_paid from the amounts.
+ */
+router.put('/fees/:student_id/payment', async (req: Request, res: Response) => {
+  const parsed = updatePaymentSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  if (parsed.data.amount_paid > parsed.data.total_fee_amount) {
+    sendError(res, 'Amount paid cannot exceed total fee amount', 400);
+    return;
+  }
+
+  const { data: student } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, school_id')
+    .eq('id', req.params.student_id)
+    .single();
+
+  if (!student || student.school_id !== req.user!.school_id) {
+    sendError(res, 'Student not found in your school', 404);
+    return;
+  }
+
+  const feePaid = parsed.data.amount_paid >= parsed.data.total_fee_amount;
+
+  const { data, error } = await supabaseAdmin
+    .from('student_fees')
+    .upsert({
+      student_id: req.params.student_id,
+      term: parsed.data.term,
+      academic_year: parsed.data.academic_year,
+      total_fee_amount: parsed.data.total_fee_amount,
+      amount_paid: parsed.data.amount_paid,
+      fee_paid: feePaid,
+      notes: parsed.data.notes ?? null,
+      updated_by: req.user!.id,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'student_id,term,academic_year' })
+    .select()
+    .single();
+
+  if (error) { sendError(res, error.message, 500); return; }
+
+  await logAudit(req.user!.id, 'FEE_PAYMENT_UPDATED', {
+    student_id: req.params.student_id,
+    student_name: student.full_name,
+    total_fee_amount: parsed.data.total_fee_amount,
+    amount_paid: parsed.data.amount_paid,
+    fee_paid: feePaid,
+    term: parsed.data.term,
+    academic_year: parsed.data.academic_year,
+  });
+
+  sendSuccess(res, data, 'Payment updated successfully');
 });
 
 /**

@@ -527,7 +527,7 @@ export const feesApi = {
       notes?: string;
     }
   ) =>
-    request<FeeRecord>(`/api/fees/${studentId}/payment`, {
+    request<FeeRecord>(`/api/teacher/fees/${studentId}/payment`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     }, token),
