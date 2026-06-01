@@ -110,7 +110,7 @@ export async function authenticate(
   // ── Fetch profile from users table ───────────────────────────────────────
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('users')
-    .select('id, name, email, role, school_id, is_deleted')
+    .select('id, name, email, role, school_id')
     .eq('id', authUser.id)
     .single();
 
@@ -119,7 +119,7 @@ export async function authenticate(
     return;
   }
 
-  if (profile.is_deleted) {
+  if ((profile as Record<string, unknown>).is_deleted === true) {
     sendError(res, 'This account has been deactivated.', 403);
     return;
   }
@@ -255,11 +255,11 @@ export async function authenticateAny(
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('users')
-    .select('id, name, email, role, school_id, is_deleted')
+    .select('id, name, email, role, school_id')
     .eq('id', authData.user.id)
     .single();
 
-  if (profileError || !profile || profile.is_deleted) {
+  if (profileError || !profile || (profile as Record<string, unknown>).is_deleted === true) {
     sendError(res, 'User profile not found or account deactivated', 403);
     return;
   }

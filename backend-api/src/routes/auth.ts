@@ -128,7 +128,7 @@ router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) 
   // 2. Fetch profile — role lives here, never in the JWT
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('users')
-    .select('id, name, email, role, school_id, is_deleted')
+    .select('id, name, email, role, school_id')
     .eq('id', authUser.id)
     .single();
 
@@ -138,7 +138,7 @@ router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) 
     return;
   }
 
-  if (profile.is_deleted) {
+  if ((profile as Record<string, unknown>).is_deleted === true) {
     await logAudit(authUser.id, 'STAFF_LOGIN_FAILED', { email, reason: 'account_deleted' });
     sendError(res, 'This account has been deactivated.', 403);
     return;

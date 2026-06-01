@@ -281,10 +281,10 @@ router.get(
       }
       const { data: profile } = await supabaseAdmin
         .from('users')
-        .select('id, role, school_id, is_deleted')
+        .select('id, role, school_id')
         .eq('id', authData.user.id)
         .single();
-      if (!profile || profile.is_deleted) {
+      if (!profile || (profile as Record<string, unknown>).is_deleted === true) {
         sendError(res, 'User profile not found or account deactivated', 403);
         return;
       }
