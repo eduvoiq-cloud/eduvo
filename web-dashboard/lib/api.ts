@@ -456,6 +456,74 @@ export const settingsApi = {
     }, token),
 };
 
+// ── Marks View types ──────────────────────────────────────────────────────────
+
+export interface MarkRecord {
+  id: string;
+  subject: string;
+  score: number;
+  max_score: number;
+  term: string;
+  exam_type: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface StudentMarksRow {
+  student_id: string;
+  full_name: string;
+  roll_number: string | null;
+  class_name: string;
+  section: string | null;
+  marks: MarkRecord[];
+  total_obtained: number;
+  total_max: number;
+  percentage: number | null;
+}
+
+export interface StudentMarksDetail {
+  student: {
+    id: string;
+    full_name: string;
+    roll_number: string | null;
+    class_name: string;
+    section: string | null;
+  };
+  marks: MarkRecord[];
+  total_obtained: number;
+  total_max: number;
+  percentage: number | null;
+}
+
+// ── Marks View endpoints (read-only, teacher + admin) ─────────────────────────
+
+export const marksViewApi = {
+  /** GET /api/marks-view/class — all students in a class with their marks */
+  listClass: (
+    token: string,
+    params: { class_name: string; section?: string; term?: string; exam_type?: string }
+  ) => {
+    const qs = new URLSearchParams({ class_name: params.class_name });
+    if (params.section) qs.set('section', params.section);
+    if (params.term) qs.set('term', params.term);
+    if (params.exam_type) qs.set('exam_type', params.exam_type);
+    return request<StudentMarksRow[]>(`/api/marks-view/class?${qs.toString()}`, { method: 'GET' }, token);
+  },
+
+  /** GET /api/marks-view/student/:id — single student with all their marks */
+  getStudent: (
+    token: string,
+    studentId: string,
+    params?: { term?: string; exam_type?: string }
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.term) qs.set('term', params.term);
+    if (params?.exam_type) qs.set('exam_type', params.exam_type);
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<StudentMarksDetail>(`/api/marks-view/student/${studentId}${query}`, { method: 'GET' }, token);
+  },
+};
+
 // ── Marks endpoints ───────────────────────────────────────────────────────────
 
 export const marksApi = {

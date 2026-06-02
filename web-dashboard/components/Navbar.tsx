@@ -20,6 +20,7 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
     { label: 'Dashboard', href: '/admin/dashboard' },
     { label: 'Teachers', href: '/admin/teachers' },
     { label: 'Students', href: '/admin/students' },
+    { label: 'Marks', href: '/admin/marks' },
     { label: 'Attendance', href: '/admin/attendance' },
     { label: 'Announcements', href: '/admin/announcements' },
     { label: 'Settings', href: '/admin/settings' },
@@ -27,6 +28,7 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
   teacher: [
     { label: 'Dashboard', href: '/teacher/dashboard' },
     { label: 'Marks', href: '/teacher/marks' },
+    { label: 'View Marks', href: '/teacher/marks/view' },
     { label: 'Attendance', href: '/teacher/attendance' },
     { label: 'Fees', href: '/teacher/fees' },
     { label: 'Tests', href: '/teacher/tests' },

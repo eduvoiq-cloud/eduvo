@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
 import { adminApi, feesApi, authApi, type AdminStudent, type FeeRecord } from '@/lib/api';
@@ -642,6 +643,15 @@ function StudentsPageInner() {
                         <td className="px-4 py-3"><FeeBadge paid={feeMap[s.id] ?? false} /></td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1.5">
+                            <Link
+                              href={`/admin/marks/student/${s.id}`}
+                              title="View marks"
+                              className="p-1.5 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-md transition-colors"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
+                            </Link>
                             <button onClick={() => openEdit(s)} title="Edit student"
                               className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors">
                               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
