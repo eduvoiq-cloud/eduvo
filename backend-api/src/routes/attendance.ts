@@ -287,7 +287,7 @@ router.get(
     // Fetch existing attendance records for this date
     const { data: records, error: attErr } = await supabaseAdmin
       .from('attendance')
-      .select('student_id, status')
+      .select('id, student_id, status')
       .in('student_id', studentIds)
       .eq('date', date);
 
@@ -296,20 +296,24 @@ router.get(
       return;
     }
 
-    // Build a lookup map: student_id → status
-    const statusMap = new Map<string, string>();
+    // Build a lookup map: student_id → { status, id }
+    const statusMap = new Map<string, { status: string; id: string }>();
     for (const r of records ?? []) {
-      statusMap.set(r.student_id, r.status);
+      statusMap.set(r.student_id, { status: r.status, id: r.id });
     }
 
     // Merge: default to "not_marked" if no record exists
-    const result = students.map((s: { id: string; full_name: string; roll_number: string | null; photo_url: string | null }) => ({
-      student_id: s.id,
-      name: s.full_name,
-      roll_number: s.roll_number,
-      photo_url: s.photo_url,
-      status: (statusMap.get(s.id) as 'present' | 'absent' | 'not_marked') ?? 'not_marked',
-    }));
+    const result = students.map((s: { id: string; full_name: string; roll_number: string | null; photo_url: string | null }) => {
+      const record = statusMap.get(s.id);
+      return {
+        student_id: s.id,
+        name: s.full_name,
+        roll_number: s.roll_number,
+        photo_url: s.photo_url,
+        status: (record?.status as 'present' | 'absent' | 'not_marked') ?? 'not_marked',
+        id: record?.id ?? null,
+      };
+    });
 
     sendSuccess(res, result);
   }
