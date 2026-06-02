@@ -38,8 +38,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
 
   let query = supabaseAdmin
     .from('teacher_assignments')
-    .select('*')
-    .order('created_at', { ascending: true });
+    .select('*');
 
   // schooladmin scoped to their school
   if (req.user!.role === 'schooladmin') {

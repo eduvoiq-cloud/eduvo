@@ -112,15 +112,8 @@ export default function TeacherDashboard() {
 
         setPendingComplaints(complaintsRes.data.length);
 
-        // Count tests scheduled this month (use `date` field, not `created_at`)
-        const now = new Date();
-        const thisMonth = (testsRes.data ?? []).filter((t) => {
-          const dateStr = t.date ?? t.created_at;
-          if (!dateStr) return false;
-          const d = new Date(dateStr);
-          return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-        });
-        setTestsThisMonth(thisMonth.length);
+        // Count all tests created by this teacher
+        setTestsThisMonth((testsRes.data ?? []).length);
       } catch (err) {
         console.error('[TeacherDashboard] fetch error:', err);
       } finally {
@@ -151,7 +144,7 @@ export default function TeacherDashboard() {
           sub="Class + section pairs" icon={<ClassIcon />} />
         <StatCard label="Pending Complaints" value={loading ? '—' : pendingComplaints}
           sub="Awaiting review" icon={<ComplaintIcon />} />
-        <StatCard label="Tests This Month" value={loading ? '—' : testsThisMonth}
+        <StatCard label="Tests Created" value={loading ? '—' : testsThisMonth}
           sub="Created by you" icon={<TestIcon />} />
       </div>
 

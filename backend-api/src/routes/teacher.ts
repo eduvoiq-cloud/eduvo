@@ -134,12 +134,12 @@ async function verifyAssignment(
  * is named `class` but the frontend expects `class_name`).
  */
 router.get('/my-classes', async (req: Request, res: Response) => {
+  // Note: teacher_assignments does not have a created_at column — order by class_name instead
   const { data, error } = await supabaseAdmin
     .from('teacher_assignments')
     .select('*')
     .eq('teacher_id', req.user!.id)
-    .eq('school_id', req.user!.school_id ?? '')
-    .order('created_at', { ascending: true });
+    .eq('school_id', req.user!.school_id ?? '');
 
   if (error) { sendError(res, error.message, 500); return; }
 
