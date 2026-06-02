@@ -481,13 +481,12 @@ router.post('/teachers', async (req: Request, res: Response) => {
   const schema = z.object({
     name:  z.string().min(1),
     email: z.string().email(),
-    phone: z.string().optional(),
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { name, email, phone } = parsed.data;
+  const { name, email } = parsed.data;
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
 
@@ -528,7 +527,6 @@ router.post('/teachers', async (req: Request, res: Response) => {
       email,
       role:       'teacher',
       school_id:  schoolId,
-      phone:      phone ?? null,
       created_by: adminId,
       created_at: new Date().toISOString(),
     })
