@@ -610,6 +610,7 @@ router.post('/teachers/assign', async (req: Request, res: Response) => {
       teacher_id,
       school_id:  schoolId,
       class_name: className,
+      class:      className,
       section,
       subject:    subjectName,
       created_at: new Date().toISOString(),
