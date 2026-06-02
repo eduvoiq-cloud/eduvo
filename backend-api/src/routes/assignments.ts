@@ -92,7 +92,7 @@ router.post('/', requireRole('superadmin', 'schooladmin'), async (req: Request, 
 
   const { data, error } = await supabaseAdmin
     .from('teacher_assignments')
-    .insert(parsed.data)
+    .insert({ ...parsed.data, class: parsed.data.class_name })
     .select()
     .single();
 
