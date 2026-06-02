@@ -213,13 +213,13 @@ function validateLoginPhone(phone: unknown): string | null {
 }
 
 /**
- * Validate Date of Birth in DD/MM/YYYY format.
- * Returns an error string or null if valid.
- * Also checks student age is between 3 and 25 years.
+ * Validate Date of Birth in DD/MM/YYYY format (optional).
+ * If provided, checks student age is between 3 and 25 years.
+ * Returns an error string or null if valid/empty.
  */
 function validateDateOfBirth(dob: unknown): { error: string | null; parsed: string | null } {
   if (!dob || (typeof dob === 'string' && !String(dob).trim())) {
-    return { error: 'Date of Birth is required (format: DD/MM/YYYY)', parsed: null };
+    return { error: null, parsed: null }; // Date of Birth is optional
   }
 
   const str = String(dob).trim();
@@ -436,7 +436,7 @@ router.post(
       const phoneErr = validateLoginPhone(parentPhone);
       if (phoneErr) errors.push(phoneErr);
 
-      // Date of Birth is REQUIRED
+      // Date of Birth is OPTIONAL
       const { error: dobErr, parsed: parsedDob } = validateDateOfBirth(dateOfBirth);
       if (dobErr) errors.push(dobErr);
 
@@ -598,7 +598,7 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
       roll_number:    data.roll_number,
       phone_number:   phone,
       phone:          phone,          // keep legacy column in sync if it exists
-      date_of_birth:  data.date_of_birth,
+      date_of_birth:  data.date_of_birth || null, // optional — null if not provided
       password_hash:  passwordHash,
       is_first_login: true,
       qr_code:        studentId,
