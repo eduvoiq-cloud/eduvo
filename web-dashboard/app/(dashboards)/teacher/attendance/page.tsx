@@ -116,6 +116,7 @@ export default function AttendancePage() {
           roll_number: string | null;
           photo_url: string | null;
           status: 'present' | 'absent' | 'not_marked';
+          id: string | null;
         }[]
       >(
         `/api/attendance/class?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}&date=${date}&school_id=${user.school_id}`,
@@ -134,6 +135,7 @@ export default function AttendancePage() {
           photo_url: s.photo_url,
           status: s.status === 'absent' ? 'absent' : 'present',
           originalStatus: s.status === 'absent' ? 'absent' : 'present',
+          attendance_id: s.id ?? undefined,
         }));
         setStudents(cards);
         setMode('readonly');
@@ -240,28 +242,30 @@ export default function AttendancePage() {
     setSubmitting(true);
     setBanner(null);
     try {
-      // We need attendance_ids — re-fetch to get them
-      const data = await apiFetch<
-        { student_id: string; status: string; id?: string }[]
-      >(
-        `/api/attendance/class?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}&date=${date}&school_id=${user!.school_id}`,
-        { method: 'GET' },
-        token
-      );
-      const idMap = new Map(data.map((r) => [r.student_id, (r as { id?: string }).id]));
-
       await Promise.all(
         changed.map((s) => {
-          const attendance_id = idMap.get(s.student_id);
-          if (!attendance_id) return Promise.resolve();
-          return apiFetch('/api/attendance/correct', {
-            method: 'PUT',
-            body: JSON.stringify({
-              attendance_id,
-              new_status: s.status,
-              reason: correctionReason.trim(),
-            }),
-          }, token);
+          if (s.attendance_id) {
+            // Existing record — update it
+            return apiFetch('/api/attendance/correct', {
+              method: 'PUT',
+              body: JSON.stringify({
+                attendance_id: s.attendance_id,
+                new_status: s.status,
+                reason: correctionReason.trim(),
+              }),
+            }, token!);
+          } else {
+            // No record yet (was not_marked) — create it
+            return apiFetch('/api/attendance/correct', {
+              method: 'PUT',
+              body: JSON.stringify({
+                student_id: s.student_id,
+                date,
+                new_status: s.status,
+                reason: correctionReason.trim(),
+              }),
+            }, token!);
+          }
         })
       );
 

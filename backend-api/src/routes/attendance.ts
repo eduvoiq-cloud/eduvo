@@ -453,20 +453,33 @@ router.post(
 
 // ── PUT /api/attendance/correct ───────────────────────────────────────────────
 /**
- * Correct an existing attendance record.
+ * Correct an existing attendance record, or create one if it doesn't exist yet
+ * (i.e. student was "not_marked").
  * Teacher must be assigned to the student's class.
  *
  * Body: { attendance_id, new_status, reason }
+ *   OR: { student_id, date, new_status, reason }  — when no record exists yet
  */
 router.put(
   '/correct',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
-    const schema = z.object({
-      attendance_id: z.string().uuid(),
-      new_status: z.enum(['present', 'absent', 'late', 'excused']),
-      reason: z.string().min(1, 'reason is required'),
-    });
+    const schema = z.union([
+      z.object({
+        attendance_id: z.string().uuid(),
+        student_id: z.string().uuid().optional(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+        new_status: z.enum(['present', 'absent', 'late', 'excused']),
+        reason: z.string().min(1, 'reason is required'),
+      }),
+      z.object({
+        attendance_id: z.undefined().optional(),
+        student_id: z.string().uuid(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'date must be YYYY-MM-DD'),
+        new_status: z.enum(['present', 'absent', 'late', 'excused']),
+        reason: z.string().min(1, 'reason is required'),
+      }),
+    ]);
 
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
@@ -474,23 +487,81 @@ router.put(
       return;
     }
 
-    const { attendance_id, new_status, reason } = parsed.data;
+    const { new_status, reason } = parsed.data;
     const userId = req.user!.id;
     const userRole = req.user!.role;
 
-    // Fetch original record with student info
-    const { data: original, error: fetchErr } = await supabaseAdmin
-      .from('attendance')
-      .select('id, student_id, date, status')
-      .eq('id', attendance_id)
-      .single();
+    let original: { id: string; student_id: string; date: string; status: string } | null = null;
 
-    if (fetchErr || !original) {
-      sendError(res, 'Attendance record not found', 404);
+    if (parsed.data.attendance_id) {
+      // Update path: fetch the existing record by attendance_id
+      const { data, error: fetchErr } = await supabaseAdmin
+        .from('attendance')
+        .select('id, student_id, date, status')
+        .eq('id', parsed.data.attendance_id)
+        .single();
+
+      if (fetchErr || !data) {
+        sendError(res, 'Attendance record not found', 404);
+        return;
+      }
+      original = data;
+    } else {
+      // Create path: no record exists yet (student was not_marked)
+      const { student_id, date } = parsed.data as { student_id: string; date: string };
+
+      // Check the student exists
+      const { data: student, error: stuErr } = await supabaseAdmin
+        .from('students')
+        .select('id, class_name, section')
+        .eq('id', student_id)
+        .maybeSingle();
+
+      if (stuErr || !student) {
+        sendError(res, 'Student not found', 404);
+        return;
+      }
+
+      // Teachers must be assigned to the student's class
+      if (userRole === 'teacher') {
+        const assigned = await isTeacherAssigned(userId, student.class_name, student.section);
+        if (!assigned) {
+          sendError(res, 'You are not assigned to this student\'s class', 403);
+          return;
+        }
+      }
+
+      // Insert the new attendance record
+      const { data: inserted, error: insertErr } = await supabaseAdmin
+        .from('attendance')
+        .insert({
+          student_id,
+          date,
+          status: new_status,
+          recorded_by: userId,
+          source: 'manual',
+        })
+        .select('id, student_id, date, status')
+        .single();
+
+      if (insertErr || !inserted) {
+        sendError(res, insertErr?.message ?? 'Failed to create attendance record', 500);
+        return;
+      }
+
+      await logAudit(userId, 'attendance_corrected', 'attendance', {
+        attendance_id: inserted.id,
+        old_value: { status: 'not_marked' },
+        new_value: { status: new_status },
+        reason,
+        corrected_by: userId,
+      });
+
+      sendSuccess(res, { attendance_id: inserted.id, old_status: 'not_marked', new_status }, 'Attendance corrected');
       return;
     }
 
-    // Teachers must be assigned to the student's class
+    // Teachers must be assigned to the student's class (update path)
     if (userRole === 'teacher') {
       const { data: student } = await supabaseAdmin
         .from('students')
@@ -516,7 +587,7 @@ router.put(
     const { error: updateErr } = await supabaseAdmin
       .from('attendance')
       .update({ status: new_status, updated_at: new Date().toISOString() })
-      .eq('id', attendance_id);
+      .eq('id', original.id);
 
     if (updateErr) {
       sendError(res, 'Failed to update attendance record', 500);
@@ -525,7 +596,7 @@ router.put(
 
     // Audit log with old/new values and reason
     await logAudit(userId, 'attendance_corrected', 'attendance', {
-      attendance_id,
+      attendance_id: original.id,
       old_value: { status: oldStatus },
       new_value: { status: new_status },
       reason,
@@ -551,7 +622,7 @@ router.put(
       });
     }
 
-    sendSuccess(res, { attendance_id, old_status: oldStatus, new_status }, 'Attendance corrected');
+    sendSuccess(res, { attendance_id: original.id, old_status: oldStatus, new_status }, 'Attendance corrected');
   }
 );
 
