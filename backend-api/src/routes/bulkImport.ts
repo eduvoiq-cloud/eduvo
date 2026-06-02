@@ -592,12 +592,13 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
     const { error: insertErr } = await supabaseAdmin.from('students').insert({
       id:             studentId,
       full_name:      data.name,
+      name:           data.name,      // keep legacy name column in sync
       school_id:      cached.school_id,
       class_name:     data.class,
       section:        data.division,
       roll_number:    data.roll_number,
       phone_number:   phone,
-      phone:          phone,          // keep legacy column in sync if it exists
+      phone:          phone,          // keep legacy phone column in sync
       date_of_birth:  data.date_of_birth || null, // optional — null if not provided
       password_hash:  passwordHash,
       is_first_login: true,
@@ -607,7 +608,8 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
     });
 
     if (insertErr) {
-      errors.push(`Row ${row.row_number}: ${insertErr.message}`);
+      console.error(`[bulkImport] Insert failed for row ${row.row_number} ("${data.name}"):`, insertErr.message);
+      errors.push(`Row ${row.row_number} (${data.name}): ${insertErr.message}`);
       continue;
     }
 
