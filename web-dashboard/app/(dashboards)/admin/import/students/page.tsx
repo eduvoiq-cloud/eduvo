@@ -40,6 +40,7 @@ interface PreviewResult {
 interface ImportResult {
   imported: number;
   skipped: number;
+  errors?: string[];
 }
 
 // ── Column guide data ─────────────────────────────────────────────────────────
@@ -537,19 +538,32 @@ export default function ImportStudentsPage() {
       {/* ── Step 4: Success ────────────────────────────────────────────── */}
       {step === 'success' && importResult && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
-            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          <div className={`w-20 h-20 ${importResult.imported > 0 ? 'bg-green-100' : 'bg-red-100'} rounded-full flex items-center justify-center mb-6`}>
+            <svg className={`w-10 h-10 ${importResult.imported > 0 ? 'text-green-600' : 'text-red-600'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {importResult.imported > 0
+                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />}
             </svg>
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">
             {importResult.imported} student{importResult.imported !== 1 ? 's' : ''} imported successfully
           </h2>
-          <p className="text-sm text-gray-500 mb-8">
+          <p className="text-sm text-gray-500 mb-4">
             {importResult.skipped > 0
-              ? `${importResult.skipped} row${importResult.skipped !== 1 ? 's' : ''} skipped (invalid or duplicate)`
+              ? `${importResult.skipped} row${importResult.skipped !== 1 ? 's' : ''} skipped`
               : 'All rows were imported successfully'}
           </p>
+          {/* Show insert errors so admin can diagnose failures */}
+          {importResult.errors && importResult.errors.length > 0 && (
+            <div className="w-full max-w-2xl mb-8 text-left bg-red-50 border border-red-200 rounded-xl p-4">
+              <p className="text-sm font-semibold text-red-700 mb-2">Insert errors ({importResult.errors.length}):</p>
+              <ul className="space-y-1">
+                {importResult.errors.map((e, i) => (
+                  <li key={i} className="text-xs text-red-600 font-mono">{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="flex items-center gap-3 flex-wrap justify-center">
             <button
               onClick={handleReset}

@@ -595,6 +595,7 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
       name:           data.name,      // keep legacy name column in sync
       school_id:      cached.school_id,
       class_name:     data.class,
+      class:          data.class,     // legacy NOT NULL column in live DB
       section:        data.division,
       roll_number:    data.roll_number,
       phone_number:   phone,
