@@ -74,7 +74,7 @@ export default function AdminClassMarksPage() {
     try {
       const res = await marksViewApi.listClass(token, {
         class_name: filterClass.trim(),
-        section: filterSection.trim() || undefined,
+        section: filterSection.trim().toUpperCase() || undefined,
         term: filterTerm || undefined,
         exam_type: filterExamType || undefined,
       });

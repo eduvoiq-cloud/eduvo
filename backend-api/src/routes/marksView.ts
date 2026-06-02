@@ -9,6 +9,37 @@ const router = Router();
 router.use(authenticate);
 router.use(requireRole('superadmin', 'schooladmin', 'teacher'));
 
+// ── GET /api/marks-view/classes
+// Returns distinct class_name + section combinations for the school.
+// Used to populate dropdowns in the admin marks page.
+router.get('/classes', async (req: Request, res: Response) => {
+  const { data, error } = await supabaseAdmin
+    .from('students')
+    .select('class_name, section')
+    .eq('school_id', req.user!.school_id ?? '')
+    .eq('is_deleted', false)
+    .order('class_name')
+    .order('section');
+
+  if (error) { sendError(res, error.message, 500); return; }
+
+  // Deduplicate
+  const seen = new Set<string>();
+  const classes = (data ?? []).reduce(
+    (acc: { class_name: string; section: string }[], row: { class_name: string; section: string }) => {
+      const key = `${row.class_name}||${row.section ?? ''}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        acc.push({ class_name: row.class_name, section: row.section ?? '' });
+      }
+      return acc;
+    },
+    []
+  );
+
+  sendSuccess(res, classes);
+});
+
 // ── GET /api/marks-view/class?class_name=&section=&term=&exam_type=
 // Returns all marks for every student in a class, joined with student info.
 // Supports optional term and exam_type filters.
@@ -27,9 +58,9 @@ router.get('/class', async (req: Request, res: Response) => {
       .select('id')
       .eq('teacher_id', req.user!.id)
       .eq('school_id', req.user!.school_id ?? '')
-      .eq('class_name', class_name);
+      .ilike('class_name', class_name);
 
-    if (section) assignQuery = assignQuery.eq('section', section);
+    if (section) assignQuery = assignQuery.ilike('section', section);
 
     const { data: assignment } = await assignQuery.limit(1);
     if (!assignment || assignment.length === 0) {
@@ -39,8 +70,8 @@ router.get('/class', async (req: Request, res: Response) => {
         .select('id')
         .eq('teacher_id', req.user!.id)
         .eq('school_id', req.user!.school_id ?? '')
-        .eq('class', class_name);
-      if (section) fallbackQuery = fallbackQuery.eq('section', section);
+        .ilike('class', class_name);
+      if (section) fallbackQuery = fallbackQuery.ilike('section', section);
       const { data: fallback } = await fallbackQuery.limit(1);
       if (!fallback || fallback.length === 0) {
         sendError(res, 'You are not assigned to this class', 403);
@@ -50,15 +81,16 @@ router.get('/class', async (req: Request, res: Response) => {
   }
 
   // Fetch students in this class belonging to the user's school
+  // Use ilike for case-insensitive matching so "10 A" == "10 a", "Grade 5" == "grade 5"
   let studentQuery = supabaseAdmin
     .from('students')
     .select('id, full_name, roll_number, class_name, section')
     .eq('school_id', req.user!.school_id ?? '')
-    .eq('class_name', class_name)
+    .ilike('class_name', class_name)
     .neq('is_deleted', true)
     .order('roll_number', { ascending: true });
 
-  if (section) studentQuery = studentQuery.eq('section', section);
+  if (section) studentQuery = studentQuery.ilike('section', section);
 
   const { data: students, error: studentsError } = await studentQuery;
 
