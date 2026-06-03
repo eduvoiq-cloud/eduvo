@@ -155,7 +155,7 @@ router.post('/students', async (req: Request, res: Response) => {
     class:        z.string().min(1),
     section:      z.string().min(1),
     roll_number:  z.string().optional(),
-    phone_number: z.string().regex(/^\d{10}$/, 'phone_number must be exactly 10 digits'),
+    parent_phone: z.string().regex(/^\d{10}$/, 'parent_phone must be exactly 10 digits').optional(),
     parent_email: z.string().email().optional(),
     photo_url:    z.string().optional(),
     date_of_birth: z.string().optional(), // YYYY-MM-DD or DD/MM/YYYY accepted
@@ -164,10 +164,17 @@ router.post('/students', async (req: Request, res: Response) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { name, class: className, section, roll_number, phone_number, parent_email, photo_url, date_of_birth } =
+  const { name, class: className, section, roll_number, parent_phone, parent_email, photo_url, date_of_birth } =
     parsed.data;
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
+
+  // Normalize class and section — trim whitespace so "10 " and "10" are the same
+  const normalizedClass   = className.trim();
+  const normalizedSection = section.trim();
+
+  // phone_number is now optional — use parent_phone if provided, otherwise generate a temp one
+  const phone_number = parent_phone || `98${Math.random().toString().slice(2, 10)}`;
 
   // Check phone not already registered to another student in this school
   const { data: phoneConflict } = await supabaseAdmin
@@ -210,8 +217,8 @@ router.post('/students', async (req: Request, res: Response) => {
     .from('students')
     .insert({
       full_name:      name,
-      class_name:     className,
-      section,
+      class_name:     normalizedClass,
+      section:        normalizedSection,
       roll_number:    roll_number ?? null,
       phone_number,
       phone:          phone_number, // keep legacy column in sync
@@ -327,8 +334,8 @@ router.post('/students', async (req: Request, res: Response) => {
     student_id:   student.id,
     student_name: name,
     school_id:    schoolId,
-    class:        className,
-    section,
+    class:        normalizedClass,
+    section:      normalizedSection,
     roll_number:  roll_number ?? null,
     parent_email: parent_email ?? null,
   });
@@ -479,14 +486,15 @@ router.post('/students/restore/:id', async (req: Request, res: Response) => {
  */
 router.post('/teachers', async (req: Request, res: Response) => {
   const schema = z.object({
-    name:  z.string().min(1),
-    email: z.string().email(),
+    name:     z.string().min(1),
+    email:    z.string().email(),
+    password: z.string().min(8).optional(),
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { name, email } = parsed.data;
+  const { name, email, password } = parsed.data;
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
 
@@ -502,7 +510,7 @@ router.post('/teachers', async (req: Request, res: Response) => {
     return;
   }
 
-  const tempPassword = generateTempPassword();
+  const tempPassword = password ?? generateTempPassword();
 
   // Create Supabase auth user
   const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
@@ -580,6 +588,10 @@ router.post('/teachers/assign', async (req: Request, res: Response) => {
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
 
+  // Normalize class and section to avoid mismatch with student records
+  const normalizedClass   = className.trim();
+  const normalizedSection = section.trim();
+
   // Verify teacher belongs to this school
   const { data: teacher } = await supabaseAdmin
     .from('users')
@@ -609,9 +621,9 @@ router.post('/teachers/assign', async (req: Request, res: Response) => {
     .insert({
       teacher_id,
       school_id:  schoolId,
-      class_name: className,
-      class:      className,
-      section,
+      class_name: normalizedClass,
+      class:      normalizedClass,
+      section:    normalizedSection,
       subject:    subjectName,
       created_at: new Date().toISOString(),
     })

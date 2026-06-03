@@ -275,7 +275,37 @@ export const authApi = {
   ) =>
     request<UserProfile>('/api/admin/teachers', {
       method: 'POST',
-      body: JSON.stringify({ name: payload.name, email: payload.email }),
+      body: JSON.stringify({ name: payload.name, email: payload.email, password: payload.password }),
+    }, token),
+};
+
+// ── Superadmin endpoints ──────────────────────────────────────────────────────
+
+export const superadminApi = {
+  listSchools: (token: string) =>
+    request<School[]>('/api/superadmin/schools', { method: 'GET' }, token),
+
+  createSchool: (token: string, payload: { name: string; address: string; phone: string; email: string }) =>
+    request<School>('/api/superadmin/schools', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  /** Create a school admin account for a specific school */
+  createSchoolAdmin: (
+    token: string,
+    schoolId: string,
+    payload: { name: string; email: string; password: string; phone?: string }
+  ) =>
+    request<UserProfile>(`/api/superadmin/schools/${schoolId}/admin`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  toggleSubscription: (token: string, schoolId: string, status: boolean) =>
+    request<School>(`/api/superadmin/schools/${schoolId}/subscription`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
     }, token),
 };
 

@@ -314,9 +314,10 @@ router.put('/schools/:id/subscription', async (req: Request, res: Response) => {
  */
 router.post('/schools/:id/admin', async (req: Request, res: Response) => {
   const schema = z.object({
-    name:  z.string().min(1),
-    email: z.string().email(),
-    phone: z.string().optional(),
+    name:     z.string().min(1),
+    email:    z.string().email(),
+    phone:    z.string().optional(),
+    password: z.string().min(8).optional(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -325,7 +326,7 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
     return;
   }
 
-  const { name, email, phone } = parsed.data;
+  const { name, email, phone, password } = parsed.data;
   const schoolId    = req.params.id;
   const superAdminId = req.user!.id;
 
@@ -353,7 +354,7 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
     return;
   }
 
-  const tempPassword = generateTempPassword();
+  const tempPassword = password ?? generateTempPassword();
 
   // Create Supabase auth user
   const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({

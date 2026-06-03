@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { schoolsApi, authApi, studentsApi, type School } from '@/lib/api';
+import { schoolsApi, superadminApi, studentsApi, type School } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
@@ -162,12 +162,10 @@ function SchoolsPageInner() {
     if (!token) return;
     setSubmitting(true);
     try {
-      await authApi.createUser(token, {
+      await superadminApi.createSchoolAdmin(token, showAddAdmin.id, {
         name: adminForm.name.trim(),
         email: adminForm.email.trim(),
         password: adminForm.password,
-        role: 'schooladmin',
-        school_id: showAddAdmin.id,
       });
       setShowAddAdmin(null);
       setAdminForm(EMPTY_ADMIN_FORM);

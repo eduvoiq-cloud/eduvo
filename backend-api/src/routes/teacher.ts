@@ -86,6 +86,8 @@ async function logAudit(
 }
 
 /** Verify teacher is assigned to a given class+section (optionally subject).
+ *  Normalises class name and section (trim + lowercase) before querying so
+ *  "10" matches "10 " and "10A" matches "10a".
  *  Queries both `class_name` and `class` columns to handle DBs where either
  *  column may be populated (migration may or may not have been run).
  */
@@ -96,16 +98,19 @@ async function verifyAssignment(
   section: string,
   subject?: string
 ): Promise<boolean> {
+  const cn = className.trim();
+  const sec = section.trim();
+
   // Try class_name first (new column, used by all insert paths)
   let query = supabaseAdmin
     .from('teacher_assignments')
     .select('id')
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
-    .eq('class_name', className)
-    .eq('section', section);
+    .ilike('class_name', cn)
+    .ilike('section', sec);
 
-  if (subject) query = query.eq('subject', subject);
+  if (subject) query = query.ilike('subject', subject.trim());
 
   const { data: byClassName } = await query.limit(1);
   if ((byClassName ?? []).length > 0) return true;
@@ -116,10 +121,10 @@ async function verifyAssignment(
     .select('id')
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
-    .eq('class', className)
-    .eq('section', section);
+    .ilike('class', cn)
+    .ilike('section', sec);
 
-  if (subject) fallbackQuery = fallbackQuery.eq('subject', subject);
+  if (subject) fallbackQuery = fallbackQuery.ilike('subject', subject.trim());
 
   const { data: byClass } = await fallbackQuery.limit(1);
   return (byClass ?? []).length > 0;
@@ -183,8 +188,8 @@ router.get('/students', async (req: Request, res: Response) => {
     .from('students')
     .select('id, full_name, class_name, section, date_of_birth, phone_number, photo_url')
     .eq('school_id', req.user!.school_id ?? '')
-    .eq('class_name', className)
-    .eq('section', section)
+    .ilike('class_name', className.trim())
+    .ilike('section', section.trim())
     .neq('is_deleted', true)
     .order('full_name');
 

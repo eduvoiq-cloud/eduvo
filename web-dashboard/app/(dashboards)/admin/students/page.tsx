@@ -24,13 +24,13 @@ interface StudentForm {
   section: string;
   roll_number: string;
   parent_email: string;
-  parent_phone: string;
+  phone: string;
   photo_url: string;
 }
 
 const EMPTY_FORM: StudentForm = {
   name: '', class: '', section: '', roll_number: '',
-  parent_email: '', parent_phone: '', photo_url: '',
+  parent_email: '', phone: '', photo_url: '',
 };
 
 // ── Skeleton loader ───────────────────────────────────────────────────────────
@@ -248,9 +248,10 @@ function StudentFormFields({
           value={form.parent_email} onChange={(e) => setForm((f) => ({ ...f, parent_email: e.target.value }))} />
         <p className="mt-1 text-xs text-gray-400">An invite will be sent automatically if the parent has no account.</p>
       </FormField>
-      <FormField label="Parent Phone" htmlFor="sf-pphone">
-        <input id="sf-pphone" type="tel" className={inputClass} placeholder="+1 555 000 0000"
-          value={form.parent_phone} onChange={(e) => setForm((f) => ({ ...f, parent_phone: e.target.value }))} />
+      <FormField label="Student Phone (used for mobile app login)" htmlFor="sf-pphone">
+        <input id="sf-pphone" type="tel" className={inputClass} placeholder="10-digit mobile number e.g. 9812345678"
+          value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+        <p className="mt-1 text-xs text-gray-400">Student logs into the mobile app with this number. Default password = last 5 digits.</p>
       </FormField>
       <div className="flex justify-end gap-3 pt-2">
         <button type="button" onClick={onCancel}
@@ -439,7 +440,7 @@ function StudentsPageInner() {
         name: form.name.trim(), class: form.class.trim(), section: form.section.trim(),
         roll_number: form.roll_number.trim() || undefined,
         parent_email: form.parent_email.trim() || undefined,
-        parent_phone: form.parent_phone.trim() || undefined,
+        parent_phone: form.phone.trim() || undefined,
         photo_url: form.photo_url || undefined,
       });
       setShowAdd(false);
@@ -458,7 +459,7 @@ function StudentsPageInner() {
   function openEdit(s: AdminStudent) {
     setEditTarget(s);
     setForm({ name: s.full_name, class: s.class_name, section: s.section ?? '',
-      roll_number: s.roll_number ?? '', parent_email: '', parent_phone: s.phone ?? '',
+      roll_number: s.roll_number ?? '', parent_email: '', phone: s.phone ?? '',
       photo_url: s.photo_url ?? '' });
     setPhotoPreview(s.photo_url ?? '');
     setFormError('');
@@ -480,7 +481,7 @@ function StudentsPageInner() {
         name: form.name.trim(), class: form.class.trim(), section: form.section.trim(),
         roll_number: form.roll_number.trim() || undefined,
         parent_email: form.parent_email.trim() || undefined,
-        parent_phone: form.parent_phone.trim() || undefined,
+        parent_phone: form.phone.trim() || undefined,
         photo_url: form.photo_url || undefined,
       });
       setEditTarget(null);
