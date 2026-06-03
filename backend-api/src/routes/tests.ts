@@ -369,7 +369,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
 
   if (existingAttempt) {
     if (existingAttempt.is_submitted) {
-      sendError(res, 'You have already submitted this test', 409);
+      res.status(409).json({ success: false, message: 'You have already submitted this test', attempt_id: existingAttempt.id });
       return;
     }
     // Resume existing active attempt — fall through with the existing attempt_id

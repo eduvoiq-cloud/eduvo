@@ -987,10 +987,31 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
       setPhase('active');
     } catch (err: unknown) {
-      const msg =
+      const errMsg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message
         ?? (err instanceof Error ? err.message : 'Failed to start test');
-      Alert.alert('Could not start test', msg);
+
+      // If already submitted, fetch and show results directly
+      if (errMsg.toLowerCase().includes('already submitted')) {
+        try {
+          const attemptIdFromErr =
+            (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
+
+          if (attemptIdFromErr) {
+            const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
+            const resultData = resResponse.data.data as ResultData;
+            setResults(resultData);
+            setAttemptId(attemptIdFromErr);
+            setPhase('results');
+          } else {
+            Alert.alert('Already Submitted', 'This test has been submitted. Check the tests list for your results.');
+          }
+        } catch {
+          Alert.alert('Already Submitted', 'This test has been submitted. Check the tests list for your results.');
+        }
+      } else {
+        Alert.alert('Could not start test', errMsg);
+      }
     } finally {
       setStarting(false);
     }

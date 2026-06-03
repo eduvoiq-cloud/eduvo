@@ -274,13 +274,11 @@ function TestCard({
       </View>
 
       {/* CTA */}
-      {status !== 'completed' && (
-        <View style={styles.ctaRow}>
-          <Text style={styles.ctaText}>
-            {status === 'in_progress' ? 'Continue Test →' : 'Start Test →'}
-          </Text>
-        </View>
-      )}
+      <View style={styles.ctaRow}>
+        <Text style={[styles.ctaText, status === 'completed' && styles.ctaTextCompleted]}>
+          {status === 'completed' ? 'View Results →' : status === 'in_progress' ? 'Continue Test →' : 'Start Test →'}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -545,6 +543,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
+  ctaTextCompleted: { color: '#15803D' },
 
   // Empty / error
   emptyState: { alignItems: 'center', marginTop: 60 },
