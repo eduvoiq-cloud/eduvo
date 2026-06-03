@@ -268,7 +268,6 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   }
 
   // Fetch tests — no correct_option, no shuffle config exposed
-  console.log(`[tests/student] querying for school_id=${studentRecord.school_id} class=${studentRecord.class_name} section=${studentRecord.section}`);
   const { data: tests, error: tErr } = await supabaseAdmin
     .from('tests')
     .select(`
@@ -276,21 +275,11 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       questions(count)
     `)
     .eq('school_id', studentRecord.school_id)
-    .eq('class', studentRecord.class_name)
-    .eq('section', studentRecord.section)
+    .ilike('class', studentRecord.class_name)
+    .ilike('section', studentRecord.section)
     .order('date', { ascending: false });
 
   if (tErr) { sendError(res, tErr.message, 500); return; }
-  console.log(`[tests/student] found ${(tests ?? []).length} tests`);
-  if ((tests ?? []).length === 0) {
-    // Debug: check what class values exist in DB for this school
-    const { data: allTests } = await supabaseAdmin
-      .from('tests')
-      .select('id, class, section, school_id')
-      .eq('school_id', studentRecord.school_id)
-      .limit(5);
-    console.log(`[tests/student] all tests in school:`, JSON.stringify(allTests));
-  }
 
   const result = (tests ?? []).map((t: Record<string, unknown>) => ({
     id: t.id,
@@ -346,8 +335,8 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     .select('id, class, section, school_id, time_limit_minutes, shuffle_questions, shuffle_options')
     .eq('id', test_id)
     .eq('school_id', studentRecord.school_id)
-    .eq('class', studentRecord.class_name)
-    .eq('section', studentRecord.section)
+    .ilike('class', studentRecord.class_name)
+    .ilike('section', studentRecord.section)
     .single();
 
   if (tErr || !test) { sendError(res, 'Test not found or not available for your class', 404); return; }
