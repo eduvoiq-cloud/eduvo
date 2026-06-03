@@ -505,11 +505,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
     .eq('student_id', studentId)
     .single();
 
-  if (aErr || !attempt) {
-    console.error('[SUBMIT] attempt fetch error:', aErr?.message, '| attempt_id:', attempt_id, '| studentId:', studentId);
-    sendError(res, 'Attempt not found', 404);
-    return;
-  }
+  if (aErr || !attempt) { sendError(res, 'Attempt not found', 404); return; }
   if (attempt.is_submitted) { sendError(res, 'This attempt has already been submitted', 409); return; }
 
   // Fetch test for time limit check
@@ -533,22 +529,17 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
     .select('id, question_type, correct_option, marks')
     .eq('test_id', attempt.test_id);
 
-  console.log('[SUBMIT] test_questions grading fetch — count:', tqGrading?.length, 'err:', tqGradingErr?.message);
-
   if (!tqGradingErr && tqGrading && tqGrading.length > 0) {
     gradingQuestions = tqGrading;
   } else {
-    const { data: qGrading, error: qGradingErr } = await supabaseAdmin
+    const { data: qGrading } = await supabaseAdmin
       .from('questions')
       .select('id, question_type, correct_option, marks')
       .eq('test_id', attempt.test_id);
-    console.log('[SUBMIT] questions grading fetch — count:', qGrading?.length, 'err:', qGradingErr?.message);
     gradingQuestions = qGrading;
   }
 
   const questions = gradingQuestions;
-
-  console.log('[SUBMIT] gradingQuestions:', JSON.stringify(questions, null, 2));
 
   if (!questions) { sendError(res, 'Failed to load questions for grading', 500); return; }
 
@@ -601,24 +592,23 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
     return acc;
   }, []);
 
-  // Save answers — use upsert so retries after a partial failure don't hit duplicate key errors
-  console.log('[SUBMIT] attempt_id:', attempt_id);
-  console.log('[SUBMIT] answerRows count:', answerRows.length);
-  console.log('[SUBMIT] answerRows:', JSON.stringify(answerRows, null, 2));
+  // Delete any previously saved answers for this attempt (handles retry safely)
+  // then re-insert fresh — avoids needing a unique constraint for upsert
   if (answerRows.length > 0) {
+    await supabaseAdmin
+      .from('student_answers')
+      .delete()
+      .eq('attempt_id', attempt_id);
+
     const { error: insertErr } = await supabaseAdmin
       .from('student_answers')
-      .upsert(answerRows, { onConflict: 'attempt_id,question_id' });
+      .insert(answerRows);
 
     if (insertErr) {
-      console.error('[SUBMIT] student_answers upsert error:', JSON.stringify(insertErr, null, 2));
+      console.error('[SUBMIT] student_answers insert error:', JSON.stringify(insertErr, null, 2));
       sendError(res, `Failed to save answers: ${insertErr.message}`, 500);
       return;
     }
-  } else {
-    console.warn('[SUBMIT] answerRows is EMPTY — no answers matched question map');
-    console.log('[SUBMIT] questionMap keys:', [...questionMap.keys()]);
-    console.log('[SUBMIT] incoming answers:', JSON.stringify(answers, null, 2));
   }
 
   // Update attempt as submitted
