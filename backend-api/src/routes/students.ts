@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import bcrypt from 'bcrypt';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
@@ -9,16 +10,20 @@ const router = Router();
 
 router.use(authenticate);
 
+const BCRYPT_ROUNDS = 10;
+
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
 const createStudentSchema = z.object({
   full_name: z.string().min(1).max(150),
-  date_of_birth: z.string().date(),
+  date_of_birth: z.string().date().optional(),
   school_id: z.string().uuid(),
   class_name: z.string().min(1).max(20),
+  section: z.string().min(1).max(10),
+  roll_number: z.string().min(1).max(20).optional(),
+  phone_number: z.string().regex(/^\d{10}$/, 'Phone number must be exactly 10 digits'),
   parent_id: z.string().uuid().optional(),
   email: z.string().email().max(254).optional(),
-  phone: z.string().regex(/^\+?[\d\s\-()]{7,20}$/, 'Invalid phone number format').optional(),
 });
 
 const updateStudentSchema = createStudentSchema.partial();
@@ -140,9 +145,24 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     return;
   }
 
+  const { phone_number, full_name, ...rest } = parsed.data;
+
+  // Default password = last 5 digits of phone number
+  const defaultPassword = phone_number.slice(-5);
+  const password_hash = await bcrypt.hash(defaultPassword, BCRYPT_ROUNDS);
+
   const { data, error } = await supabaseAdmin
     .from('students')
-    .insert(parsed.data)
+    .insert({
+      ...rest,
+      full_name,
+      name: full_name,           // keep legacy name column in sync
+      phone_number,
+      phone: phone_number,       // keep legacy phone column in sync
+      password_hash,
+      is_first_login: true,
+      is_deleted: false,
+    })
     .select()
     .single();
 

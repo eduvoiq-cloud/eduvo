@@ -179,12 +179,13 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
 
   const { phone_number, password } = parsed.data;
 
-  // 1. Look up student by phone_number
+  // 1. Look up student by phone_number (also check legacy phone column)
   const { data: student, error: studentError } = await supabaseAdmin
     .from('students')
     .select('id, name, phone_number, class_name, section, school_id, password_hash, is_first_login')
-    .eq('phone_number', phone_number)
-    .single();
+    .or(`phone_number.eq.${phone_number},phone.eq.${phone_number}`)
+    .eq('is_deleted', false)
+    .maybeSingle();
 
   if (studentError || !student) {
     await logAudit(null, 'STUDENT_LOGIN_FAILED', {
