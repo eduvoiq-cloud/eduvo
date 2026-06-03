@@ -66,12 +66,15 @@ async function isTeacherAssigned(
   className: string,
   section: string
 ): Promise<boolean> {
+  const cn  = className.trim();
+  const sec = section.trim();
+
   const { data: byClassName } = await supabaseAdmin
     .from('teacher_assignments')
     .select('id')
     .eq('teacher_id', teacherId)
-    .eq('class_name', className)
-    .eq('section', section)
+    .ilike('class_name', cn)
+    .ilike('section', sec)
     .limit(1);
   if ((byClassName ?? []).length > 0) return true;
 
@@ -80,8 +83,8 @@ async function isTeacherAssigned(
     .from('teacher_assignments')
     .select('id')
     .eq('teacher_id', teacherId)
-    .eq('class', className)
-    .eq('section', section)
+    .ilike('class', cn)
+    .ilike('section', sec)
     .limit(1);
   return (byClass ?? []).length > 0;
 }
@@ -190,10 +193,10 @@ router.get(
       .from('students')
       .select('id, full_name, class_name, section')
       .eq('school_id', school_id)
-      .eq('class_name', className)
+      .ilike('class_name', className.trim())
       .eq('is_deleted', false);
 
-    if (section) studentQuery = studentQuery.eq('section', section);
+    if (section) studentQuery = studentQuery.ilike('section', section.trim());
 
     const { data: students, error: stuErr } = await studentQuery;
     if (stuErr) { sendError(res, stuErr.message, 500); return; }
@@ -304,13 +307,13 @@ router.get(
       }
     }
 
-    // Fetch all active students for this class/section
+    // Fetch all active students for this class/section (case-insensitive match)
     const { data: students, error: stuErr } = await supabaseAdmin
       .from('students')
       .select('id, full_name, roll_number, photo_url')
       .eq('school_id', school_id)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .eq('is_deleted', false)
       .order('roll_number', { ascending: true });
 
@@ -422,8 +425,8 @@ router.post(
       .from('students')
       .select('id')
       .eq('school_id', school_id)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .eq('is_deleted', false);
 
     if (stuErr) {
@@ -801,8 +804,8 @@ router.get(
       .from('students')
       .select('id, full_name, roll_number')
       .eq('school_id', school_id)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .eq('is_deleted', false)
       .order('roll_number', { ascending: true });
 

@@ -80,8 +80,8 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
   if (search) {
     query = query.or(`full_name.ilike.%${search}%,roll_number.ilike.%${search}%`);
   }
-  if (class_name) query = query.eq('class_name', class_name);
-  if (section) query = query.eq('section', section);
+  if (class_name) query = query.ilike('class_name', class_name.trim());
+  if (section) query = query.ilike('section', section.trim());
 
   // Apply pagination (skip when limit=0)
   if (limit > 0) {

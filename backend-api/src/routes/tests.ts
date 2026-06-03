@@ -85,16 +85,30 @@ async function teacherOwnsClass(
   className: string,
   section: string
 ): Promise<boolean> {
-  const { data } = await supabaseAdmin
+  const cn  = className.trim();
+  const sec = section.trim();
+
+  // Try class_name column first
+  const { data: byClassName } = await supabaseAdmin
     .from('teacher_assignments')
     .select('id')
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
-    .eq('class_name', className)   // teacher_assignments has class_name (migrated)
-    .eq('section', section)
-    .limit(1)
-    .single();
-  return !!data;
+    .ilike('class_name', cn)
+    .ilike('section', sec)
+    .limit(1);
+  if ((byClassName ?? []).length > 0) return true;
+
+  // Fallback: legacy `class` column
+  const { data: byClass } = await supabaseAdmin
+    .from('teacher_assignments')
+    .select('id')
+    .eq('teacher_id', teacherId)
+    .eq('school_id', schoolId)
+    .ilike('class', cn)
+    .ilike('section', sec)
+    .limit(1);
+  return (byClass ?? []).length > 0;
 }
 
 // ── POST /api/tests/create ────────────────────────────────────────────────────
@@ -202,8 +216,8 @@ router.get('/my-tests', requireRole('teacher', 'schooladmin', 'superadmin'), asy
     query = query.eq('school_id', req.user!.school_id ?? '');
   }
 
-  if (className) query = query.eq('class', className);   // DB column is "class"
-  if (section) query = query.eq('section', section);
+  if (className) query = query.ilike('class', className.trim());   // DB column is "class"
+  if (section) query = query.ilike('section', section.trim());
   if (term) query = query.eq('term', term);
 
   const { data, error } = await query;
@@ -763,8 +777,8 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
     .order('created_at', { ascending: false });
 
   if (req.user!.role === 'teacher') query = query.eq('created_by', req.user!.id);
-  if (class_name) query = query.eq('class', class_name);   // DB column is "class"
-  if (section)    query = query.eq('section', section);
+  if (class_name) query = query.ilike('class', class_name.trim());   // DB column is "class"
+  if (section)    query = query.ilike('section', section.trim());
   if (subject)    query = query.eq('subject', subject);
   if (term)       query = query.eq('term', term);
 

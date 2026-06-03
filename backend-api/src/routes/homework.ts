@@ -136,8 +136,8 @@ async function sendHomeworkNotifications(
       .from('students')
       .select('id, fcm_token')
       .eq('school_id', schoolId)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .eq('is_deleted', false);
 
     if (stuErr || !students || students.length === 0) {
@@ -332,8 +332,8 @@ router.get(
       .from('homework')
       .select(selectFields)
       .eq('school_id', schoolId)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .gte('due_date', cutoff)
       .order('due_date', { ascending: true });
 
@@ -428,8 +428,8 @@ router.post(
         .from('teacher_assignments')
         .select('id')
         .eq('teacher_id', userId)
-        .eq('class_name', className)
-        .eq('section', section)
+        .ilike('class_name', className.trim())
+        .ilike('section', section.trim())
         .eq('subject_id', subject_id)
         .maybeSingle();
 
@@ -858,8 +858,8 @@ router.get(
       .from('homework')
       .select('id')
       .eq('school_id', schoolId)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .gte('due_date', today);
 
     if (hwErr) {

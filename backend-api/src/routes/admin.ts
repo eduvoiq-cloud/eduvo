@@ -118,8 +118,8 @@ router.get('/students', async (req: Request, res: Response) => {
   if (search) {
     query = query.or(`full_name.ilike.%${search}%,roll_number.ilike.%${search}%`);
   }
-  if (class_name) query = query.eq('class_name', class_name);
-  if (section)    query = query.eq('section', section);
+  if (class_name) query = query.ilike('class_name', class_name.trim());
+  if (section)    query = query.ilike('section', section.trim());
 
   if (limit > 0) {
     const from = (page - 1) * limit;
@@ -1528,8 +1528,8 @@ router.get('/fees', async (req: Request, res: Response) => {
     .order('class_name')
     .order('full_name');
 
-  if (class_name) studentQuery = studentQuery.eq('class_name', class_name);
-  if (section)    studentQuery = studentQuery.eq('section', section);
+  if (class_name) studentQuery = studentQuery.ilike('class_name', class_name.trim());
+  if (section)    studentQuery = studentQuery.ilike('section', section.trim());
 
   const { data: students, error: sErr } = await studentQuery;
   if (sErr) { sendError(res, sErr.message, 500); return; }

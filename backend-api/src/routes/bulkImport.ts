@@ -1012,9 +1012,9 @@ async function verifyTeacherAssignment(
     .select('id')
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
-    .eq('class_name', className)
-    .eq('section', section)
-    .eq('subject', subjectName)
+    .ilike('class_name', className.trim())
+    .ilike('section', section.trim())
+    .ilike('subject', subjectName.trim())
     .maybeSingle();
 
   if (error) return false;
@@ -1064,8 +1064,8 @@ router.get(
       .from('students')
       .select('id, full_name, roll_number')
       .eq('school_id', school_id)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .eq('is_deleted', false)
       .order('roll_number', { ascending: true });
 
@@ -1221,8 +1221,8 @@ router.post(
       .from('students')
       .select('id, full_name, roll_number')
       .eq('school_id', school_id)
-      .eq('class_name', className)
-      .eq('section', section)
+      .ilike('class_name', className.trim())
+      .ilike('section', section.trim())
       .eq('is_deleted', false);
 
     if (studentsErr) {

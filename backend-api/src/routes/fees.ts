@@ -49,8 +49,8 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
     .select('id, full_name, class_name, section, school_id')
     .eq('school_id', req.user!.school_id ?? '');
 
-  if (class_name) studentQuery = studentQuery.eq('class_name', class_name);
-  if (section) studentQuery = studentQuery.eq('section', section);
+  if (class_name) studentQuery = studentQuery.ilike('class_name', class_name.trim());
+  if (section) studentQuery = studentQuery.ilike('section', section.trim());
 
   const { data: students, error: sErr } = await studentQuery;
   if (sErr) { sendError(res, sErr.message, 500); return; }
