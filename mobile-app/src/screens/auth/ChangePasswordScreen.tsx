@@ -11,6 +11,7 @@ import {
   Platform,
   Alert,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { useAuthStore } from '../../store/authStore';
 import apiClient from '../../api/client';
 
@@ -28,7 +29,12 @@ export default function ChangePasswordScreen() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
+  const isFirstLogin = useAuthStore((s) => s.isFirstLogin);
   const markPasswordChanged = useAuthStore((s) => s.markPasswordChanged);
+
+  // navigation is only available when rendered inside MainStack (voluntary change)
+  // When rendered in the forced first-login AuthStack it will be undefined/limited
+  const navigation = useNavigation();
 
   const handleSave = async () => {
     setErrorMessage('');
@@ -61,8 +67,22 @@ export default function ChangePasswordScreen() {
         new_password: newPassword,
       });
 
-      // Mark password changed — AppNavigator will route to Dashboard
-      markPasswordChanged();
+      if (isFirstLogin) {
+        // First-login flow: flip the flag and AppNavigator routes to Dashboard
+        markPasswordChanged();
+      } else {
+        // Voluntary change from Settings: show success then go back
+        Alert.alert('Password Updated', 'Your password has been changed successfully.', [
+          {
+            text: 'OK',
+            onPress: () => {
+              if (navigation.canGoBack()) {
+                navigation.goBack();
+              }
+            },
+          },
+        ]);
+      }
     } catch (error: any) {
       const message =
         error.response?.data?.message ?? 'Failed to change password. Please try again.';
@@ -85,9 +105,11 @@ export default function ChangePasswordScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* Header */}
-        <Text style={styles.title}>Set Your Password</Text>
+        <Text style={styles.title}>{isFirstLogin ? 'Set Your Password' : 'Change Password'}</Text>
         <Text style={styles.subtitle}>
-          Your default password was the last 5 digits of your phone. Please set a new password.
+          {isFirstLogin
+            ? 'Your default password was the last 5 digits of your phone. Please set a new password.'
+            : 'Enter your current password, then choose a new one.'}
         </Text>
 
         {/* Current password */}
@@ -182,7 +204,9 @@ export default function ChangePasswordScreen() {
         </TouchableOpacity>
 
         <Text style={styles.note}>
-          You cannot skip this step. This keeps your account secure.
+          {isFirstLogin
+            ? 'You cannot skip this step. This keeps your account secure.'
+            : 'Use at least 6 characters for your new password.'}
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
