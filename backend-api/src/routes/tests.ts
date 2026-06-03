@@ -743,28 +743,54 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
   if (aErr || !attempt) { sendError(res, 'Attempt not found', 404); return; }
   if (!attempt.is_submitted) { sendError(res, 'This attempt has not been submitted yet', 400); return; }
 
-  // Fetch answers with question details — NEVER select correct_option
+  // Fetch answers (no join — no FK exists between student_answers and questions)
   const { data: answers, error: ansErr } = await supabaseAdmin
     .from('student_answers')
-    .select(`
-      question_id,
-      selected_option,
-      theory_answer,
-      is_correct,
-      marks_awarded,
-      questions (
-        question_text,
-        question_type,
-        option_a,
-        option_b,
-        option_c,
-        option_d,
-        marks
-      )
-    `)
+    .select('question_id, selected_option, theory_answer, is_correct, marks_awarded')
     .eq('attempt_id', attempt_id);
 
   if (ansErr) { sendError(res, ansErr.message, 500); return; }
+
+  // Fetch question details separately from both possible tables
+  const questionIds = (answers ?? []).map((a: { question_id: string }) => a.question_id);
+
+  type QuestionDetail = {
+    id: string;
+    question_text: string;
+    question_type: string;
+    option_a: string | null;
+    option_b: string | null;
+    option_c: string | null;
+    option_d: string | null;
+    marks: number;
+  };
+
+  const questionMap = new Map<string, QuestionDetail>();
+
+  if (questionIds.length > 0) {
+    // Try test_questions first
+    const { data: tqData } = await supabaseAdmin
+      .from('test_questions')
+      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+      .in('id', questionIds);
+
+    for (const q of (tqData ?? []) as QuestionDetail[]) {
+      questionMap.set(q.id, q);
+    }
+
+    // Fill any missing from questions table
+    const missing = questionIds.filter((id) => !questionMap.has(id));
+    if (missing.length > 0) {
+      const { data: qData } = await supabaseAdmin
+        .from('questions')
+        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+        .in('id', missing);
+
+      for (const q of (qData ?? []) as QuestionDetail[]) {
+        questionMap.set(q.id, q);
+      }
+    }
+  }
 
   type AnswerRow = {
     question_id: string;
@@ -772,19 +798,10 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
     theory_answer: string | null;
     is_correct: boolean | null;
     marks_awarded: number | null;
-    questions: {
-      question_text: string;
-      question_type: string;
-      option_a: string | null;
-      option_b: string | null;
-      option_c: string | null;
-      option_d: string | null;
-      marks: number;
-    } | null;
   };
 
-  const formattedAnswers = (answers as unknown as AnswerRow[] ?? []).map((ans) => {
-    const q = ans.questions;
+  const formattedAnswers = (answers as AnswerRow[] ?? []).map((ans) => {
+    const q = questionMap.get(ans.question_id);
     if (q?.question_type === 'mcq') {
       return {
         question_id: ans.question_id,
@@ -798,7 +815,6 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
         is_correct: ans.is_correct,
         marks: q.marks,
         marks_awarded: ans.marks_awarded,
-        // correct_option intentionally omitted
       };
     }
     return {
