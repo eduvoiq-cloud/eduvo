@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import rateLimit from 'express-rate-limit';
@@ -87,7 +87,49 @@ async function isTeacherAssigned(
 }
 
 // ── All routes require authentication ─────────────────────────────────────────
-router.use(authenticate);
+router.use(authenticateAny);
+
+// ── GET /api/attendance ───────────────────────────────────────────────────────
+/**
+ * Fetch attendance records for a student on a specific date.
+ * Intended for the student mobile dashboard.
+ * Query params: student_id, date
+ * Students can only query their own records; staff can query any student.
+ */
+router.get(
+  '/',
+  requireRole('superadmin', 'schooladmin', 'teacher', 'parent', 'student'),
+  async (req: Request, res: Response) => {
+    const { student_id, date } = req.query as Record<string, string>;
+
+    if (!student_id || !date) {
+      sendError(res, 'student_id and date are required', 400);
+      return;
+    }
+
+    // Student token: can only query own records
+    if (req.tokenType === 'student') {
+      if (req.student!.id !== student_id) {
+        sendError(res, 'Access denied', 403);
+        return;
+      }
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('attendance')
+      .select('id, student_id, date, status, source, created_at')
+      .eq('student_id', student_id)
+      .eq('date', date)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      sendError(res, error.message, 500);
+      return;
+    }
+
+    sendSuccess(res, data ?? []);
+  }
+);
 
 // ── GET /api/attendance/check ─────────────────────────────────────────────────
 /**
@@ -644,7 +686,7 @@ router.get(
     }
 
     // Parents can only query their own children
-    if (req.user!.role === 'parent') {
+    if (req.user?.role === 'parent') {
       const { data: child } = await supabaseAdmin
         .from('students')
         .select('id')
@@ -658,23 +700,22 @@ router.get(
       }
     }
 
-    // Students can only query their own record
-    if (req.user!.role === 'student') {
+    // Student token: can only query their own record
+    if (req.tokenType === 'student') {
+      if (req.student!.id !== student_id) {
+        sendError(res, 'Access denied', 403);
+        return;
+      }
+    } else if (req.user!.role === 'student') {
+      // Legacy: staff token with student role — look up via user_id
       const { data: self } = await supabaseAdmin
         .from('students')
         .select('id')
         .eq('id', student_id)
-        .eq('parent_id', req.user!.id) // student user id maps via parent_id in some schemas
+        .eq('user_id', req.user!.id)
         .maybeSingle();
 
-      // Fallback: check if the student's user id matches
-      const { data: selfByUser } = await supabaseAdmin
-        .from('students')
-        .select('id')
-        .eq('id', student_id)
-        .maybeSingle();
-
-      if (!self && selfByUser?.id !== req.user!.id) {
+      if (!self) {
         sendError(res, 'Access denied', 403);
         return;
       }

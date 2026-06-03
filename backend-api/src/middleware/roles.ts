@@ -22,6 +22,15 @@ import type { AppRole } from './auth';
  */
 export function requireRole(...allowedRoles: AppRole[]) {
   return (req: Request, res: Response, next: NextFunction): void => {
+    // Student tokens populate req.student, not req.user
+    if (req.tokenType === 'student') {
+      if (allowedRoles.includes('student')) {
+        return next();
+      }
+      sendError(res, `Access denied. Required role(s): ${allowedRoles.join(', ')}`, 403);
+      return;
+    }
+
     if (!req.user) {
       sendError(res, 'Unauthenticated', 401);
       return;

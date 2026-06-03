@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticateAny);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -41,7 +41,7 @@ async function logAudit(
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 /** GET /api/marks?student_id=&subject=&term= */
-router.get('/', requireRole('superadmin', 'schooladmin', 'teacher', 'parent', 'student'), async (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   const { student_id, subject, term } = req.query as Record<string, string>;
 
   let query = supabaseAdmin
@@ -49,37 +49,50 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher', 'parent', 's
     .select('*, students(full_name)')
     .order('created_at', { ascending: false });
 
-  if (student_id) query = query.eq('student_id', student_id);
   if (subject) query = query.eq('subject', subject);
   if (term) query = query.eq('term', term);
 
-  // Students can only see their own marks
-  if (req.user!.role === 'student') {
-    const { data: studentRecord } = await supabaseAdmin
-      .from('students')
-      .select('id')
-      .eq('user_id', req.user!.id)
-      .eq('is_deleted', false)
-      .single();
+  // ── Student token: filter to their own records ──────────────────────────
+  if (req.tokenType === 'student') {
+    query = query.eq('student_id', req.student!.id);
+  } else {
+    // ── Staff token ─────────────────────────────────────────────────────────
+    const role = req.user!.role;
 
-    if (studentRecord) {
-      query = query.eq('student_id', studentRecord.id);
-    } else {
-      // No student record linked to this user — return empty
-      sendSuccess(res, []);
+    if (!['superadmin', 'schooladmin', 'teacher', 'parent', 'student'].includes(role)) {
+      sendError(res, 'Access denied', 403);
       return;
     }
-  }
 
-  // Parents can only see their children's marks
-  if (req.user!.role === 'parent') {
-    const { data: children } = await supabaseAdmin
-      .from('students')
-      .select('id')
-      .eq('parent_id', req.user!.id);
+    if (student_id) query = query.eq('student_id', student_id);
 
-    const childIds = (children ?? []).map((c: { id: string }) => c.id);
-    query = query.in('student_id', childIds);
+    // Logged-in as student role via staff token (legacy) — filter to own marks
+    if (role === 'student') {
+      const { data: studentRecord } = await supabaseAdmin
+        .from('students')
+        .select('id')
+        .eq('user_id', req.user!.id)
+        .eq('is_deleted', false)
+        .single();
+
+      if (studentRecord) {
+        query = query.eq('student_id', studentRecord.id);
+      } else {
+        sendSuccess(res, []);
+        return;
+      }
+    }
+
+    // Parents can only see their children's marks
+    if (role === 'parent') {
+      const { data: children } = await supabaseAdmin
+        .from('students')
+        .select('id')
+        .eq('parent_id', req.user!.id);
+
+      const childIds = (children ?? []).map((c: { id: string }) => c.id);
+      query = query.in('student_id', childIds);
+    }
   }
 
   const { data, error } = await query;
