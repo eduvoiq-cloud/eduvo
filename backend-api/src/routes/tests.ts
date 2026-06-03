@@ -358,21 +358,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     return;
   }
 
-  // Create attempt record
-  const { data: attempt, error: aErr } = await supabaseAdmin
-    .from('test_attempts')
-    .insert({
-      test_id,
-      student_id: studentRecord.id,
-      started_at: new Date().toISOString(),
-      is_submitted: false,
-    })
-    .select()
-    .single();
-
-  if (aErr || !attempt) { sendError(res, 'Failed to start attempt', 500); return; }
-
-  // Fetch questions — NEVER include correct_option
+  // Fetch questions BEFORE creating the attempt — so we never create orphan attempts
   // Try test_questions first (compatibility shim), fallback to questions
   let rawQuestionsData = null;
   let qErr = null;
@@ -396,9 +382,24 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   }
 
   if (qErr || !rawQuestionsData || rawQuestionsData.length === 0) {
-    sendError(res, 'Failed to load questions', 500);
+    sendError(res, 'This test has no questions yet. Contact your teacher.', 404);
     return;
   }
+
+  // Now create the attempt record — questions confirmed to exist
+  const { data: attempt, error: aErr } = await supabaseAdmin
+    .from('test_attempts')
+    .insert({
+      test_id,
+      student_id: studentRecord.id,
+      started_at: new Date().toISOString(),
+      is_submitted: false,
+    })
+    .select()
+    .single();
+
+  if (aErr || !attempt) { sendError(res, 'Failed to start attempt', 500); return; }
+
   const rawQuestions = rawQuestionsData;
 
   type QuestionRow = {
