@@ -262,7 +262,6 @@ export default function DashboardScreen() {
       const today = todayISO();
       const yearStart = `${new Date().getFullYear()}-01-01`;
       const yearEnd = `${new Date().getFullYear()}-12-31`;
-      const dayName = todayDayName();
 
       const [attHistRes, attTodayRes, hwRes, marksRes, timetableRes, notifRes] =
         await Promise.allSettled([
@@ -272,11 +271,11 @@ export default function DashboardScreen() {
           apiClient.get('/api/attendance', {
             params: { student_id: activeStudent?.id, date: today },
           }),
-      // Homework pending count — use the dedicated student endpoint
-      apiClient.get('/api/homework/pending-count'),
+          // Homework pending count — use the dedicated student endpoint
+          apiClient.get('/api/homework/pending-count'),
           apiClient.get('/api/marks'),
           apiClient.get('/api/timetable/class', {
-            params: { class: activeStudent?.class, section: activeStudent?.section, day: dayName },
+            params: { class: activeStudent?.class, section: activeStudent?.section },
           }),
           apiClient.get('/api/notifications', { params: { unread: true, limit: 1 } }),
         ]);
@@ -309,7 +308,13 @@ export default function DashboardScreen() {
       // Next period
       let nextPeriod: NextPeriod | null = null;
       if (timetableRes.status === 'fulfilled') {
-        const periods: any[] = timetableRes.value.data.data ?? [];
+        // API returns a day-keyed object: { monday: [...], tuesday: [...], ... }
+        // Extract today's periods array from the object
+        const timetableData = timetableRes.value.data.data;
+        const todayKey = todayDayName().toLowerCase();
+        const periods: any[] = Array.isArray(timetableData)
+          ? timetableData
+          : (timetableData?.[todayKey] ?? []);
         const now = new Date();
         const currentMinutes = now.getHours() * 60 + now.getMinutes();
         const upcoming = periods.find((p: any) => {
@@ -419,7 +424,7 @@ export default function DashboardScreen() {
           </View>
           <TouchableOpacity
             style={styles.bellWrapper}
-            onPress={() => navigation.navigate('More')}
+            onPress={() => navigation.navigate('More', { screen: 'Notifications' } as any)}
             accessibilityRole="button"
             accessibilityLabel={`Notifications${notifCount > 0 ? `, ${notifCount} unread` : ''}`}
           >
@@ -459,7 +464,7 @@ export default function DashboardScreen() {
                 value={hwValue}
                 sub={hwSub}
                 color="#F59E0B"
-                onPress={() => navigation.navigate('More')}
+                onPress={() => navigation.navigate('More', { screen: 'Homework' } as any)}
               />
             </View>
             <View style={[styles.cardsRow, { marginTop: 12 }]}>

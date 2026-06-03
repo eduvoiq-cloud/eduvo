@@ -21,6 +21,9 @@ import ComplaintsScreen from '../screens/main/ComplaintsScreen';
 import NotificationsScreen from '../screens/main/NotificationsScreen';
 import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
 
+// More home screen
+import MoreHomeScreen from '../screens/main/MoreHomeScreen';
+
 // Settings screens
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import LinkChildScreen from '../screens/settings/LinkChildScreen';
@@ -111,6 +114,11 @@ function MoreNavigator() {
     >
       <MoreStack.Screen
         name="MoreHome"
+        component={MoreHomeScreen}
+        options={{ title: 'More' }}
+      />
+      <MoreStack.Screen
+        name="Settings"
         component={SettingsScreen}
         options={{ title: 'Settings' }}
       />
