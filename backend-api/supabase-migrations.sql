@@ -81,11 +81,12 @@ ALTER TABLE public.notifications ADD COLUMN IF NOT EXISTS read_at timestamptz;
 
 -- ── tests: create table if it was never created ───────────────────────────────
 -- The original DB may have been set up before the tests feature was added.
+-- NOTE: column is named "class" (not "class_name") to match backend queries.
 CREATE TABLE IF NOT EXISTS public.tests (
   id          uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   title       text NOT NULL,
   subject     text NOT NULL,
-  class_name  text NOT NULL,
+  class       text NOT NULL,
   section     text NOT NULL,
   term        text NOT NULL,
   date        date NOT NULL,
@@ -93,6 +94,20 @@ CREATE TABLE IF NOT EXISTS public.tests (
   created_by  uuid NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+
+-- If the table was created with class_name instead of class, rename it
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tests' AND column_name = 'class_name'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'tests' AND column_name = 'class'
+  ) THEN
+    ALTER TABLE public.tests RENAME COLUMN class_name TO class;
+  END IF;
+END $$;
 
 -- tests: add optional columns used by the advanced /create route
 ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS time_limit_minutes integer;
@@ -137,7 +152,7 @@ BEGIN
 END $$;
 
 -- Indexes for tests
-CREATE INDEX IF NOT EXISTS idx_tests_school_class    ON public.tests(school_id, class_name, section);
+CREATE INDEX IF NOT EXISTS idx_tests_school_class    ON public.tests(school_id, class, section);
 CREATE INDEX IF NOT EXISTS idx_tests_created_by      ON public.tests(created_by);
 CREATE INDEX IF NOT EXISTS idx_test_questions_test_id ON public.test_questions(test_id);
 
@@ -329,5 +344,115 @@ ALTER TABLE public.student_fees
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fees_unique_student_term_year
   ON public.student_fees(student_id, COALESCE(term, ''), COALESCE(academic_year, ''));
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── questions: flat question table used by the advanced /api/tests/create route ──
+-- The compatibility route writes to test_questions (jsonb options).
+-- The advanced route writes to questions (flat option_a/b/c/d columns).
+CREATE TABLE IF NOT EXISTS public.questions (
+  id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  test_id         uuid NOT NULL REFERENCES public.tests(id) ON DELETE CASCADE,
+  order_index     integer NOT NULL DEFAULT 0,
+  question_text   text NOT NULL,
+  question_type   text NOT NULL CHECK (question_type IN ('mcq', 'theory')),
+  option_a        text,
+  option_b        text,
+  option_c        text,
+  option_d        text,
+  correct_option  text CHECK (correct_option IN ('a', 'b', 'c', 'd')),
+  marks           numeric(5,2) NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.questions ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'questions' AND policyname = 'deny_all_questions'
+  ) THEN
+    CREATE POLICY "deny_all_questions" ON public.questions FOR ALL USING (false);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_questions_test_id ON public.questions(test_id);
+
+-- Also add flat columns to test_questions so the student attempt route works
+-- with both tables (it queries question_text, option_a/b/c/d, correct_option).
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS question_text   text;
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS question_type   text CHECK (question_type IN ('mcq', 'theory'));
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS option_a        text;
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS option_b        text;
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS option_c        text;
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS option_d        text;
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS correct_option  text CHECK (correct_option IN ('a', 'b', 'c', 'd'));
+
+-- Back-fill question_text / question_type from the existing jsonb columns
+UPDATE public.test_questions
+SET
+  question_text = COALESCE(question_text, text),
+  question_type = COALESCE(question_type, type)
+WHERE question_text IS NULL OR question_type IS NULL;
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── test_attempts: one row per student-attempt on a test ─────────────────────
+CREATE TABLE IF NOT EXISTS public.test_attempts (
+  id                  uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  test_id             uuid NOT NULL REFERENCES public.tests(id) ON DELETE CASCADE,
+  student_id          uuid NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
+  started_at          timestamptz NOT NULL DEFAULT now(),
+  submitted_at        timestamptz,
+  is_submitted        boolean NOT NULL DEFAULT false,
+  mcq_score           numeric(8,2),
+  total_score         numeric(8,2),
+  time_limit_exceeded boolean NOT NULL DEFAULT false,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (test_id, student_id)   -- one attempt per student per test
+);
+
+ALTER TABLE public.test_attempts ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'test_attempts' AND policyname = 'deny_all_test_attempts'
+  ) THEN
+    CREATE POLICY "deny_all_test_attempts" ON public.test_attempts FOR ALL USING (false);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_test_attempts_student   ON public.test_attempts(student_id);
+CREATE INDEX IF NOT EXISTS idx_test_attempts_test      ON public.test_attempts(test_id);
+
+-- ── student_answers: one row per question per attempt ────────────────────────
+CREATE TABLE IF NOT EXISTS public.student_answers (
+  id               uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  attempt_id       uuid NOT NULL REFERENCES public.test_attempts(id) ON DELETE CASCADE,
+  question_id      uuid NOT NULL,   -- references questions or test_questions
+  selected_option  text CHECK (selected_option IN ('a', 'b', 'c', 'd')),
+  theory_answer    text,
+  is_correct       boolean,
+  marks_awarded    numeric(5,2),
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (attempt_id, question_id)  -- prevents duplicate inserts on retry
+);
+
+ALTER TABLE public.student_answers ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'student_answers' AND policyname = 'deny_all_student_answers'
+  ) THEN
+    CREATE POLICY "deny_all_student_answers" ON public.student_answers FOR ALL USING (false);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_student_answers_attempt ON public.student_answers(attempt_id);
 
 NOTIFY pgrst, 'reload schema';
