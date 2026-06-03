@@ -340,6 +340,7 @@ export default function StudentTestsScreen() {
         title: test.title,
         time_limit_minutes: test.time_limit_minutes ?? 0,
         question_count: test.question_count,
+        attempt_status: test.attempt_status,
       },
     });
   };

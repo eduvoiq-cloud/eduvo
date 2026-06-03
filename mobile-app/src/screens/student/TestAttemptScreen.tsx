@@ -26,6 +26,7 @@ export interface TestMeta {
   time_limit_minutes: number;
   question_count: number;
   instructions?: string | null;
+  attempt_status?: 'not_started' | 'in_progress' | 'completed';
 }
 
 interface Question {
@@ -945,10 +946,34 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
 
   useEffect(() => {
+    // If already completed, fetch results immediately — skip pre-test screen
+    if (test.attempt_status === 'completed') {
+      setPhase('submitting'); // show loading spinner
+      apiClient.post('/api/tests/attempt/start', { test_id: test.id })
+        .then(() => {/* won't happen — already submitted */})
+        .catch(async (err: unknown) => {
+          const attemptIdFromErr =
+            (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
+          if (attemptIdFromErr) {
+            try {
+              const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
+              const resultData = resResponse.data.data as ResultData;
+              setResults(resultData);
+              setAttemptId(attemptIdFromErr);
+              setPhase('results');
+            } catch {
+              setPhase('pre');
+            }
+          } else {
+            setPhase('pre');
+          }
+        });
+      return;
+    }
     loadProgress(test.id).then((saved) => {
       if (saved) setHasActiveAttempt(true);
     });
-  }, [test.id]);
+  }, [test.id, test.attempt_status]);
 
   const handleStart = useCallback(async () => {
     setStarting(true);
