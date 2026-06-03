@@ -272,7 +272,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .from('tests')
     .select(`
       id, title, subject_id, date, time_limit_minutes,
-      questions(count)
+      questions:test_questions(count)
     `)
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
@@ -373,13 +373,33 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   if (aErr || !attempt) { sendError(res, 'Failed to start attempt', 500); return; }
 
   // Fetch questions — NEVER include correct_option
-  const { data: rawQuestions, error: qErr } = await supabaseAdmin
-    .from('questions')
+  // Try test_questions first (compatibility shim), fallback to questions
+  let rawQuestionsData = null;
+  let qErr = null;
+
+  const { data: tqData, error: tqErr } = await supabaseAdmin
+    .from('test_questions')
     .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
     .eq('test_id', test_id)
     .order('order_index', { ascending: true });
 
-  if (qErr || !rawQuestions) { sendError(res, 'Failed to load questions', 500); return; }
+  if (!tqErr && tqData && tqData.length > 0) {
+    rawQuestionsData = tqData;
+  } else {
+    const { data: qData, error: qError } = await supabaseAdmin
+      .from('questions')
+      .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+      .eq('test_id', test_id)
+      .order('order_index', { ascending: true });
+    rawQuestionsData = qData;
+    qErr = qError;
+  }
+
+  if (qErr || !rawQuestionsData || rawQuestionsData.length === 0) {
+    sendError(res, 'Failed to load questions', 500);
+    return;
+  }
+  const rawQuestions = rawQuestionsData;
 
   type QuestionRow = {
     id: string;
@@ -469,12 +489,26 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
   const timeLimitExceeded = test ? elapsedMinutes > test.time_limit_minutes : false;
 
   // Fetch all questions for this test (with correct_option — server-side only)
-  const { data: questions, error: qErr } = await supabaseAdmin
-    .from('questions')
+  // Try test_questions first (compatibility shim), fallback to questions
+  let gradingQuestions = null;
+  const { data: tqGrading, error: tqGradingErr } = await supabaseAdmin
+    .from('test_questions')
     .select('id, question_type, correct_option, marks')
     .eq('test_id', attempt.test_id);
 
-  if (qErr || !questions) { sendError(res, 'Failed to load questions for grading', 500); return; }
+  if (!tqGradingErr && tqGrading && tqGrading.length > 0) {
+    gradingQuestions = tqGrading;
+  } else {
+    const { data: qGrading } = await supabaseAdmin
+      .from('questions')
+      .select('id, question_type, correct_option, marks')
+      .eq('test_id', attempt.test_id);
+    gradingQuestions = qGrading;
+  }
+
+  const questions = gradingQuestions;
+
+  if (!questions) { sendError(res, 'Failed to load questions for grading', 500); return; }
 
   type QuestionRecord = { id: string; question_type: string; correct_option: string | null; marks: number };
   const questionMap = new Map<string, QuestionRecord>(
