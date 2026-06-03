@@ -456,3 +456,8 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_student_answers_attempt ON public.student_answers(attempt_id);
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── student_answers: drop question_id foreign key ────────────────────────────
+-- question_id references either test_questions OR questions table depending on
+-- how the test was created. A FK to one table breaks the other. Drop it.
+ALTER TABLE public.student_answers DROP CONSTRAINT IF EXISTS student_answers_question_id_fkey;
