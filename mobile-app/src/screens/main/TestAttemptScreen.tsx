@@ -175,10 +175,12 @@ function PreTestScreen({
   test,
   onStart,
   starting,
+  isResume,
 }: {
   test: TestMeta;
   onStart: () => void;
   starting: boolean;
+  isResume?: boolean;
 }) {
   return (
     <ScrollView style={preStyles.container} contentContainerStyle={preStyles.content}>
@@ -231,17 +233,24 @@ function PreTestScreen({
         ) : null}
       </View>
 
+      {/* Resume banner */}
+      {isResume && (
+        <View style={preStyles.resumeBanner}>
+          <Text style={preStyles.resumeText}>⏸ You have an attempt in progress. Tap below to continue.</Text>
+        </View>
+      )}
+
       <TouchableOpacity
-        style={[preStyles.startBtn, starting && preStyles.startBtnDisabled]}
+        style={[preStyles.startBtn, isResume && preStyles.startBtnResume, starting && preStyles.startBtnDisabled]}
         onPress={onStart}
         disabled={starting}
         accessibilityRole="button"
-        accessibilityLabel="Start test"
+        accessibilityLabel={isResume ? 'Continue test' : 'Start test'}
       >
         {starting ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
-          <Text style={preStyles.startBtnText}>Start Test →</Text>
+          <Text style={preStyles.startBtnText}>{isResume ? 'Continue Test →' : 'Start Test →'}</Text>
         )}
       </TouchableOpacity>
     </ScrollView>
@@ -319,7 +328,18 @@ const preStyles = StyleSheet.create({
     alignItems: 'center',
   },
   startBtnDisabled: { opacity: 0.6 },
+  startBtnResume: { backgroundColor: '#15803D' },
   startBtnText: { fontSize: 17, fontWeight: '700', color: '#FFFFFF' },
+  resumeBanner: {
+    width: '100%',
+    backgroundColor: '#ECFDF5',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#15803D',
+  },
+  resumeText: { fontSize: 13, color: '#065F46', fontWeight: '600', lineHeight: 19 },
 });
 
 // ── Question pill strip ───────────────────────────────────────────────────────
@@ -921,7 +941,16 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     return () => sub.remove();
   }, [phase, test.id]);
 
-  // ── Start test ──────────────────────────────────────────────────────────────
+  // ── Start / resume test ─────────────────────────────────────────────────────
+  const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
+
+  // Check on mount if there's a saved local progress (indicates an active attempt)
+  useEffect(() => {
+    loadProgress(test.id).then((saved) => {
+      if (saved) setHasActiveAttempt(true);
+    });
+  }, [test.id]);
+
   const handleStart = useCallback(async () => {
     setStarting(true);
     try {
@@ -930,6 +959,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         attempt_id: string;
         time_limit_minutes: number;
         started_at: string;
+        resumed: boolean;
         questions: Question[];
       };
 
@@ -940,7 +970,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       // Initialise answer slots (one per question, empty)
       setAnswers(qs.map((q) => ({ question_id: q.id })));
 
-      // Check for saved progress (app was backgrounded mid-test)
+      // Restore saved progress if resuming (app backgrounded or server-side active attempt)
       const saved = await loadProgress(test.id);
       if (saved && saved.attempt_id === payload.attempt_id) {
         setAnswers(saved.answers);
@@ -948,12 +978,18 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         if (saved.secondsLeft !== null) {
           setSecondsLeft(saved.secondsLeft);
         } else if (hasTimeLimit) {
-          setSecondsLeft(payload.time_limit_minutes * 60);
+          // Calculate remaining time from started_at
+          const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
+          const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
+          setSecondsLeft(remaining);
         }
-      } else {
-        if (hasTimeLimit) {
-          setSecondsLeft(payload.time_limit_minutes * 60);
-        }
+      } else if (payload.resumed && hasTimeLimit) {
+        // Resumed server-side but no local save — calculate remaining from started_at
+        const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
+        const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
+        setSecondsLeft(remaining);
+      } else if (hasTimeLimit) {
+        setSecondsLeft(payload.time_limit_minutes * 60);
       }
 
       setPhase('active');
@@ -1044,7 +1080,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   // ── Render: pre-test ────────────────────────────────────────────────────────
   if (phase === 'pre') {
     return (
-      <PreTestScreen test={test} onStart={handleStart} starting={starting} />
+      <PreTestScreen test={test} onStart={handleStart} starting={starting} isResume={hasActiveAttempt} />
     );
   }
 

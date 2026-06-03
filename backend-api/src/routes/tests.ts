@@ -292,7 +292,25 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       : 0,
   }));
 
-  sendSuccess(res, result);
+  // Enrich with attempt status for each test
+  const studentId = studentRecord.id;
+  const { data: attempts } = await supabaseAdmin
+    .from('test_attempts')
+    .select('test_id, is_submitted')
+    .eq('student_id', studentId)
+    .in('test_id', result.map((t) => t.id));
+
+  const attemptMap = new Map<string, 'in_progress' | 'completed'>();
+  for (const a of (attempts ?? [])) {
+    attemptMap.set(a.test_id, a.is_submitted ? 'completed' : 'in_progress');
+  }
+
+  const enriched = result.map((t) => ({
+    ...t,
+    attempt_status: attemptMap.get(t.id as string) ?? 'not_started',
+  }));
+
+  sendSuccess(res, enriched);
 });
 
 // ── POST /api/tests/attempt/start ────────────────────────────────────────────
@@ -347,15 +365,15 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     .select('id, is_submitted')
     .eq('test_id', test_id)
     .eq('student_id', studentRecord.id)
-    .single();
+    .maybeSingle();
 
   if (existingAttempt) {
     if (existingAttempt.is_submitted) {
       sendError(res, 'You have already submitted this test', 409);
-    } else {
-      sendError(res, 'You already have an active attempt for this test', 409);
+      return;
     }
-    return;
+    // Resume existing active attempt — fall through with the existing attempt_id
+    // (questions are fetched below and returned so the student can continue)
   }
 
   // Fetch questions BEFORE creating the attempt — so we never create orphan attempts
@@ -386,19 +404,32 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     return;
   }
 
-  // Now create the attempt record — questions confirmed to exist
-  const { data: attempt, error: aErr } = await supabaseAdmin
-    .from('test_attempts')
-    .insert({
-      test_id,
-      student_id: studentRecord.id,
-      started_at: new Date().toISOString(),
-      is_submitted: false,
-    })
-    .select()
-    .single();
+  // Create or reuse the attempt record
+  let attempt: { id: string; started_at: string } | null = null;
+  if (existingAttempt) {
+    // Resume — fetch the full attempt row
+    const { data: existingFull } = await supabaseAdmin
+      .from('test_attempts')
+      .select('id, started_at')
+      .eq('id', existingAttempt.id)
+      .single();
+    attempt = existingFull;
+  } else {
+    const { data: newAttempt, error: aErr } = await supabaseAdmin
+      .from('test_attempts')
+      .insert({
+        test_id,
+        student_id: studentRecord.id,
+        started_at: new Date().toISOString(),
+        is_submitted: false,
+      })
+      .select()
+      .single();
+    if (aErr || !newAttempt) { sendError(res, 'Failed to start attempt', 500); return; }
+    attempt = newAttempt;
+  }
 
-  if (aErr || !attempt) { sendError(res, 'Failed to start attempt', 500); return; }
+  if (!attempt) { sendError(res, 'Failed to start attempt', 500); return; }
 
   const rawQuestions = rawQuestionsData;
 
@@ -445,8 +476,9 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     attempt_id: attempt.id,
     time_limit_minutes: test.time_limit_minutes,
     started_at: attempt.started_at,
+    resumed: !!existingAttempt,
     questions,
-  }, 'Test started');
+  }, existingAttempt ? 'Test resumed' : 'Test started');
 });
 
 // ── POST /api/tests/attempt/submit ───────────────────────────────────────────
