@@ -98,7 +98,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const response = await apiClient.post<LoginResponse>('/api/auth/login/student', {
-        phone: phone.trim(),
+        phone_number: phone.trim(),
         password,
       });
 
