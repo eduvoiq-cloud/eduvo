@@ -148,7 +148,7 @@ function AttendanceBadge({ child }: { child: Child }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ParentDashboardScreen() {
-  const user = useAuthStore((state) => state.user);
+  const user = useAuthStore((state) => state.student);
   const navigation = useNavigation<ParentNavProp>();
 
   const [children, setChildren] = useState<Child[]>([]);

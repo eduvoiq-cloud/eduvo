@@ -272,7 +272,8 @@ export default function DashboardScreen() {
           apiClient.get('/api/attendance', {
             params: { student_id: activeStudent?.id, date: today },
           }),
-          apiClient.get('/api/homework', { params: { status: 'pending' } }),
+      // Homework pending count — use the dedicated student endpoint
+      apiClient.get('/api/homework/pending-count'),
           apiClient.get('/api/marks'),
           apiClient.get('/api/timetable/class', {
             params: { class: activeStudent?.class, section: activeStudent?.section, day: dayName },
@@ -300,10 +301,10 @@ export default function DashboardScreen() {
         }
       }
 
-      // Homework pending count
-      const pendingHw: any[] =
-        hwRes.status === 'fulfilled' ? (hwRes.value.data.data ?? []) : [];
-      const homework: HomeworkSummary = { pendingCount: pendingHw.length };
+      // Homework pending count — pending-count returns { count: N }
+      const pendingCount: number =
+        hwRes.status === 'fulfilled' ? (hwRes.value.data.data?.count ?? 0) : 0;
+      const homework: HomeworkSummary = { pendingCount };
 
       // Next period
       let nextPeriod: NextPeriod | null = null;

@@ -431,7 +431,7 @@ function PerformanceSkeleton() {
 
 export default function PerformanceScreen() {
   const navigation = useNavigation<ParentNavProp>();
-  const user = useAuthStore((s) => s.user);
+  const user = useAuthStore((s) => s.student);
 
   const [children, setChildren] = useState<Child[]>([]);
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);

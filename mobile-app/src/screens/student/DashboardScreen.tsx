@@ -147,7 +147,7 @@ function Skeleton({ w, h, style }: { w: number | string; h: number; style?: obje
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function StudentDashboardScreen() {
-  const user = useAuthStore((s) => s.user);
+  const user = useAuthStore((s) => s.student);
   const navigation = useNavigation<StudentNavProp>();
 
   const [data, setData] = useState<DashboardData | null>(null);
@@ -196,9 +196,9 @@ export default function StudentDashboardScreen() {
         if (s) {
           attendance = {
             percentage: s.percentage ?? 0,
-            present: s.present ?? 0,
-            absent: s.absent ?? 0,
-            total: s.total ?? 0,
+            present: s.present_count ?? s.present ?? 0,
+            absent: s.absent_count ?? s.absent ?? 0,
+            total: s.total_days ?? s.total ?? 0,
           };
         }
       }

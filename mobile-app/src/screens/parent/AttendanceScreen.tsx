@@ -134,7 +134,7 @@ const statStyles = StyleSheet.create({
 
 export default function ParentAttendanceScreen() {
   const navigation = useNavigation<ParentNavProp>();
-  const user = useAuthStore((s) => s.user);
+  const user = useAuthStore((s) => s.student);
 
   // ── State ───────────────────────────────────────────────────────────────────
   const [children, setChildren] = useState<Child[]>([]);

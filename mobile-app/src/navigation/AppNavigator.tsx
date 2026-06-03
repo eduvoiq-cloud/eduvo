@@ -46,6 +46,31 @@ export type MainStackParamList = {
   LinkChild: undefined;
 };
 
+// ── Student navigator types (reuse main for now) ──────────────────────────────
+
+export type StudentTabParamList = {
+  Home: undefined;
+  Attendance: undefined;
+  Marks: undefined;
+  Tests: undefined;
+  More: undefined;
+};
+
+export type StudentStackParamList = {
+  StudentTabs: undefined;
+  TestAttempt: { test: TestMeta };
+  ChangePassword: undefined;
+};
+
+// ── Parent navigator types ────────────────────────────────────────────────────
+
+export type ParentTabParamList = {
+  Dashboard: undefined;
+  Attendance: undefined;
+  Performance: undefined;
+  Notifications: undefined;
+};
+
 // ── Navigators ────────────────────────────────────────────────────────────────
 
 const AuthStack = createStackNavigator<AuthStackParamList>();

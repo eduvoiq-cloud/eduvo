@@ -1,13 +1,13 @@
 ﻿import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticateAny);
 
 // -- Schemas ------------------------------------------------------------------
 
@@ -55,10 +55,13 @@ function normaliseRow(row: Record<string, unknown>) {
 router.get('/', async (req: Request, res: Response) => {
   const unreadOnly = req.query.unread_only === 'true';
 
+  // Support both student tokens (req.student) and staff tokens (req.user)
+  const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
+
   let query = supabaseAdmin
     .from('notifications')
     .select('id, title, message, is_read, created_at, type')
-    .eq('recipient_id', req.user!.id)
+    .eq('recipient_id', recipientId)
     .order('created_at', { ascending: false });
 
   if (unreadOnly) {
@@ -129,10 +132,12 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
  * NOTE: registered before /:id/read to avoid route shadowing.
  */
 router.put('/read-all', async (req: Request, res: Response) => {
+  const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
+
   const { data, error } = await supabaseAdmin
     .from('notifications')
     .update({ is_read: true, read_at: new Date().toISOString() })
-    .eq('recipient_id', req.user!.id)
+    .eq('recipient_id', recipientId)
     .eq('is_read', false)
     .select('id');
 
@@ -149,11 +154,13 @@ router.put('/read-all', async (req: Request, res: Response) => {
  * Mark a single notification as read (is_read = true).
  */
 router.put('/:id/read', async (req: Request, res: Response) => {
+  const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
+
   const { data, error } = await supabaseAdmin
     .from('notifications')
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq('id', req.params.id)
-    .eq('recipient_id', req.user!.id)
+    .eq('recipient_id', recipientId)
     .select('id, title, message, is_read, created_at, type')
     .single();
 
@@ -170,11 +177,13 @@ router.put('/:id/read', async (req: Request, res: Response) => {
  * Kept for backwards compatibility with existing mobile/web clients.
  */
 router.patch('/:id/read', async (req: Request, res: Response) => {
+  const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
+
   const { data, error } = await supabaseAdmin
     .from('notifications')
     .update({ is_read: true, read_at: new Date().toISOString() })
     .eq('id', req.params.id)
-    .eq('recipient_id', req.user!.id)
+    .eq('recipient_id', recipientId)
     .select('id, title, message, is_read, created_at, type')
     .single();
 
