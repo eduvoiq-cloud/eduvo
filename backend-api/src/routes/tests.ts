@@ -618,11 +618,10 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
       mcq_score: mcqScore,
       is_submitted: true,
       submitted_at: now.toISOString(),
-      time_limit_exceeded: timeLimitExceeded,
     })
     .eq('id', attempt_id);
 
-  if (updateErr) { sendError(res, 'Failed to finalise submission', 500); return; }
+  if (updateErr) { sendError(res, `Failed to finalise submission: ${updateErr.message}`, 500); return; }
 
   await logAudit(req.student!.id, 'TEST_SUBMITTED', {
     attempt_id,
