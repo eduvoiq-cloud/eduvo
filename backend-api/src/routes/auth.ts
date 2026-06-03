@@ -231,6 +231,7 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
     student: {
       id: student.id,
       name: student.name,
+      phone: student.phone_number,
       class: student.class_name,
       section: student.section,
       school_id: student.school_id,
