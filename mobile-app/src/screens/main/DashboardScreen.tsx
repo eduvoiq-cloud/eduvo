@@ -474,6 +474,7 @@ export default function DashboardScreen() {
                 value={nextValue}
                 sub={nextSub}
                 color="#8B5CF6"
+                onPress={() => navigation.navigate('More', { screen: 'Timetable' } as any)}
               />
               <DashCard
                 icon="📊"
@@ -482,6 +483,24 @@ export default function DashboardScreen() {
                 sub={markSub}
                 color="#1D4ED8"
                 onPress={() => navigation.navigate('Marks')}
+              />
+            </View>
+            <View style={[styles.cardsRow, { marginTop: 12 }]}>
+              <DashCard
+                icon="📝"
+                title="Tests"
+                value="View"
+                sub="Upcoming & past tests"
+                color="#8B5CF6"
+                onPress={() => navigation.navigate('More', { screen: 'Tests' } as any)}
+              />
+              <DashCard
+                icon="🗓️"
+                title="Timetable"
+                value="View"
+                sub="Weekly class schedule"
+                color="#1D4ED8"
+                onPress={() => navigation.navigate('More', { screen: 'Timetable' } as any)}
               />
             </View>
           </>
