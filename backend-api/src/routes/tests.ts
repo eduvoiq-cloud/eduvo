@@ -1,12 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 
 const router = Router();
-router.use(authenticate);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -116,7 +115,7 @@ async function teacherOwnsClass(
  * Teacher creates a test with questions.
  * Only a teacher assigned to that class/section can create.
  */
-router.post('/create', requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
   const parsed = createTestSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -196,7 +195,7 @@ router.post('/create', requireRole('teacher', 'schooladmin', 'superadmin'), asyn
  * Teacher sees all tests they created, with question count.
  * Filterable by class, section, term.
  */
-router.get('/my-tests', requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+router.get('/my-tests', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
   const { class: className, section, term } = req.query as Record<string, string>;
 
   let query = supabaseAdmin
@@ -240,16 +239,17 @@ router.get('/my-tests', requireRole('teacher', 'schooladmin', 'superadmin'), asy
  * Student gets available tests for their class/section.
  * Only if fee_paid = true. correct_option is NEVER included.
  */
-router.get('/student', requireRole('student'), async (req: Request, res: Response) => {
-  // Resolve the student record linked to this user
-  const { data: studentRecord, error: sErr } = await supabaseAdmin
-    .from('students')
-    .select('id, class_name, section, school_id')
-    .eq('user_id', req.user!.id)
-    .single();
+router.get('/student', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  // authenticateStudent already resolved and verified the student — use it directly
+  const studentRecord = {
+    id: req.student!.id,
+    class_name: req.student!.class_name,
+    section: req.student!.section,
+    school_id: req.student!.school_id,
+  };
 
-  if (sErr || !studentRecord) {
-    sendError(res, 'Student record not found', 404);
+  if (!studentRecord.class_name || !studentRecord.section) {
+    sendError(res, 'Student class/section not set. Contact your administrator.', 403);
     return;
   }
 
@@ -301,18 +301,22 @@ router.get('/student', requireRole('student'), async (req: Request, res: Respons
  * Returns all questions WITHOUT correct_option.
  * Applies shuffle if configured.
  */
-router.post('/attempt/start', requireRole('student'), async (req: Request, res: Response) => {
+router.post('/attempt/start', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
   const { test_id } = req.body as { test_id?: string };
   if (!test_id) { sendError(res, 'test_id is required', 400); return; }
 
-  // Resolve student
-  const { data: studentRecord, error: sErr } = await supabaseAdmin
-    .from('students')
-    .select('id, class_name, section, school_id')
-    .eq('user_id', req.user!.id)
-    .single();
+  // authenticateStudent already resolved and verified the student — use it directly
+  const studentRecord = {
+    id: req.student!.id,
+    class_name: req.student!.class_name,
+    section: req.student!.section,
+    school_id: req.student!.school_id,
+  };
 
-  if (sErr || !studentRecord) { sendError(res, 'Student record not found', 404); return; }
+  if (!studentRecord.class_name || !studentRecord.section) {
+    sendError(res, 'Student class/section not set. Contact your administrator.', 403);
+    return;
+  }
 
   // Verify fee paid
   const { data: feeRecord } = await supabaseAdmin
@@ -431,27 +435,21 @@ router.post('/attempt/start', requireRole('student'), async (req: Request, res: 
  * Theory answers stored for teacher marking later.
  * Auto-submits if time limit exceeded.
  */
-router.post('/attempt/submit', requireRole('student'), async (req: Request, res: Response) => {
+router.post('/attempt/submit', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
   const parsed = submitAttemptSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
   const { attempt_id, answers } = parsed.data;
 
-  // Resolve student
-  const { data: studentRecord } = await supabaseAdmin
-    .from('students')
-    .select('id')
-    .eq('user_id', req.user!.id)
-    .single();
-
-  if (!studentRecord) { sendError(res, 'Student record not found', 404); return; }
+  // authenticateStudent already resolved and verified the student — use directly
+  const studentId = req.student!.id;
 
   // Fetch attempt — must belong to this student and not yet submitted
   const { data: attempt, error: aErr } = await supabaseAdmin
     .from('test_attempts')
     .select('id, test_id, started_at, is_submitted')
     .eq('id', attempt_id)
-    .eq('student_id', studentRecord.id)
+    .eq('student_id', studentId)
     .single();
 
   if (aErr || !attempt) { sendError(res, 'Attempt not found', 404); return; }
@@ -547,7 +545,7 @@ router.post('/attempt/submit', requireRole('student'), async (req: Request, res:
 
   if (updateErr) { sendError(res, 'Failed to finalise submission', 500); return; }
 
-  await logAudit(req.user!.id, 'TEST_SUBMITTED', {
+  await logAudit(req.student!.id, 'TEST_SUBMITTED', {
     attempt_id,
     test_id: attempt.test_id,
     mcq_score: mcqScore,
@@ -563,7 +561,7 @@ router.post('/attempt/submit', requireRole('student'), async (req: Request, res:
  * Only the teacher assigned to that class can do this.
  * Recalculates total_score after marking.
  */
-router.post('/theory/mark', requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
   const parsed = theoryMarkSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -650,24 +648,18 @@ router.post('/theory/mark', requireRole('teacher', 'schooladmin', 'superadmin'),
  * Total score only shown after ALL theory questions are marked.
  * correct_option is NEVER included in the response.
  */
-router.get('/results/:attempt_id', requireRole('student'), async (req: Request, res: Response) => {
+router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
   const { attempt_id } = req.params;
 
-  // Resolve student
-  const { data: studentRecord } = await supabaseAdmin
-    .from('students')
-    .select('id')
-    .eq('user_id', req.user!.id)
-    .single();
-
-  if (!studentRecord) { sendError(res, 'Student record not found', 404); return; }
+  // authenticateStudent already resolved and verified the student — use directly
+  const studentId = req.student!.id;
 
   // Fetch attempt — must belong to this student
   const { data: attempt, error: aErr } = await supabaseAdmin
     .from('test_attempts')
     .select('id, test_id, mcq_score, total_score, is_submitted, submitted_at, started_at')
     .eq('id', attempt_id)
-    .eq('student_id', studentRecord.id)
+    .eq('student_id', studentId)
     .single();
 
   if (aErr || !attempt) { sendError(res, 'Attempt not found', 404); return; }
@@ -767,7 +759,7 @@ router.get('/results/:attempt_id', requireRole('student'), async (req: Request, 
  * Returns tests for the teacher's school with their questions embedded.
  * Live DB uses "class" column, not "class_name".
  */
-router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+router.get('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const { class_name, section, subject, term } = req.query as Record<string, string>;
 
   let query = supabaseAdmin
@@ -803,7 +795,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
  *   tests          → class (text), subject (text), subject_id (uuid nullable)
  *   test_questions → question_text, question_type, option_a-d, correct_option (text 'a'-'d')
  */
-router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const schema = z.object({
     title:      z.string().min(1),
     subject:    z.string().min(1),
