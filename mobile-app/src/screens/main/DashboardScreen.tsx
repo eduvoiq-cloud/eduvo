@@ -292,9 +292,9 @@ export default function DashboardScreen() {
           }
           attendance = {
             percentage: s.percentage ?? 0,
-            present: s.present ?? 0,
-            absent: s.absent ?? 0,
-            total: s.total ?? 0,
+            present: s.present_count ?? s.present ?? 0,
+            absent: s.absent_count ?? s.absent ?? 0,
+            total: s.total_days ?? s.total ?? 0,
             todayStatus,
           };
         }
@@ -378,7 +378,7 @@ export default function DashboardScreen() {
     : '—';
   const attendanceSub = data?.attendance
     ? `Today: ${data.attendance.todayStatus ?? 'Not marked'}`
-    : 'Loading...';
+    : 'No data';
 
   const hwValue = loading ? '—' : String(data?.homework.pendingCount ?? 0);
   const hwSub = 'Pending homework';
