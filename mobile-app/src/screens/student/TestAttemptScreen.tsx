@@ -946,33 +946,43 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
 
   useEffect(() => {
-    // If already completed, fetch results immediately — skip pre-test screen
-    if (test.attempt_status === 'completed') {
-      setPhase('submitting'); // show loading spinner
-      apiClient.post('/api/tests/attempt/start', { test_id: test.id })
-        .then(() => {/* won't happen — already submitted */})
-        .catch(async (err: unknown) => {
+    // Always check backend first for submitted attempts — don't rely on local cache
+    const checkAttemptStatus = async () => {
+      // If attempt_status passed from list says completed, or we have local progress,
+      // try to load results directly
+      if (test.attempt_status === 'completed') {
+        setPhase('submitting'); // show spinner while loading
+        try {
+          // Call start — it will 409 with attempt_id if already submitted
+          await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
+        } catch (err: unknown) {
           const attemptIdFromErr =
             (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
-          if (attemptIdFromErr) {
+          const msg =
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? '';
+
+          if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
             try {
               const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
               const resultData = resResponse.data.data as ResultData;
               setResults(resultData);
               setAttemptId(attemptIdFromErr);
               setPhase('results');
+              return;
             } catch {
-              setPhase('pre');
+              // fall through to pre screen
             }
-          } else {
-            setPhase('pre');
           }
-        });
-      return;
-    }
-    loadProgress(test.id).then((saved) => {
+        }
+        setPhase('pre');
+        return;
+      }
+
+      const saved = await loadProgress(test.id);
       if (saved) setHasActiveAttempt(true);
-    });
+    };
+
+    void checkAttemptStatus();
   }, [test.id, test.attempt_status]);
 
   const handleStart = useCallback(async () => {
