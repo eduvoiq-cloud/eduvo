@@ -268,6 +268,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   }
 
   // Fetch tests — no correct_option, no shuffle config exposed
+  console.log(`[tests/student] querying for school_id=${studentRecord.school_id} class=${studentRecord.class_name} section=${studentRecord.section}`);
   const { data: tests, error: tErr } = await supabaseAdmin
     .from('tests')
     .select(`
@@ -280,6 +281,16 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .order('date', { ascending: false });
 
   if (tErr) { sendError(res, tErr.message, 500); return; }
+  console.log(`[tests/student] found ${(tests ?? []).length} tests`);
+  if ((tests ?? []).length === 0) {
+    // Debug: check what class values exist in DB for this school
+    const { data: allTests } = await supabaseAdmin
+      .from('tests')
+      .select('id, class, section, school_id')
+      .eq('school_id', studentRecord.school_id)
+      .limit(5);
+    console.log(`[tests/student] all tests in school:`, JSON.stringify(allTests));
+  }
 
   const result = (tests ?? []).map((t: Record<string, unknown>) => ({
     id: t.id,
