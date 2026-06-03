@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -12,8 +12,10 @@ import {
   Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 import { useAuthStore } from '../../store/authStore';
 import apiClient from '../../api/client';
+import { MainStackParamList } from '../../navigation/AppNavigator';
 
 const PRIMARY = '#3b82f6';
 
@@ -32,9 +34,22 @@ export default function ChangePasswordScreen() {
   const isFirstLogin = useAuthStore((s) => s.isFirstLogin);
   const markPasswordChanged = useAuthStore((s) => s.markPasswordChanged);
 
-  // navigation is only available when rendered inside MainStack (voluntary change)
-  // When rendered in the forced first-login AuthStack it will be undefined/limited
-  const navigation = useNavigation();
+  const navigation = useNavigation<StackNavigationProp<MainStackParamList>>();
+
+  // Show a header with back button only for voluntary (non-first-login) flow
+  useLayoutEffect(() => {
+    if (!isFirstLogin) {
+      navigation.setOptions({
+        headerShown: true,
+        headerTitle: 'Change Password',
+        headerStyle: { backgroundColor: '#1D4ED8' },
+        headerTintColor: '#FFFFFF',
+        headerTitleStyle: { fontWeight: '600' },
+      });
+    } else {
+      navigation.setOptions({ headerShown: false });
+    }
+  }, [isFirstLogin, navigation]);
 
   const handleSave = async () => {
     setErrorMessage('');
@@ -67,11 +82,14 @@ export default function ChangePasswordScreen() {
         new_password: newPassword,
       });
 
+      // Always mark password changed in store
+      markPasswordChanged();
+
       if (isFirstLogin) {
-        // First-login flow: flip the flag and AppNavigator routes to Dashboard
-        markPasswordChanged();
+        // First-login: navigate to main app
+        navigation.reset({ index: 0, routes: [{ name: 'MainTabs' }] });
       } else {
-        // Voluntary change from Settings: show success then go back
+        // Voluntary change from Settings: go back
         Alert.alert('Password Updated', 'Your password has been changed successfully.', [
           {
             text: 'OK',

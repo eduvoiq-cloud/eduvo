@@ -172,8 +172,13 @@ function MainTabNavigator() {
 // ── Main stack navigator (wraps tabs + modal screens) ────────────────────────
 
 function MainNavigator() {
+  const isFirstLogin = useAuthStore((s) => s.isFirstLogin);
+
   return (
-    <MainStack.Navigator screenOptions={{ headerShown: false }}>
+    <MainStack.Navigator
+      screenOptions={{ headerShown: false }}
+      initialRouteName={isFirstLogin ? 'ChangePassword' : 'MainTabs'}
+    >
       <MainStack.Screen name="MainTabs" component={MainTabNavigator} />
       <MainStack.Screen
         name="TestAttempt"
@@ -184,11 +189,8 @@ function MainNavigator() {
         name="ChangePassword"
         component={ChangePasswordScreen}
         options={{
-          headerShown: true,
-          headerTitle: 'Change Password',
-          headerStyle: { backgroundColor: '#1D4ED8' },
-          headerTintColor: '#FFFFFF',
-          headerTitleStyle: { fontWeight: '600' },
+          headerShown: false,
+          gestureEnabled: false,
         }}
       />
       <MainStack.Screen
@@ -214,28 +216,11 @@ interface AppNavigatorProps {
 }
 
 export default function AppNavigator({ navigationRef }: AppNavigatorProps) {
-  const { isLoggedIn, isFirstLogin } = useAuthStore();
-
-  const renderNavigator = () => {
-    if (!isLoggedIn) {
-      return <AuthNavigator />;
-    }
-
-    if (isFirstLogin) {
-      // Force password change — cannot navigate away
-      return (
-        <AuthStack.Navigator screenOptions={{ headerShown: false }}>
-          <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
-        </AuthStack.Navigator>
-      );
-    }
-
-    return <MainNavigator />;
-  };
+  const { isLoggedIn } = useAuthStore();
 
   return (
     <NavigationContainer ref={navigationRef}>
-      {renderNavigator()}
+      {isLoggedIn ? <MainNavigator /> : <AuthNavigator />}
     </NavigationContainer>
   );
 }
