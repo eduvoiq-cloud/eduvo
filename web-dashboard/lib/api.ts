@@ -658,7 +658,10 @@ export const testsApi = {
 
   create: (token: string, payload: {
     title: string; subject: string; class_name: string; section: string;
-    term: string; date: string; questions: TestQuestion[];
+    term: string; date: string;
+    available_from?: string | null;
+    available_until?: string | null;
+    questions: TestQuestion[];
   }) =>
     request<Test>('/api/tests', {
       method: 'POST',

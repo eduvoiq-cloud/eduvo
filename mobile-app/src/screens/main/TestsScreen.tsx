@@ -25,6 +25,8 @@ interface TestRecord {
   time_limit_minutes: number;
   question_count: number;
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
+  available_from?: string | null;
+  available_until?: string | null;
 }
 
 interface TestsResponse {
@@ -183,6 +185,13 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
           <Text style={styles.metaValue}>{test.time_limit_minutes} min</Text>
         </View>
       </View>
+      {(test.available_from || test.available_until) && (
+        <View style={styles.windowRow}>
+          <Text style={styles.windowText}>
+            🕐 {test.available_from ?? '—'} – {test.available_until ?? '—'}
+          </Text>
+        </View>
+      )}
       {status !== 'completed' && (
         <View style={styles.ctaRow}>
           <Text style={styles.ctaText}>
@@ -376,6 +385,13 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
+  windowRow: {
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+  },
+  windowText: { fontSize: 12, color: '#6B7280' },
   emptyState: { alignItems: 'center', marginTop: 60 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { fontSize: 15, color: '#9CA3AF', textAlign: 'center' },

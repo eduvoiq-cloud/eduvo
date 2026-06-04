@@ -461,3 +461,12 @@ NOTIFY pgrst, 'reload schema';
 -- question_id references either test_questions OR questions table depending on
 -- how the test was created. A FK to one table breaks the other. Drop it.
 ALTER TABLE public.student_answers DROP CONSTRAINT IF EXISTS student_answers_question_id_fkey;
+
+-- ── tests: add scheduling window columns ─────────────────────────────────────
+-- available_from / available_until store HH:MM times (24-hour) so the teacher
+-- can restrict when students can open a test on the test date.
+-- Both are optional — if NULL, no time restriction is applied.
+ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS available_from  text;  -- e.g. '09:00'
+ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS available_until text;  -- e.g. '10:30'
+
+NOTIFY pgrst, 'reload schema';

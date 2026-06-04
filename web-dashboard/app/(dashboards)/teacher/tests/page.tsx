@@ -20,6 +20,8 @@ interface TestForm {
   section: string;
   term: string;
   date: string;
+  available_from: string;
+  available_until: string;
 }
 
 interface MCQDraft {
@@ -38,7 +40,7 @@ interface TheoryDraft {
 
 type QuestionDraft = MCQDraft | TheoryDraft;
 
-const EMPTY_TEST: TestForm = { title: '', subject: '', class_name: '', section: '', term: '', date: '' };
+const EMPTY_TEST: TestForm = { title: '', subject: '', class_name: '', section: '', term: '', date: '', available_from: '', available_until: '' };
 const EMPTY_MCQ: MCQDraft = { type: 'mcq', text: '', marks: '1', options: ['', '', '', ''], correct_option: 0 };
 const EMPTY_THEORY: TheoryDraft = { type: 'theory', text: '', marks: '5' };
 
@@ -162,6 +164,9 @@ export default function TestsPage() {
       setFormError('All test fields are required.'); return;
     }
     if (questions.length === 0) { setFormError('Add at least one question.'); return; }
+    if (testForm.available_from && testForm.available_until && testForm.available_from >= testForm.available_until) {
+      setFormError('"Closes at" time must be after "Opens at" time.'); return;
+    }
 
     const token = getToken();
     if (!token) return;
@@ -187,7 +192,12 @@ export default function TestsPage() {
         }
       });
 
-      await testsApi.create(token, { ...testForm, questions: builtQuestions });
+      await testsApi.create(token, {
+        ...testForm,
+        available_from:  testForm.available_from  || null,
+        available_until: testForm.available_until || null,
+        questions: builtQuestions,
+      });
       setShowCreate(false);
       setTestForm(EMPTY_TEST);
       setQuestions([]);
@@ -284,6 +294,7 @@ export default function TestsPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Class</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Subject</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Date</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Window</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Term</th>
                   <th className="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Actions</th>
                 </tr>
@@ -295,6 +306,11 @@ export default function TestsPage() {
                     <td className="px-6 py-3 text-gray-600">{t.class_name} · {t.section}</td>
                     <td className="px-6 py-3 text-gray-600">{t.subject}</td>
                     <td className="px-6 py-3 text-gray-600">{new Date(t.date).toLocaleDateString()}</td>
+                    <td className="px-6 py-3 text-gray-600 text-xs">
+                      {(t as unknown as Record<string,unknown>).available_from
+                        ? `${(t as unknown as Record<string,unknown>).available_from} – ${(t as unknown as Record<string,unknown>).available_until || '—'}`
+                        : <span className="text-gray-400">Any time</span>}
+                    </td>
                     <td className="px-6 py-3 text-gray-600">{t.term}</td>
                     <td className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -367,6 +383,43 @@ export default function TestsPage() {
               <input id="t-date" type="date" className={inputClass}
                 value={testForm.date} onChange={(e) => setTestForm((f) => ({ ...f, date: e.target.value }))} required />
             </FormField>
+
+            {/* Scheduling window — optional */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Schedule Window</p>
+                <span className="text-xs text-gray-400 font-normal normal-case">(optional — restricts when students can open the test)</span>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="Opens at" htmlFor="t-from">
+                  <input
+                    id="t-from"
+                    type="time"
+                    className={inputClass}
+                    value={testForm.available_from}
+                    onChange={(e) => setTestForm((f) => ({ ...f, available_from: e.target.value }))}
+                  />
+                </FormField>
+                <FormField label="Closes at" htmlFor="t-until">
+                  <input
+                    id="t-until"
+                    type="time"
+                    className={inputClass}
+                    value={testForm.available_until}
+                    onChange={(e) => setTestForm((f) => ({ ...f, available_until: e.target.value }))}
+                  />
+                </FormField>
+              </div>
+              {testForm.available_from && testForm.available_until && testForm.available_from >= testForm.available_until && (
+                <p className="text-xs text-red-500">⚠️ &quot;Closes at&quot; must be after &quot;Opens at&quot;.</p>
+              )}
+              {(testForm.available_from || testForm.available_until) && (
+                <p className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
+                  🕐 Students can only start this test on {testForm.date || 'the test date'} between{' '}
+                  <strong>{testForm.available_from || '—'}</strong> and <strong>{testForm.available_until || '—'}</strong>.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* Questions list */}
@@ -484,6 +537,9 @@ export default function TestsPage() {
                 { label: 'Subject', value: viewTest.subject },
                 { label: 'Term', value: viewTest.term },
                 { label: 'Date', value: new Date(viewTest.date).toLocaleDateString() },
+                ...((viewTest as unknown as Record<string,unknown>).available_from
+                  ? [{ label: 'Window', value: `${(viewTest as unknown as Record<string,unknown>).available_from} – ${(viewTest as unknown as Record<string,unknown>).available_until || 'no close'}` }]
+                  : []),
               ].map((item) => (
                 <span key={item.label} className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full">
                   <span className="font-medium">{item.label}:</span> {item.value}

@@ -279,6 +279,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .from('tests')
     .select(`
       id, title, subject_id, date, time_limit_minutes,
+      available_from, available_until,
       questions:test_questions(count)
     `)
     .eq('school_id', studentRecord.school_id)
@@ -294,6 +295,8 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     subject_id: t.subject_id,
     date: t.date,
     time_limit_minutes: t.time_limit_minutes,
+    available_from: t.available_from ?? null,
+    available_until: t.available_until ?? null,
     question_count: Array.isArray(t.questions)
       ? (t.questions as Array<{ count: number }>)[0]?.count ?? 0
       : 0,
@@ -357,7 +360,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   // Fetch test config
   const { data: test, error: tErr } = await supabaseAdmin
     .from('tests')
-    .select('id, class, section, school_id, time_limit_minutes, shuffle_questions, shuffle_options')
+    .select('id, class, section, school_id, time_limit_minutes, shuffle_questions, shuffle_options, available_from, available_until, date')
     .eq('id', test_id)
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
@@ -365,6 +368,26 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     .single();
 
   if (tErr || !test) { sendError(res, 'Test not found or not available for your class', 404); return; }
+
+  // Enforce scheduled time window if set
+  if ((test.available_from || test.available_until) && test.date) {
+    const now = new Date();
+    const testDate = new Date(test.date);
+    const todayStr = now.toISOString().split('T')[0];
+    const testDateStr = testDate.toISOString().split('T')[0];
+
+    if (todayStr === testDateStr) {
+      const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      if (test.available_from && nowHHMM < test.available_from) {
+        sendError(res, `This test is not available yet. It opens at ${test.available_from}.`, 403);
+        return;
+      }
+      if (test.available_until && nowHHMM > test.available_until) {
+        sendError(res, `This test window has closed. It was available until ${test.available_until}.`, 403);
+        return;
+      }
+    }
+  }
 
   // Prevent duplicate active attempts
   const { data: existingAttempt } = await supabaseAdmin
@@ -902,12 +925,14 @@ router.get('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'
  */
 router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const schema = z.object({
-    title:      z.string().min(1),
-    subject:    z.string().min(1),
-    class_name: z.string().min(1),
-    section:    z.string().min(1),
-    term:       z.string().min(1),
-    date:       z.string().min(1),
+    title:           z.string().min(1),
+    subject:         z.string().min(1),
+    class_name:      z.string().min(1),
+    section:         z.string().min(1),
+    term:            z.string().min(1),
+    date:            z.string().min(1),
+    available_from:  z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+    available_until: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
     questions:  z.array(z.object({
       type:           z.enum(['mcq', 'theory']),
       text:           z.string().min(1),
@@ -929,21 +954,22 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     return;
   }
 
-  // Insert test — DB uses "class" not "class_name"
   // Normalise term to title-case to satisfy the DB check constraint (e.g. "term 1" → "Term 1")
   const normalisedTerm = rest.term.replace(/\bterm\b/i, 'Term').replace(/\bT(\d)/i, 'T$1');
 
   const { data: test, error: testErr } = await supabaseAdmin
     .from('tests')
     .insert({
-      title:      rest.title,
-      subject:    rest.subject,
-      class:      class_name,          // live DB column name
-      section:    rest.section,
-      term:       normalisedTerm,
-      date:       rest.date,
-      school_id:  req.user!.school_id,
-      created_by: req.user!.id,
+      title:           rest.title,
+      subject:         rest.subject,
+      class:           class_name,
+      section:         rest.section,
+      term:            normalisedTerm,
+      date:            rest.date,
+      available_from:  rest.available_from ?? null,
+      available_until: rest.available_until ?? null,
+      school_id:       req.user!.school_id,
+      created_by:      req.user!.id,
     })
     .select()
     .single();

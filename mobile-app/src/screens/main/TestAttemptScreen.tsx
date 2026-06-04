@@ -891,6 +891,9 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   // ── Phase & core state ──────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('pre');
+  const [loadingResults, setLoadingResults] = useState(
+    test.attempt_status === 'completed'
+  ); // true while silently fetching results for completed tests
   const [starting, setStarting] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
@@ -951,11 +954,12 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   useEffect(() => {
     const checkAttemptStatus = async () => {
       if (test.attempt_status === 'completed') {
-        setPhase('submitting'); // show spinner while fetching results
+        // Silently fetch results in background — no spinner, no phase change until data is ready
         try {
-          // Hit start — it will 409 with attempt_id if already submitted
+          // Hit start — backend returns 409 with attempt_id for already-submitted tests
           await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
-          // If it somehow succeeds (edge case), fall through to pre screen
+          // Succeeded (edge case — test not actually submitted yet), show pre screen
+          setLoadingResults(false);
           setPhase('pre');
         } catch (err: unknown) {
           const attemptIdFromErr =
@@ -969,12 +973,14 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
               const resultData = resResponse.data.data as ResultData;
               setResults(resultData);
               setAttemptId(attemptIdFromErr);
+              setLoadingResults(false);
               setPhase('results');
               return;
             } catch {
               // fall through to pre screen
             }
           }
+          setLoadingResults(false);
           setPhase('pre');
         }
         return;
@@ -1130,6 +1136,19 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   // ── Timer warning colour ────────────────────────────────────────────────────
   const timerWarning = secondsLeft !== null && secondsLeft <= 60;
   const timerCritical = secondsLeft !== null && secondsLeft <= 30;
+
+  // ── Render: loading results (completed test, fetching silently) ─────────────
+  if (loadingResults) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+        <ActivityIndicator size="large" color="#1D4ED8" />
+        <Text style={{ marginTop: 14, fontSize: 14, color: '#6B7280', fontWeight: '500' }}>
+          Loading your results…
+        </Text>
+      </View>
+    );
+  }
 
   // ── Render: pre-test ────────────────────────────────────────────────────────
   if (phase === 'pre') {
