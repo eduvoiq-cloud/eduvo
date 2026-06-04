@@ -25,6 +25,16 @@ interface MarkRecord {
   created_at: string;
 }
 
+interface TestRecord {
+  id: string;
+  title: string;
+  date: string;
+  attempt_status?: 'not_started' | 'in_progress' | 'completed';
+  mcq_score?: number | null;
+  total_score?: number | null;
+  total_score_pending?: boolean;
+}
+
 type TermFilter = 'All' | 'term_1' | 'term_2' | 'term_3';
 
 interface SubjectSummary {
@@ -354,21 +364,94 @@ const cardStyles = StyleSheet.create({
   testPct: { fontSize: 11, fontWeight: '500', marginTop: 1 },
 });
 
+// ── Test result card ──────────────────────────────────────────────────────────
+
+function TestResultCard({ test }: { test: TestRecord }) {
+  const score = test.total_score_pending ? null : (test.total_score ?? test.mcq_score);
+  const scoreLabel = test.total_score_pending ? 'Pending grading' : score !== null ? `Score: ${score}` : '—';
+  const scoreColor = test.total_score_pending ? '#D97706' : '#1D4ED8';
+
+  return (
+    <View style={testCardStyles.card}>
+      <View style={testCardStyles.left}>
+        <Text style={testCardStyles.title} numberOfLines={2}>{test.title}</Text>
+        <Text style={testCardStyles.date}>
+          {new Date(test.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+        </Text>
+      </View>
+      <View style={testCardStyles.right}>
+        <View style={[testCardStyles.badge, { backgroundColor: test.total_score_pending ? '#FEF3C7' : '#DBEAFE' }]}>
+          <Text style={[testCardStyles.badgeText, { color: scoreColor }]}>{scoreLabel}</Text>
+        </View>
+        <Text style={testCardStyles.status}>✓ Completed</Text>
+      </View>
+    </View>
+  );
+}
+
+const testCardStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 10,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  left: { flex: 1, marginRight: 12 },
+  title: { fontSize: 14, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  date: { fontSize: 12, color: '#9CA3AF' },
+  right: { alignItems: 'flex-end' },
+  badge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 4 },
+  badgeText: { fontSize: 12, fontWeight: '600' },
+  status: { fontSize: 11, color: '#15803D', fontWeight: '500' },
+});
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function MarksScreen() {
   const [marks, setMarks] = useState<MarkRecord[]>([]);
+  const [completedTests, setCompletedTests] = useState<TestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [termFilter, setTermFilter] = useState<TermFilter>('All');
   const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
+  const [showTests, setShowTests] = useState(true);
 
-  const fetchMarks = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     setError(null);
     try {
-      const response = await apiClient.get('/api/marks');
-      setMarks(response.data.data ?? []);
+      const [marksRes, testsRes] = await Promise.allSettled([
+        apiClient.get('/api/marks'),
+        apiClient.get('/api/tests/student'),
+      ]);
+
+      if (marksRes.status === 'fulfilled') {
+        setMarks(marksRes.value.data.data ?? []);
+      } else {
+        setMarks([]);
+      }
+
+      if (testsRes.status === 'fulfilled') {
+        const allTests: TestRecord[] = testsRes.value.data.data ?? [];
+        // Only show completed tests with score info
+        const done = allTests.filter((t) => t.attempt_status === 'completed');
+        setCompletedTests(done);
+      } else {
+        setCompletedTests([]);
+      }
+
+      if (marksRes.status === 'rejected' && testsRes.status === 'rejected') {
+        setError('Failed to load marks');
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load marks';
       setError(msg);
@@ -378,12 +461,12 @@ export default function MarksScreen() {
     }
   }, []);
 
-  useEffect(() => { fetchMarks(); }, [fetchMarks]);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchMarks();
-  }, [fetchMarks]);
+    fetchAll();
+  }, [fetchAll]);
 
   const filteredMarks = useMemo(() => {
     if (termFilter === 'All') return marks;
@@ -426,19 +509,47 @@ export default function MarksScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1D4ED8" />
         }
         ListHeaderComponent={
-          <View style={styles.listHeader}>
-            <Text style={styles.title}>My Performance</Text>
-            {sortedSummaries.length > 0 && (
-              <>
-                {bestSubject && (
-                  <Text style={styles.bestText}>🏆 Best: {bestSubject}</Text>
+          <>
+            <View style={styles.listHeader}>
+              <Text style={styles.title}>My Performance</Text>
+              {sortedSummaries.length > 0 && (
+                <>
+                  {bestSubject && (
+                    <Text style={styles.bestText}>🏆 Best: {bestSubject}</Text>
+                  )}
+                  {worstSubject && (
+                    <Text style={styles.worstText}>⚠️ Needs improvement: {worstSubject}</Text>
+                  )}
+                </>
+              )}
+            </View>
+
+            {/* ── Test Results Section ── */}
+            {completedTests.length > 0 && (
+              <View style={styles.testSection}>
+                <TouchableOpacity
+                  style={styles.testSectionHeader}
+                  onPress={() => setShowTests((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={showTests ? 'Collapse test results' : 'Expand test results'}
+                >
+                  <Text style={styles.testSectionTitle}>📝 Test Results ({completedTests.length})</Text>
+                  <Text style={styles.testSectionChevron}>{showTests ? '▲' : '▼'}</Text>
+                </TouchableOpacity>
+                {showTests && (
+                  <View style={{ padding: 12, paddingTop: 8 }}>
+                    {completedTests.map((t) => (
+                      <TestResultCard key={t.id} test={t} />
+                    ))}
+                  </View>
                 )}
-                {worstSubject && (
-                  <Text style={styles.worstText}>⚠️ Needs improvement: {worstSubject}</Text>
-                )}
-              </>
+              </View>
             )}
-          </View>
+
+            {sortedSummaries.length > 0 && (
+              <Text style={styles.sectionDividerLabel}>📊 Subject Marks</Text>
+            )}
+          </>
         }
         renderItem={({ item }) => (
           <SubjectCard
@@ -455,20 +566,20 @@ export default function MarksScreen() {
               <Text style={styles.emptyText}>⚠️ {error}</Text>
               <TouchableOpacity
                 style={styles.retryButton}
-                onPress={() => { setLoading(true); fetchMarks(); }}
+                onPress={() => { setLoading(true); fetchAll(); }}
                 accessibilityRole="button"
               >
                 <Text style={styles.retryText}>Retry</Text>
               </TouchableOpacity>
             </View>
-          ) : (
+          ) : completedTests.length === 0 ? (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>📊</Text>
               <Text style={styles.emptyText}>
                 {termFilter === 'All' ? 'No marks recorded yet.' : `No marks for ${TERM_LABELS[termFilter]}.`}
               </Text>
             </View>
-          )
+          ) : null
         }
       />
     </>
@@ -484,6 +595,31 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: '700', color: '#111827', marginBottom: 6 },
   bestText: { fontSize: 13, color: '#92400E', fontWeight: '600', marginBottom: 2 },
   worstText: { fontSize: 13, color: '#B91C1C', fontWeight: '600' },
+  testSection: {
+    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  testSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 14,
+    backgroundColor: '#F8FAFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  testSectionTitle: { fontSize: 15, fontWeight: '700', color: '#1E3A8A' },
+  testSectionChevron: { fontSize: 13, color: '#6B7280' },
+  sectionDividerLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#374151',
+    marginBottom: 12,
+  },
   emptyState: { alignItems: 'center', marginTop: 60 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { fontSize: 15, color: '#9CA3AF', textAlign: 'center' },

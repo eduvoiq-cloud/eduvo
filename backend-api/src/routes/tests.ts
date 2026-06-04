@@ -121,6 +121,13 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
 
   const { questions, ...testFields } = parsed.data;
 
+  // Enforce single question type per test — a test must be all-MCQ or all-theory, never mixed
+  const qTypes = new Set(questions.map((q) => q.question_type));
+  if (qTypes.size > 1) {
+    sendError(res, 'A test must contain only MCQ questions or only Theory questions, not both. Please create separate tests for each type.', 400);
+    return;
+  }
+
   // Teachers must be assigned to the class they're creating a test for
   if (req.user!.role === 'teacher') {
     const allowed = await teacherOwnsClass(
@@ -762,6 +769,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
     option_b: string | null;
     option_c: string | null;
     option_d: string | null;
+    correct_option: string | null;
     marks: number;
   };
 
@@ -771,7 +779,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
     // Try test_questions first
     const { data: tqData } = await supabaseAdmin
       .from('test_questions')
-      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
       .in('id', questionIds);
 
     for (const q of (tqData ?? []) as QuestionDetail[]) {
@@ -783,7 +791,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
     if (missing.length > 0) {
       const { data: qData } = await supabaseAdmin
         .from('questions')
-        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
         .in('id', missing);
 
       for (const q of (qData ?? []) as QuestionDetail[]) {
@@ -803,6 +811,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
   const formattedAnswers = (answers as AnswerRow[] ?? []).map((ans) => {
     const q = questionMap.get(ans.question_id);
     if (q?.question_type === 'mcq') {
+      const isCorrect = ans.is_correct === true;
       return {
         question_id: ans.question_id,
         question_text: q.question_text,
@@ -812,6 +821,8 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
         option_c: q.option_c,
         option_d: q.option_d,
         selected_option: ans.selected_option,
+        // Only reveal correct answer if the student got it wrong or skipped — for learning
+        correct_option: !isCorrect ? q.correct_option : null,
         is_correct: ans.is_correct,
         marks: q.marks,
         marks_awarded: ans.marks_awarded,
@@ -910,6 +921,13 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
   const { questions, class_name, ...rest } = parsed.data;
+
+  // Enforce single question type per test — a test must be all-MCQ or all-theory, never mixed
+  const questionTypes = new Set(questions.map((q) => q.type));
+  if (questionTypes.size > 1) {
+    sendError(res, 'A test must contain only MCQ questions or only Theory questions, not both. Please create separate tests for each type.', 400);
+    return;
+  }
 
   // Insert test — DB uses "class" not "class_name"
   // Normalise term to title-case to satisfy the DB check constraint (e.g. "term 1" → "Term 1")

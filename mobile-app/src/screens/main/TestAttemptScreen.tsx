@@ -60,6 +60,7 @@ interface ResultAnswer {
   option_c?: string | null;
   option_d?: string | null;
   selected_option?: string | null;
+  correct_option?: string | null;
   is_correct?: boolean | null;
   marks: number;
   marks_awarded: number | 'pending' | null;
@@ -763,9 +764,9 @@ function ResultsScreen({
                 {skipped && (
                   <Text style={resStyles.qYourAnswer}>Not answered</Text>
                 )}
-                {!correct && !skipped && (
+                {!correct && ans.correct_option && (
                   <Text style={resStyles.qCorrectAnswer}>
-                    Marks: {ans.marks_awarded ?? 0} / {ans.marks}
+                    ✓ Correct answer: <Text style={resStyles.ansCorrect}>{ans.correct_option.toUpperCase()} — {optionText(ans.correct_option)}</Text>
                   </Text>
                 )}
               </View>
@@ -854,7 +855,7 @@ const resStyles = StyleSheet.create({
   qYourAnswer: { fontSize: 13, color: '#6B7280' },
   ansCorrect: { color: '#15803D', fontWeight: '600' },
   ansWrong: { color: '#DC2626', fontWeight: '600' },
-  qCorrectAnswer: { fontSize: 12, color: '#6B7280', marginTop: 4 },
+  qCorrectAnswer: { fontSize: 13, color: '#15803D', marginTop: 4, fontWeight: '500' },
   theoryNote: {
     backgroundColor: '#FEF3C7',
     borderRadius: 10,
