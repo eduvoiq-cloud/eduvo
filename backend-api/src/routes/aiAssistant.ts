@@ -421,6 +421,8 @@ router.post('/save-test', async (req: Request, res: Response) => {
     section: z.string().min(1).max(10),
     term: z.string().min(1).max(50),
     date: z.string().optional(),                   // ISO date string e.g. "2025-12-19"
+    available_from:  z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+    available_until: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
     time_limit_minutes: z.number().int().min(1).max(300),
     shuffle_questions: z.boolean().default(false),
     shuffle_options: z.boolean().default(false),
@@ -441,6 +443,8 @@ router.post('/save-test', async (req: Request, res: Response) => {
     section,
     term,
     date,
+    available_from,
+    available_until,
     time_limit_minutes,
     shuffle_questions,
     shuffle_options,
@@ -478,7 +482,7 @@ router.post('/save-test', async (req: Request, res: Response) => {
 
   const extendedResult = await supabaseAdmin
     .from('tests')
-    .insert({ ...testInsertBase, time_limit_minutes, shuffle_questions, shuffle_options })
+    .insert({ ...testInsertBase, available_from: available_from ?? null, available_until: available_until ?? null, time_limit_minutes, shuffle_questions, shuffle_options })
     .select()
     .single();
 

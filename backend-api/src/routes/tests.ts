@@ -1027,6 +1027,9 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     date:            z.string().min(1),
     available_from:  z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
     available_until: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+    time_limit_minutes: z.number().int().min(1).optional().nullable(),
+    shuffle_questions:  z.boolean().optional(),
+    shuffle_options:    z.boolean().optional(),
     questions:  z.array(z.object({
       type:           z.enum(['mcq', 'theory']),
       text:           z.string().min(1),
@@ -1054,16 +1057,19 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
   const { data: test, error: testErr } = await supabaseAdmin
     .from('tests')
     .insert({
-      title:           rest.title,
-      subject:         rest.subject,
-      class:           class_name,
-      section:         rest.section,
-      term:            normalisedTerm,
-      date:            rest.date,
-      available_from:  rest.available_from ?? null,
-      available_until: rest.available_until ?? null,
-      school_id:       req.user!.school_id,
-      created_by:      req.user!.id,
+      title:              rest.title,
+      subject:            rest.subject,
+      class:              class_name,
+      section:            rest.section,
+      term:               normalisedTerm,
+      date:               rest.date,
+      available_from:     rest.available_from ?? null,
+      available_until:    rest.available_until ?? null,
+      time_limit_minutes: rest.time_limit_minutes ?? null,
+      shuffle_questions:  rest.shuffle_questions ?? false,
+      shuffle_options:    rest.shuffle_options ?? false,
+      school_id:          req.user!.school_id,
+      created_by:         req.user!.id,
     })
     .select()
     .single();
