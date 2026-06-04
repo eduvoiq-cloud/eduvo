@@ -1130,7 +1130,7 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
 /**
  * DELETE /api/tests/:id
  */
-router.delete('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const { error } = await supabaseAdmin
     .from('tests')
     .delete()
