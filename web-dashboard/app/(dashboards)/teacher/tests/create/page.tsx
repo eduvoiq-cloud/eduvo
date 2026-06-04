@@ -19,6 +19,7 @@ interface TestDetails {
   class_name: string;
   section: string;
   term: string;
+  exam_type: ExamTypeValue;
   date: string;
   start_time: string;
   end_time: string;
@@ -48,8 +49,21 @@ type QuestionDraft = MCQDraft | TheoryDraft;
 const TERMS = ['term_1', 'term_2', 'term_3'] as const;
 const TERM_LABELS: Record<string, string> = { term_1: 'Term 1', term_2: 'Term 2', term_3: 'Term 3' };
 
+const EXAM_TYPES = ['class_test', 'unit_test', 'mid_term', 'final', 'quiz', 'midterm', 'assignment', 'project'] as const;
+type ExamTypeValue = typeof EXAM_TYPES[number];
+const EXAM_TYPE_LABELS: Record<ExamTypeValue, string> = {
+  class_test: 'Class Test',
+  unit_test: 'Unit Test',
+  mid_term: 'Mid Term',
+  final: 'Final',
+  quiz: 'Quiz',
+  midterm: 'Midterm',
+  assignment: 'Assignment',
+  project: 'Project',
+};
+
 const EMPTY_DETAILS: TestDetails = {
-  title: '', subject: '', class_name: '', section: '', term: '',
+  title: '', subject: '', class_name: '', section: '', term: '', exam_type: 'class_test',
   date: '', start_time: '', end_time: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: true,
 };
 
@@ -513,6 +527,7 @@ export default function CreateTestPage() {
         class_name: details.class_name,
         section: details.section,
         term: details.term,
+        exam_type: details.exam_type,
         date: details.date,
         available_from: details.start_time || null,
         available_until: details.end_time || null,
@@ -623,6 +638,16 @@ export default function CreateTestPage() {
                 </select>
               </FormField>
             </div>
+
+            <FormField label="Test Type" htmlFor="d-exam-type" required>
+              <select
+                id="d-exam-type" className={inputClass}
+                value={details.exam_type}
+                onChange={(e) => setDetails((d) => ({ ...d, exam_type: e.target.value as ExamTypeValue }))}
+              >
+                {EXAM_TYPES.map((t) => <option key={t} value={t}>{EXAM_TYPE_LABELS[t]}</option>)}
+              </select>
+            </FormField>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <FormField label="Test Date" htmlFor="d-date" required>
@@ -824,6 +849,7 @@ export default function CreateTestPage() {
                 {[
                   { label: 'Class', value: `${details.class_name} · ${details.section}` },
                   { label: 'Subject', value: details.subject },
+                  { label: 'Test Type', value: EXAM_TYPE_LABELS[details.exam_type] ?? details.exam_type },
                   { label: 'Term', value: TERM_LABELS[details.term] ?? details.term },
                   { label: 'Date', value: new Date(details.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) },
                   ...(details.time_limit_minutes ? [{ label: 'Time Limit', value: `${details.time_limit_minutes} min` }] : []),

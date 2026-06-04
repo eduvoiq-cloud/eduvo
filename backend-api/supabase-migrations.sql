@@ -470,3 +470,12 @@ ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS available_from  text;  -- e.g.
 ALTER TABLE public.tests ADD COLUMN IF NOT EXISTS available_until text;  -- e.g. '10:30'
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── tests: add exam_type column ───────────────────────────────────────────────
+-- Allows the teacher to categorise a test (Class Test, Unit Test, Mid Term, etc.)
+-- The value is copied into the marks table when test scores are auto-written.
+ALTER TABLE public.tests
+  ADD COLUMN IF NOT EXISTS exam_type text NOT NULL DEFAULT 'class_test'
+  CHECK (exam_type IN ('quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test'));
+
+NOTIFY pgrst, 'reload schema';

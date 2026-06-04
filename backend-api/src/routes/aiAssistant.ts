@@ -420,6 +420,7 @@ router.post('/save-test', async (req: Request, res: Response) => {
     class: z.string().min(1).max(20),
     section: z.string().min(1).max(10),
     term: z.string().min(1).max(50),
+    exam_type: z.enum(['quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test']).default('class_test'),
     date: z.string().optional(),                   // ISO date string e.g. "2025-12-19"
     available_from:  z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
     available_until: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
@@ -442,6 +443,7 @@ router.post('/save-test', async (req: Request, res: Response) => {
     class: className,
     section,
     term,
+    exam_type,
     date,
     available_from,
     available_until,
@@ -470,6 +472,7 @@ router.post('/save-test', async (req: Request, res: Response) => {
     class:      sanitise(className),               // live DB column is "class"
     section:    sanitise(section),
     term:       sanitise(term),
+    exam_type:  exam_type ?? 'class_test',
     date:       date || new Date().toISOString().split('T')[0],
     school_id:  schoolId,
     created_by: teacherId,

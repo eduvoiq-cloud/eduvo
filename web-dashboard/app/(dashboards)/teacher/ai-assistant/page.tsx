@@ -41,6 +41,7 @@ interface SaveTestForm {
   class: string;
   section: string;
   term: string;
+  exam_type: string;
   date: string;
   start_time: string;
   end_time: string;
@@ -52,6 +53,17 @@ interface SaveTestForm {
 const TERM_SUGGESTIONS = ['Term 1', 'Term 2', 'Term 3', 'Term 4'];
 const DIFFICULTY_OPTIONS = ['easy', 'medium', 'hard'] as const;
 type Difficulty = typeof DIFFICULTY_OPTIONS[number];
+
+const EXAM_TYPES_LIST = [
+  { value: 'class_test', label: 'Class Test' },
+  { value: 'unit_test', label: 'Unit Test' },
+  { value: 'mid_term', label: 'Mid Term' },
+  { value: 'final', label: 'Final' },
+  { value: 'quiz', label: 'Quiz' },
+  { value: 'midterm', label: 'Midterm' },
+  { value: 'assignment', label: 'Assignment' },
+  { value: 'project', label: 'Project' },
+] as const;
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
@@ -479,6 +491,7 @@ export default function AIAssistantPage() {
       class: selectedClass,
       section: '',
       term: '',
+      exam_type: 'class_test',
       date: '',
       start_time: '',
       end_time: '',
@@ -514,6 +527,7 @@ export default function AIAssistantPage() {
           class: saveForm.class,
           section: saveForm.section,
           term: saveForm.term.trim(),
+          exam_type: saveForm.exam_type || 'class_test',
           date: saveForm.date || null,
           available_from: saveForm.start_time || null,
           available_until: saveForm.end_time || null,
@@ -950,6 +964,14 @@ export default function AIAssistantPage() {
                 onChange={(e) => setSaveForm((f) => ({ ...f, date: e.target.value }))} />
             </FormField>
           </div>
+
+          <FormField label="Test Type" htmlFor="save-exam-type" required>
+            <select id="save-exam-type" className={inputClass}
+              value={saveForm.exam_type}
+              onChange={(e) => setSaveForm((f) => ({ ...f, exam_type: e.target.value }))}>
+              {EXAM_TYPES_LIST.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </FormField>
 
           <FormField label="Time Limit (minutes)" htmlFor="save-time">
             <input id="save-time" type="number" min={1} step={1} className={inputClass} placeholder="e.g. 60"

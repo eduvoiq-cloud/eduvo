@@ -231,6 +231,7 @@ export interface Test {
   class_name: string;
   section: string;
   term: string;
+  exam_type?: string;
   date: string;
   available_from?: string | null;
   available_until?: string | null;
@@ -748,6 +749,7 @@ export const testsApi = {
   create: (token: string, payload: {
     title: string; subject: string; class_name: string; section: string;
     term: string; date: string;
+    exam_type?: string;
     available_from?: string | null;
     available_until?: string | null;
     time_limit_minutes?: number;

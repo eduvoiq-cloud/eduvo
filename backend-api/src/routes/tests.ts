@@ -20,6 +20,8 @@ const questionSchema = z.object({
   marks: z.number().min(1),
 });
 
+const EXAM_TYPE_VALUES = ['quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test'] as const;
+
 const createTestSchema = z.object({
   title: z.string().min(1),
   subject_id: z.string().uuid(),
@@ -27,6 +29,7 @@ const createTestSchema = z.object({
   section: z.string().min(1),
   term: z.string().min(1),
   date: z.string().date(),
+  exam_type: z.enum(EXAM_TYPE_VALUES).default('class_test'),
   available_from: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
   available_until: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
   time_limit_minutes: z.number().int().min(1),
@@ -154,6 +157,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       section: testFields.section,
       term:    testFields.term,
       date:    testFields.date,
+      exam_type: testFields.exam_type ?? 'class_test',
       available_from:  testFields.available_from ?? null,
       available_until: testFields.available_until ?? null,
       time_limit_minutes: testFields.time_limit_minutes,
@@ -647,7 +651,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
   // Fetch test metadata needed for the marks record (subject, term, school_id, class)
   const { data: testMeta } = await supabaseAdmin
     .from('tests')
-    .select('subject, term, school_id, class, title')
+    .select('subject, term, school_id, class, title, exam_type')
     .eq('id', attempt.test_id)
     .single();
 
@@ -683,7 +687,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
           score:       mcqScore,
           max_score:   totalMcqMarks,
           term:        testMeta.term,
-          exam_type:   'class_test',
+          exam_type:   testMeta.exam_type ?? 'class_test',
           notes:       noteTag,
           recorded_by: null,
         });
@@ -811,7 +815,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
       // Fetch test metadata for subject/term
       const { data: testMeta } = await supabaseAdmin
         .from('tests')
-        .select('subject, term')
+        .select('subject, term, exam_type')
         .eq('id', attemptDetail.test_id)
         .single();
 
@@ -824,7 +828,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
             score:       totalScore,
             max_score:   maxScore,
             term:        testMeta.term,
-            exam_type:   'class_test',
+            exam_type:   testMeta.exam_type ?? 'class_test',
             notes:       noteTag,
             recorded_by: req.user!.id,
           });
@@ -1025,6 +1029,7 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     section:         z.string().min(1),
     term:            z.string().min(1),
     date:            z.string().min(1),
+    exam_type:       z.enum(EXAM_TYPE_VALUES).default('class_test'),
     available_from:  z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
     available_until: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
     time_limit_minutes: z.number().int().min(1).optional().nullable(),
@@ -1063,6 +1068,7 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
       section:            rest.section,
       term:               normalisedTerm,
       date:               rest.date,
+      exam_type:          rest.exam_type ?? 'class_test',
       available_from:     rest.available_from ?? null,
       available_until:    rest.available_until ?? null,
       time_limit_minutes: rest.time_limit_minutes ?? null,
@@ -1408,7 +1414,7 @@ router.post('/backfill-marks', authenticate, requireRole('teacher', 'schooladmin
     .from('test_attempts')
     .select(`
       id, student_id, test_id, mcq_score, total_score,
-      tests!inner(subject, term, school_id, class)
+      tests!inner(subject, term, school_id, class, exam_type)
     `)
     .eq('is_submitted', true)
     .eq('tests.school_id', schoolId);
@@ -1461,7 +1467,7 @@ router.post('/backfill-marks', authenticate, requireRole('teacher', 'schooladmin
           score,
           max_score:   maxScore,
           term:        test.term,
-          exam_type:   'class_test',
+          exam_type:   (test.exam_type as string) ?? 'class_test',
           notes:       noteTag,
           recorded_by: null,
         });

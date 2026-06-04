@@ -20,6 +20,7 @@ interface TestForm {
   class_name: string;
   section: string;
   term: string;
+  exam_type: string;
   date: string;
   available_from: string;
   available_until: string;
@@ -41,9 +42,20 @@ interface TheoryDraft {
 
 type QuestionDraft = MCQDraft | TheoryDraft;
 
-const EMPTY_TEST: TestForm = { title: '', subject: '', class_name: '', section: '', term: '', date: '', available_from: '', available_until: '' };
+const EMPTY_TEST: TestForm = { title: '', subject: '', class_name: '', section: '', term: '', exam_type: 'class_test', date: '', available_from: '', available_until: '' };
 const EMPTY_MCQ: MCQDraft = { type: 'mcq', text: '', marks: '1', options: ['', '', '', ''], correct_option: 0 };
 const EMPTY_THEORY: TheoryDraft = { type: 'theory', text: '', marks: '5' };
+
+const EXAM_TYPES_LIST = [
+  { value: 'class_test', label: 'Class Test' },
+  { value: 'unit_test', label: 'Unit Test' },
+  { value: 'mid_term', label: 'Mid Term' },
+  { value: 'final', label: 'Final' },
+  { value: 'quiz', label: 'Quiz' },
+  { value: 'midterm', label: 'Midterm' },
+  { value: 'assignment', label: 'Assignment' },
+  { value: 'project', label: 'Project' },
+] as const;
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -211,8 +223,7 @@ export default function TestsPage() {
         available_from:  testForm.available_from  || null,
         available_until: testForm.available_until || null,
         questions: builtQuestions,
-      });
-      setShowCreate(false);
+      });      setShowCreate(false);
       setTestForm(EMPTY_TEST);
       setQuestions([]);
       setCurrentQ({ ...EMPTY_MCQ });
@@ -392,24 +403,26 @@ export default function TestsPage() {
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Title</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Class</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Subject</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Type</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Date</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Window</th>
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Term</th>
                   <th className="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {tests.map((t) => (
+                {tests.map((t) => {
+                  const examLabel = EXAM_TYPES_LIST.find((e) => e.value === t.exam_type)?.label ?? t.exam_type ?? 'Class Test';
+                  return (
                   <tr key={t.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-3 font-medium text-gray-900">{t.title}</td>
                     <td className="px-6 py-3 text-gray-600">{t.class_name} · {t.section}</td>
                     <td className="px-6 py-3 text-gray-600">{t.subject}</td>
-                    <td className="px-6 py-3 text-gray-600">{new Date(t.date).toLocaleDateString()}</td>
-                    <td className="px-6 py-3 text-gray-600 text-xs">
-                      {t.available_from
-                        ? `${t.available_from} – ${t.available_until || '—'}`
-                        : <span className="text-gray-400">Any time</span>}
+                    <td className="px-6 py-3">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700">
+                        {examLabel}
+                      </span>
                     </td>
+                    <td className="px-6 py-3 text-gray-600">{new Date(t.date).toLocaleDateString()}</td>
                     <td className="px-6 py-3 text-gray-600">{t.term}</td>
                     <td className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -428,7 +441,8 @@ export default function TestsPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -482,6 +496,13 @@ export default function TestsPage() {
                   value={testForm.term} onChange={(e) => setTestForm((f) => ({ ...f, term: e.target.value }))} required />
               </FormField>
             </div>
+            <FormField label="Test Type" htmlFor="t-exam-type" required>
+              <select id="t-exam-type" className={inputClass}
+                value={testForm.exam_type}
+                onChange={(e) => setTestForm((f) => ({ ...f, exam_type: e.target.value }))}>
+                {EXAM_TYPES_LIST.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </FormField>
             <FormField label="Test Date" htmlFor="t-date" required>
               <input id="t-date" type="date" className={inputClass}
                 value={testForm.date} onChange={(e) => setTestForm((f) => ({ ...f, date: e.target.value }))} required />
@@ -638,6 +659,7 @@ export default function TestsPage() {
               {[
                 { label: 'Class', value: `${viewTest.class_name} · ${viewTest.section}` },
                 { label: 'Subject', value: viewTest.subject },
+                { label: 'Type', value: EXAM_TYPES_LIST.find((e) => e.value === viewTest.exam_type)?.label ?? viewTest.exam_type ?? 'Class Test' },
                 { label: 'Term', value: viewTest.term },
                 { label: 'Date', value: new Date(viewTest.date).toLocaleDateString() },
                 ...(viewTest.available_from
