@@ -26,6 +26,7 @@ export interface TestMeta {
   time_limit_minutes: number;
   question_count: number;
   instructions?: string | null;
+  attempt_status?: 'not_started' | 'in_progress' | 'completed';
 }
 
 interface Question {
@@ -944,12 +945,47 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   // ── Start / resume test ─────────────────────────────────────────────────────
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
 
-  // Check on mount if there's a saved local progress (indicates an active attempt)
+  // On mount: if the test is already completed, skip the pre-screen and load results directly.
+  // Otherwise check for saved local progress to show resume option.
   useEffect(() => {
-    loadProgress(test.id).then((saved) => {
+    const checkAttemptStatus = async () => {
+      if (test.attempt_status === 'completed') {
+        setPhase('submitting'); // show spinner while fetching results
+        try {
+          // Hit start — it will 409 with attempt_id if already submitted
+          await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
+          // If it somehow succeeds (edge case), fall through to pre screen
+          setPhase('pre');
+        } catch (err: unknown) {
+          const attemptIdFromErr =
+            (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
+          const msg =
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? '';
+
+          if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
+            try {
+              const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
+              const resultData = resResponse.data.data as ResultData;
+              setResults(resultData);
+              setAttemptId(attemptIdFromErr);
+              setPhase('results');
+              return;
+            } catch {
+              // fall through to pre screen
+            }
+          }
+          setPhase('pre');
+        }
+        return;
+      }
+
+      // Not completed — check for saved local progress (in-progress attempt)
+      const saved = await loadProgress(test.id);
       if (saved) setHasActiveAttempt(true);
-    });
-  }, [test.id]);
+    };
+
+    void checkAttemptStatus();
+  }, [test.id, test.attempt_status]);
 
   const handleStart = useCallback(async () => {
     setStarting(true);
@@ -994,9 +1030,26 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
       setPhase('active');
     } catch (err: unknown) {
+      const attemptIdFromErr =
+        (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message
         ?? (err instanceof Error ? err.message : 'Failed to start test');
+
+      // Safety net: if backend says already submitted, load results instead of erroring
+      if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
+        try {
+          const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
+          const resultData = resResponse.data.data as ResultData;
+          setResults(resultData);
+          setAttemptId(attemptIdFromErr);
+          setPhase('results');
+          return;
+        } catch {
+          // fall through to alert
+        }
+      }
+
       Alert.alert('Could not start test', msg);
     } finally {
       setStarting(false);

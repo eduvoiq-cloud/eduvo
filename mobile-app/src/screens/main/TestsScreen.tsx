@@ -288,6 +288,7 @@ export default function TestsScreen() {
                   title: item.title,
                   time_limit_minutes: item.time_limit_minutes ?? 0,
                   question_count: item.question_count,
+                  attempt_status: item.attempt_status,
                 },
               })
             }
