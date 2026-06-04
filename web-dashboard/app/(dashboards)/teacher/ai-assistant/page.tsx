@@ -252,7 +252,7 @@ export default function AIAssistantPage() {
   // ── Save as Test Modal ──────────────────────────────────────────────────────
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveForm, setSaveForm] = useState<SaveTestForm>({
-    title: '', subject_id: '', class: '', section: '', term: '',
+    title: '', subject_id: '', class: '', section: '', term: '', exam_type: 'class_test',
     date: '', start_time: '', end_time: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: false,
   });
   const [saveError, setSaveError] = useState('');
