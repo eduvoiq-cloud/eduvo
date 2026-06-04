@@ -188,7 +188,8 @@ function getWindowState(
 ): WindowState {
   if (!availableFrom && !availableUntil) return 'no_window';
   const now = new Date();
-  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const nowHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   if (availableFrom && nowHHMM < availableFrom) return 'before';
   if (availableUntil && nowHHMM > availableUntil) return 'closed';
   return 'open';

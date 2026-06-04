@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   StatusBar,
   Linking,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -59,10 +60,14 @@ function getWindowState(
 ): 'before' | 'open' | 'closed' | 'no_window' {
   if (!availableFrom && !availableUntil) return 'no_window';
   const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
-  const testDateStr = new Date(date).toISOString().split('T')[0];
+  // Use local date parts so the comparison is never off by a timezone day boundary
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  // Parse the test date in local time (treat as local noon to avoid any UTC boundary issues)
+  const testDate = new Date(date);
+  const testDateStr = `${testDate.getFullYear()}-${pad(testDate.getMonth() + 1)}-${pad(testDate.getDate())}`;
   if (todayStr !== testDateStr) return 'no_window'; // window only applies on the test date
-  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const nowHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   if (availableFrom && nowHHMM < availableFrom) return 'before';
   if (availableUntil && nowHHMM > availableUntil) return 'closed';
   return 'open';
@@ -389,6 +394,32 @@ export default function StudentTestsScreen() {
   }, [fetchTests]);
 
   const handleTestPress = (test: TestRecord) => {
+    const windowState = getWindowState(test.date, test.available_from, test.available_until);
+    const status = test.attempt_status ?? 'not_started';
+
+    // Block access when the window is closed and the student hasn't started yet.
+    // Students who have an in-progress or completed attempt are always allowed through.
+    if (windowState === 'closed' && status === 'not_started') {
+      Alert.alert(
+        'Test Window Closed',
+        'The time window for this test has passed. You can no longer attempt it.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Block access before the window opens (unless already started)
+    if (windowState === 'before' && status === 'not_started') {
+      Alert.alert(
+        'Test Not Yet Open',
+        test.available_from
+          ? `This test opens at ${formatHHMM(test.available_from)}. Please come back then.`
+          : 'This test is not open yet.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     navigation.navigate('TestAttempt', {
       test: {
         id: test.id,
