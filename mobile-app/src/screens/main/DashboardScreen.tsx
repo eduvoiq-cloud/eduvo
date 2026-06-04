@@ -492,7 +492,7 @@ export default function DashboardScreen() {
                 value="View"
                 sub="Upcoming & past tests"
                 color="#8B5CF6"
-                onPress={() => navigation.navigate('More', { screen: 'Tests' } as any)}
+                onPress={() => navigation.navigate('Tests')}
               />
               <DashCard
                 icon="🗓️"

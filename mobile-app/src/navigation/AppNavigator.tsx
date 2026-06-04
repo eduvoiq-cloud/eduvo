@@ -46,6 +46,9 @@ export type MainTabParamList = {
   More: undefined;
 };
 
+// Alias for backwards compatibility
+export type StudentTabParamList = MainTabParamList;
+
 export type MainStackParamList = {
   MainTabs: undefined;
   TestAttempt: { test: TestMeta };
