@@ -653,6 +653,53 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
 
   if (updateErr) { sendError(res, `Failed to finalise submission: ${updateErr.message}`, 500); return; }
 
+  // ── Auto-write MCQ score into marks table so it appears in View Marks ──────
+  // Fetch test metadata needed for the marks record (subject, term, school_id, class)
+  const { data: testMeta } = await supabaseAdmin
+    .from('tests')
+    .select('subject, term, school_id, class, title')
+    .eq('id', attempt.test_id)
+    .single();
+
+  if (testMeta && totalMcqMarks > 0) {
+    // Upsert: if a marks record for this attempt already exists, update it;
+    // otherwise insert. We use a unique note tag to identify auto-generated records.
+    const noteTag = `auto:attempt:${attempt_id}`;
+
+    // Check if a record already exists for this attempt
+    const { data: existingMark } = await supabaseAdmin
+      .from('marks')
+      .select('id')
+      .eq('student_id', req.student!.id)
+      .eq('notes', noteTag)
+      .maybeSingle();
+
+    if (existingMark) {
+      // Update existing record
+      await supabaseAdmin
+        .from('marks')
+        .update({
+          score:    mcqScore,
+          max_score: totalMcqMarks,
+        })
+        .eq('id', existingMark.id);
+    } else {
+      // Insert new marks record
+      await supabaseAdmin
+        .from('marks')
+        .insert({
+          student_id:  req.student!.id,
+          subject:     testMeta.subject,
+          score:       mcqScore,
+          max_score:   totalMcqMarks,
+          term:        testMeta.term,
+          exam_type:   'class_test',
+          notes:       noteTag,
+          recorded_by: null,
+        });
+    }
+  }
+
   await logAudit(req.student!.id, 'TEST_SUBMITTED', {
     attempt_id,
     test_id: attempt.test_id,
@@ -737,6 +784,63 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
     .from('test_attempts')
     .update({ total_score: totalScore })
     .eq('id', attempt_id);
+
+  // ── Sync total_score into marks table too ─────────────────────────────────
+  // For mixed MCQ+theory tests, update the marks record with the final score
+  const { data: attemptDetail } = await supabaseAdmin
+    .from('test_attempts')
+    .select('student_id, test_id')
+    .eq('id', attempt_id)
+    .single();
+
+  if (attemptDetail) {
+    const noteTag = `auto:attempt:${attempt_id}`;
+    const { data: existingMark } = await supabaseAdmin
+      .from('marks')
+      .select('id')
+      .eq('student_id', attemptDetail.student_id)
+      .eq('notes', noteTag)
+      .maybeSingle();
+
+    // Calculate total possible marks by summing question marks from the test
+    const { data: testQuestions } = await supabaseAdmin
+      .from('test_questions')
+      .select('marks')
+      .eq('test_id', attemptDetail.test_id);
+
+    const maxScore = (testQuestions ?? []).reduce(
+      (sum: number, row: { marks: number }) => sum + Number(row.marks), 0
+    );
+
+    if (existingMark) {
+      await supabaseAdmin
+        .from('marks')
+        .update({ score: totalScore, max_score: maxScore })
+        .eq('id', existingMark.id);
+    } else {
+      // Fetch test metadata for subject/term
+      const { data: testMeta } = await supabaseAdmin
+        .from('tests')
+        .select('subject, term')
+        .eq('id', attemptDetail.test_id)
+        .single();
+
+      if (testMeta) {
+        await supabaseAdmin
+          .from('marks')
+          .insert({
+            student_id:  attemptDetail.student_id,
+            subject:     testMeta.subject,
+            score:       totalScore,
+            max_score:   maxScore,
+            term:        testMeta.term,
+            exam_type:   'class_test',
+            notes:       noteTag,
+            recorded_by: req.user!.id,
+          });
+      }
+    }
+  }
 
   await logAudit(req.user!.id, 'THEORY_MARKED', {
     attempt_id,
@@ -1293,6 +1397,84 @@ router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher',
     total_score: attempt.total_score,
     answers: formattedAnswers,
   });
+});
+
+// ── POST /api/tests/backfill-marks ───────────────────────────────────────────
+/**
+ * Backfills marks table from all existing submitted test_attempts for a school.
+ * Safe to run multiple times — uses upsert by notes tag.
+ * Teacher/admin only.
+ */
+router.post('/backfill-marks', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id ?? '';
+
+  // Get all submitted attempts for tests in this school
+  const { data: attempts, error: aErr } = await supabaseAdmin
+    .from('test_attempts')
+    .select(`
+      id, student_id, test_id, mcq_score, total_score,
+      tests!inner(subject, term, school_id, class)
+    `)
+    .eq('is_submitted', true)
+    .eq('tests.school_id', schoolId);
+
+  if (aErr) { sendError(res, aErr.message, 500); return; }
+
+  let inserted = 0;
+  let updated = 0;
+
+  for (const attempt of (attempts ?? [])) {
+    const a = attempt as Record<string, unknown>;
+    const test = a.tests as Record<string, unknown> | null;
+    if (!test) continue;
+
+    const score = (a.total_score ?? a.mcq_score) as number | null;
+    if (score === null) continue;
+
+    // Get total max marks for this test
+    const { data: questions } = await supabaseAdmin
+      .from('test_questions')
+      .select('marks')
+      .eq('test_id', a.test_id as string);
+
+    const maxScore = (questions ?? []).reduce(
+      (sum: number, q: { marks: number }) => sum + Number(q.marks), 0
+    );
+    if (maxScore === 0) continue;
+
+    const noteTag = `auto:attempt:${a.id}`;
+
+    const { data: existing } = await supabaseAdmin
+      .from('marks')
+      .select('id')
+      .eq('student_id', a.student_id as string)
+      .eq('notes', noteTag)
+      .maybeSingle();
+
+    if (existing) {
+      await supabaseAdmin
+        .from('marks')
+        .update({ score, max_score: maxScore })
+        .eq('id', existing.id);
+      updated++;
+    } else {
+      await supabaseAdmin
+        .from('marks')
+        .insert({
+          student_id:  a.student_id,
+          subject:     test.subject,
+          score,
+          max_score:   maxScore,
+          term:        test.term,
+          exam_type:   'class_test',
+          notes:       noteTag,
+          recorded_by: null,
+        });
+      inserted++;
+    }
+  }
+
+  sendSuccess(res, { inserted, updated }, `Backfilled ${inserted} new and updated ${updated} existing marks records`);
 });
 
 export default router;
