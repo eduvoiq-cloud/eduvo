@@ -1107,10 +1107,10 @@ router.get('/:test_id/attempts', authenticate, requireRole('teacher', 'schooladm
   if (sErr) { sendError(res, sErr.message, 500); return; }
 
   const studentMap = new Map(
-    (students ?? []).map((s: { id: string; roll_no: string; users: { id: string; name: string } }) => [
-      s.id,
-      { roll_no: s.roll_no, name: s.users.name },
-    ])
+    (students ?? []).map((s: { id: string; roll_no: string; users: { id: string; name: string } | { id: string; name: string }[] }) => {
+      const userObj = Array.isArray(s.users) ? s.users[0] : s.users;
+      return [s.id, { roll_no: s.roll_no, name: userObj?.name ?? 'Unknown' }];
+    })
   );
 
   // Check for pending theory marks per attempt
@@ -1285,7 +1285,7 @@ router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher',
     test_id: test.id,
     test_title: test.title,
     student_id: attempt.student_id,
-    student_name: student ? (student.users as { name: string }).name : 'Unknown',
+    student_name: student ? (Array.isArray(student.users) ? student.users[0]?.name : (student.users as { name: string })?.name) ?? 'Unknown' : 'Unknown',
     roll_no: student?.roll_no ?? '',
     started_at: attempt.started_at,
     submitted_at: attempt.submitted_at,
