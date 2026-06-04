@@ -222,8 +222,9 @@ export default function AIAssistantPage() {
   const [subject, setSubject] = useState('');
   const [selectedClass, setSelectedClass] = useState('');
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
+  const [testType, setTestType] = useState<'mcq' | 'theory'>('mcq');
   const [mcqCount, setMcqCount] = useState(10);
-  const [theoryCount, setTheoryCount] = useState(3);
+  const [theoryCount, setTheoryCount] = useState(5);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
@@ -388,8 +389,8 @@ export default function AIAssistantPage() {
           subject: subject.slice(0, 50),
           class_level: selectedClass.slice(0, 20) || 'General',
           difficulty,
-          mcq_count: mcqCount,
-          theory_count: theoryCount,
+          mcq_count: testType === 'mcq' ? mcqCount : 0,
+          theory_count: testType === 'theory' ? theoryCount : 0,
         }),
       });
 
@@ -670,7 +671,40 @@ export default function AIAssistantPage() {
                 </div>
               </div>
 
-              {/* MCQ count */}
+              {/* Test Type — MCQ or Theory (must choose one, no mixing) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Test Type <span className="text-red-500">*</span>
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTestType('mcq')}
+                    className={`flex-1 py-2.5 text-sm font-semibold rounded-lg border-2 transition-colors flex items-center justify-center gap-2 ${
+                      testType === 'mcq'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                    }`}
+                  >
+                    <span>🔵</span> MCQ Only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTestType('theory')}
+                    className={`flex-1 py-2.5 text-sm font-semibold rounded-lg border-2 transition-colors flex items-center justify-center gap-2 ${
+                      testType === 'theory'
+                        ? 'bg-purple-600 text-white border-purple-600'
+                        : 'bg-white text-gray-600 border-gray-200 hover:border-purple-300'
+                    }`}
+                  >
+                    <span>✍️</span> Theory Only
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">Each test must be one type only — MCQ or Theory, not both.</p>
+              </div>
+
+              {/* MCQ count — only shown for MCQ test type */}
+              {testType === 'mcq' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
                   MCQ Questions <span className="text-gray-400 font-normal">(1–30)</span>
@@ -682,19 +716,22 @@ export default function AIAssistantPage() {
                     className="w-16 px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg text-center focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               </div>
+              )}
 
-              {/* Theory count */}
+              {/* Theory count — only shown for Theory test type */}
+              {testType === 'theory' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Theory Questions <span className="text-gray-400 font-normal">(0–10)</span>
+                  Theory Questions <span className="text-gray-400 font-normal">(1–10)</span>
                 </label>
                 <div className="flex items-center gap-3">
-                  <input type="range" min={0} max={10} value={theoryCount} onChange={(e) => setTheoryCount(parseInt(e.target.value))}
+                  <input type="range" min={1} max={10} value={theoryCount} onChange={(e) => setTheoryCount(parseInt(e.target.value))}
                     className="flex-1 accent-purple-600" />
-                  <input type="number" min={0} max={10} value={theoryCount} onChange={(e) => setTheoryCount(Math.min(10, Math.max(0, parseInt(e.target.value) || 0)))}
-                    className="w-16 px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg text-center focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input type="number" min={1} max={10} value={theoryCount} onChange={(e) => setTheoryCount(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+                    className="w-16 px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg text-center focus:outline-none focus:ring-2 focus:ring-purple-500" />
                 </div>
               </div>
+              )}
 
               {/* Usage indicator */}
               {usage && (
@@ -716,12 +753,16 @@ export default function AIAssistantPage() {
               <button
                 onClick={handleGenerate}
                 disabled={generating || limitReached || !extractionId}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+                className={`w-full py-3 disabled:bg-blue-300 text-white text-sm font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 ${
+                  testType === 'theory'
+                    ? 'bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300'
+                    : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300'
+                }`}
               >
                 {generating ? (
                   <><Spinner /> Generating… This takes 10–15 seconds</>
                 ) : (
-                  <><span>✨</span> Generate Questions</>
+                  <><span>✨</span> Generate {testType === 'theory' ? 'Theory' : 'MCQ'} Questions</>
                 )}
               </button>
             </div>
