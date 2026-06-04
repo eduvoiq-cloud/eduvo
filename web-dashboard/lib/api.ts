@@ -509,6 +509,19 @@ export interface StudentMarksRow {
   total_obtained: number;
   total_max: number;
   percentage: number | null;
+  test_submissions: number;
+}
+
+export interface TestSubmissionRecord {
+  attempt_id: string;
+  test_id: string;
+  test_title: string | null;
+  subject: string | null;
+  term: string | null;
+  date: string | null;
+  mcq_score: number | null;
+  total_score: number | null;
+  submitted_at: string | null;
 }
 
 export interface StudentMarksDetail {
@@ -523,6 +536,8 @@ export interface StudentMarksDetail {
   total_obtained: number;
   total_max: number;
   percentage: number | null;
+  test_submissions: TestSubmissionRecord[];
+  test_submissions_count: number;
 }
 
 // ── Marks View endpoints (read-only, teacher + admin) ─────────────────────────

@@ -198,7 +198,7 @@ export default function TeacherClassMarksPage() {
                       <tr key={row.student_id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 text-gray-500">{row.roll_number ?? '—'}</td>
                         <td className="px-4 py-3 font-medium text-gray-900">{row.full_name}</td>
-                        <td className="px-4 py-3 text-center text-gray-600">{row.marks.length}</td>
+                        <td className="px-4 py-3 text-center text-gray-600">{row.test_submissions ?? row.marks.length}</td>
                         <td className="px-4 py-3 text-center text-gray-700 font-medium">
                           {row.marks.length > 0 ? `${row.total_obtained}/${row.total_max}` : '—'}
                         </td>

@@ -123,6 +123,19 @@ router.get('/class', async (req: Request, res: Response) => {
     return;
   }
 
+  // Fetch submitted test attempts for all students in one query
+  const { data: attempts } = await supabaseAdmin
+    .from('test_attempts')
+    .select('student_id, test_id, mcq_score, total_score, is_submitted')
+    .in('student_id', studentIds)
+    .eq('is_submitted', true);
+
+  // Build attempt count map: student_id -> number of submitted attempts
+  const attemptCountByStudent: Record<string, number> = {};
+  for (const a of (attempts ?? []) as Array<{ student_id: string }>) {
+    attemptCountByStudent[a.student_id] = (attemptCountByStudent[a.student_id] ?? 0) + 1;
+  }
+
   // Build a map: student_id -> marks[]
   const marksByStudent: Record<string, typeof marks> = {};
   for (const m of marks ?? []) {
@@ -157,6 +170,7 @@ router.get('/class', async (req: Request, res: Response) => {
       total_obtained: totalObtained,
       total_max: totalMax,
       percentage,
+      test_submissions: attemptCountByStudent[s.id] ?? 0,
     };
   });
 
@@ -189,26 +203,33 @@ router.get('/student/:id', async (req: Request, res: Response) => {
 
   // For teachers: verify they are assigned to the student's class
   if (req.user!.role === 'teacher') {
+    const cn  = (student.class_name ?? '').trim();
+    const sec = (student.section ?? '').trim();
+
+    // Use ilike (case-insensitive) to match — consistent with the /class route
     let assignQuery = supabaseAdmin
       .from('teacher_assignments')
       .select('id')
       .eq('teacher_id', req.user!.id)
       .eq('school_id', req.user!.school_id ?? '')
-      .eq('class_name', student.class_name)
-      .eq('section', student.section ?? '');
+      .ilike('class_name', cn);
+
+    if (sec) assignQuery = assignQuery.ilike('section', sec);
 
     const { data: assignment } = await assignQuery.limit(1);
 
     if (!assignment || assignment.length === 0) {
       // Fallback: legacy `class` column
-      const { data: fallback } = await supabaseAdmin
+      let fallbackQuery = supabaseAdmin
         .from('teacher_assignments')
         .select('id')
         .eq('teacher_id', req.user!.id)
         .eq('school_id', req.user!.school_id ?? '')
-        .eq('class', student.class_name)
-        .eq('section', student.section ?? '')
-        .limit(1);
+        .ilike('class', cn);
+
+      if (sec) fallbackQuery = fallbackQuery.ilike('section', sec);
+
+      const { data: fallback } = await fallbackQuery.limit(1);
 
       if (!fallback || fallback.length === 0) {
         sendError(res, 'You are not assigned to this student\'s class', 403);
@@ -243,6 +264,32 @@ router.get('/student/:id', async (req: Request, res: Response) => {
   );
   const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100) : null;
 
+  // Fetch submitted test attempts for this student
+  const { data: testAttempts } = await supabaseAdmin
+    .from('test_attempts')
+    .select(`
+      id, test_id, mcq_score, total_score, is_submitted, submitted_at,
+      tests!test_attempts_test_id_fkey(title, subject, class, section, term, date)
+    `)
+    .eq('student_id', id)
+    .eq('is_submitted', true)
+    .order('submitted_at', { ascending: false });
+
+  const formattedAttempts = (testAttempts ?? []).map((a: Record<string, unknown>) => {
+    const test = a.tests as Record<string, unknown> | null;
+    return {
+      attempt_id: a.id as string,
+      test_id: a.test_id as string,
+      test_title: test?.title as string ?? null,
+      subject: test?.subject as string ?? null,
+      term: test?.term as string ?? null,
+      date: test?.date as string ?? null,
+      mcq_score: a.mcq_score as number | null,
+      total_score: a.total_score as number | null,
+      submitted_at: a.submitted_at as string | null,
+    };
+  });
+
   sendSuccess(res, {
     student: {
       id: student.id,
@@ -255,6 +302,8 @@ router.get('/student/:id', async (req: Request, res: Response) => {
     total_obtained: totalObtained,
     total_max: totalMax,
     percentage,
+    test_submissions: formattedAttempts,
+    test_submissions_count: formattedAttempts.length,
   });
 });
 

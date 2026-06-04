@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { marksViewApi, type StudentMarksDetail } from '@/lib/api';
+import { marksViewApi, type StudentMarksDetail, type TestSubmissionRecord } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 
@@ -85,6 +85,8 @@ export default function TeacherStudentMarksPage() {
     if (!subjectMap.has(m.subject)) subjectMap.set(m.subject, []);
     subjectMap.get(m.subject)!.push(m);
   }
+
+  const testSubmissions: TestSubmissionRecord[] = detail.test_submissions ?? [];
 
   return (
     <>
@@ -218,6 +220,52 @@ export default function TeacherStudentMarksPage() {
           </div>
         </>
       )}
+
+      {/* Online test submissions */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-2xl mt-6">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-900">Online Test Submissions</h2>
+          <span className="text-xs text-gray-400">{testSubmissions.length} submission{testSubmissions.length !== 1 ? 's' : ''}</span>
+        </div>
+        {testSubmissions.length === 0 ? (
+          <p className="text-center py-8 text-sm text-gray-400">No online tests submitted yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Test</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Subject</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Term</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">MCQ Score</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Total</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Submitted</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {testSubmissions.map((t) => (
+                  <tr key={t.attempt_id} className="hover:bg-gray-50">
+                    <td className="px-6 py-3 font-medium text-gray-900">{t.test_title ?? '—'}</td>
+                    <td className="px-4 py-3 text-gray-600">{t.subject ?? '—'}</td>
+                    <td className="px-4 py-3 text-gray-600">{TERM_LABELS[t.term ?? ''] ?? t.term ?? '—'}</td>
+                    <td className="px-4 py-3 text-center font-semibold text-gray-800">
+                      {t.mcq_score !== null ? t.mcq_score : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {t.total_score !== null
+                        ? <span className="font-semibold text-gray-900">{t.total_score}</span>
+                        : <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Pending</span>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {t.submitted_at ? new Date(t.submitted_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </>
   );
 }
