@@ -42,6 +42,8 @@ interface SaveTestForm {
   section: string;
   term: string;
   date: string;
+  start_time: string;
+  end_time: string;
   time_limit_minutes: string;
   shuffle_questions: boolean;
   shuffle_options: boolean;
@@ -239,7 +241,7 @@ export default function AIAssistantPage() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [saveForm, setSaveForm] = useState<SaveTestForm>({
     title: '', subject_id: '', class: '', section: '', term: '',
-    date: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: false,
+    date: '', start_time: '', end_time: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: false,
   });
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -478,6 +480,8 @@ export default function AIAssistantPage() {
       section: '',
       term: '',
       date: '',
+      start_time: '',
+      end_time: '',
       time_limit_minutes: '',
       shuffle_questions: true,
       shuffle_options: false,
@@ -510,6 +514,9 @@ export default function AIAssistantPage() {
           class: saveForm.class,
           section: saveForm.section,
           term: saveForm.term.trim(),
+          date: saveForm.date || null,
+          available_from: saveForm.start_time || null,
+          available_until: saveForm.end_time || null,
           time_limit_minutes: saveForm.time_limit_minutes ? parseInt(saveForm.time_limit_minutes) : 60,
           shuffle_questions: saveForm.shuffle_questions,
           shuffle_options: saveForm.shuffle_options,
@@ -638,12 +645,21 @@ export default function AIAssistantPage() {
                 <h2 className="text-sm font-semibold text-gray-900">Configure Questions</h2>
               </div>
 
-              {/* Subject */}
+              {/* Subject — free-text with suggestions from assignments */}
               <FormField label="Subject" htmlFor="cfg-subject">
-                <select id="cfg-subject" className={inputClass} value={subject} onChange={(e) => setSubject(e.target.value)}>
-                  <option value="">Type or select…</option>
-                  {mySubjects.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <input
+                  id="cfg-subject"
+                  type="text"
+                  list="cfg-subject-list"
+                  className={inputClass}
+                  placeholder="Type or select a subject…"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  autoComplete="off"
+                />
+                <datalist id="cfg-subject-list">
+                  {mySubjects.map((s) => <option key={s} value={s} />)}
+                </datalist>
               </FormField>
 
               {/* Class */}
@@ -940,6 +956,21 @@ export default function AIAssistantPage() {
               value={saveForm.time_limit_minutes}
               onChange={(e) => setSaveForm((f) => ({ ...f, time_limit_minutes: e.target.value }))} />
           </FormField>
+
+          <div>
+            <p className="text-sm font-medium text-gray-700 mb-1.5">Test Window <span className="text-xs font-normal text-gray-400">(optional)</span></p>
+            <div className="grid grid-cols-2 gap-3">
+              <FormField label="Opens at" htmlFor="save-start-time">
+                <input id="save-start-time" type="time" className={inputClass} value={saveForm.start_time}
+                  onChange={(e) => setSaveForm((f) => ({ ...f, start_time: e.target.value }))} />
+              </FormField>
+              <FormField label="Closes at" htmlFor="save-end-time">
+                <input id="save-end-time" type="time" className={inputClass} value={saveForm.end_time}
+                  onChange={(e) => setSaveForm((f) => ({ ...f, end_time: e.target.value }))} />
+              </FormField>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">e.g. 9:00 PM – 10:00 PM. Students who enter at 9:58 PM still get the full time limit.</p>
+          </div>
 
           <div className="space-y-3 pt-1">
             <div className="flex items-center justify-between">
