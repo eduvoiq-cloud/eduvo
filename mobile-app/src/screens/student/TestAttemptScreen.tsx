@@ -27,6 +27,8 @@ export interface TestMeta {
   question_count: number;
   instructions?: string | null;
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
+  available_from?: string | null;
+  available_until?: string | null;
 }
 
 interface Question {
@@ -170,6 +172,28 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function formatHHMM(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${mStr} ${ampm}`;
+}
+
+type WindowState = 'before' | 'open' | 'closed' | 'no_window';
+
+function getWindowState(
+  availableFrom: string | null | undefined,
+  availableUntil: string | null | undefined,
+): WindowState {
+  if (!availableFrom && !availableUntil) return 'no_window';
+  const now = new Date();
+  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  if (availableFrom && nowHHMM < availableFrom) return 'before';
+  if (availableUntil && nowHHMM > availableUntil) return 'closed';
+  return 'open';
+}
+
 // ── Pre-test screen ───────────────────────────────────────────────────────────
 
 function PreTestScreen({
@@ -183,15 +207,50 @@ function PreTestScreen({
   starting: boolean;
   isResume?: boolean;
 }) {
+  const windowState = getWindowState(test.available_from, test.available_until);
+  const windowClosed = windowState === 'closed';
+  const windowNotYet = windowState === 'before';
+  const canStart = windowState === 'open' || windowState === 'no_window' || isResume;
+
   return (
     <ScrollView style={preStyles.container} contentContainerStyle={preStyles.content}>
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
 
       <View style={preStyles.iconWrap}>
-        <Text style={preStyles.icon}>📝</Text>
+        <Text style={preStyles.icon}>{windowClosed ? '🔴' : '📝'}</Text>
       </View>
 
       <Text style={preStyles.title}>{test.title}</Text>
+
+      {/* Window info banner */}
+      {(test.available_from || test.available_until) && (
+        <View style={[
+          preStyles.windowCard,
+          windowClosed && preStyles.windowCardClosed,
+          windowNotYet && preStyles.windowCardBefore,
+          windowState === 'open' && preStyles.windowCardOpen,
+        ]}>
+          <Text style={[
+            preStyles.windowLabel,
+            windowClosed && preStyles.windowLabelClosed,
+            windowNotYet && preStyles.windowLabelBefore,
+            windowState === 'open' && preStyles.windowLabelOpen,
+          ]}>
+            {windowClosed
+              ? '🔴 Test window has closed'
+              : windowNotYet
+              ? `🕐 Opens at ${formatHHMM(test.available_from!)}`
+              : '🟢 Test window is open'}
+          </Text>
+          {(test.available_from || test.available_until) && (
+            <Text style={preStyles.windowTime}>
+              {test.available_from ? formatHHMM(test.available_from) : ''}
+              {test.available_from && test.available_until ? ' – ' : ''}
+              {test.available_until ? formatHHMM(test.available_until) : ''}
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* Details grid */}
       <View style={preStyles.detailsCard}>
@@ -209,51 +268,64 @@ function PreTestScreen({
       </View>
 
       {/* Instructions */}
-      <View style={preStyles.instructionsCard}>
-        <Text style={preStyles.instructionsTitle}>Instructions</Text>
-        {[
-          'Read each question carefully before answering.',
-          'MCQ: tap an option to select it. You can change your answer before submitting.',
-          'Theory: type your answer in the text box provided.',
-          test.time_limit_minutes > 0
-            ? `You have ${test.time_limit_minutes} minutes. The test auto-submits when time runs out.`
-            : 'There is no time limit for this test.',
-          'Use the question pills at the top to jump between questions.',
-          'You must confirm before final submission.',
-        ].map((line, i) => (
-          <View key={i} style={preStyles.instrRow}>
-            <Text style={preStyles.instrBullet}>•</Text>
-            <Text style={preStyles.instrText}>{line}</Text>
-          </View>
-        ))}
-        {test.instructions ? (
-          <View style={preStyles.customInstr}>
-            <Text style={preStyles.customInstrTitle}>Teacher's Note</Text>
-            <Text style={preStyles.customInstrText}>{test.instructions}</Text>
-          </View>
-        ) : null}
-      </View>
+      {!windowClosed && (
+        <View style={preStyles.instructionsCard}>
+          <Text style={preStyles.instructionsTitle}>Instructions</Text>
+          {[
+            'Read each question carefully before answering.',
+            'MCQ: tap an option to select it. You can change your answer before submitting.',
+            'Theory: type your answer in the text box provided.',
+            test.time_limit_minutes > 0
+              ? `You have ${test.time_limit_minutes} minutes. The test auto-submits when time runs out.`
+              : 'There is no time limit for this test.',
+            (test.available_from || test.available_until)
+              ? 'You can enter the test any time within the window. Your full time limit starts when you press Start.'
+              : null,
+            'Use the question pills at the top to jump between questions.',
+            'You must confirm before final submission.',
+          ].filter(Boolean).map((line, i) => (
+            <View key={i} style={preStyles.instrRow}>
+              <Text style={preStyles.instrBullet}>•</Text>
+              <Text style={preStyles.instrText}>{line}</Text>
+            </View>
+          ))}
+          {test.instructions ? (
+            <View style={preStyles.customInstr}>
+              <Text style={preStyles.customInstrTitle}>Teacher's Note</Text>
+              <Text style={preStyles.customInstrText}>{test.instructions}</Text>
+            </View>
+          ) : null}
+        </View>
+      )}
 
       {/* Resume banner */}
-      {isResume && (
+      {isResume && !windowClosed && (
         <View style={preStyles.resumeBanner}>
           <Text style={preStyles.resumeText}>⏸ You have an attempt in progress. Tap below to continue.</Text>
         </View>
       )}
 
-      <TouchableOpacity
-        style={[preStyles.startBtn, isResume && preStyles.startBtnResume, starting && preStyles.startBtnDisabled]}
-        onPress={onStart}
-        disabled={starting}
-        accessibilityRole="button"
-        accessibilityLabel={isResume ? 'Continue test' : 'Start test'}
-      >
-        {starting ? (
-          <ActivityIndicator color="#FFFFFF" />
-        ) : (
-          <Text style={preStyles.startBtnText}>{isResume ? 'Continue Test →' : 'Start Test →'}</Text>
-        )}
-      </TouchableOpacity>
+      {canStart ? (
+        <TouchableOpacity
+          style={[preStyles.startBtn, isResume && preStyles.startBtnResume, starting && preStyles.startBtnDisabled]}
+          onPress={onStart}
+          disabled={starting}
+          accessibilityRole="button"
+          accessibilityLabel={isResume ? 'Continue test' : 'Start test'}
+        >
+          {starting ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={preStyles.startBtnText}>{isResume ? 'Continue Test →' : 'Start Test →'}</Text>
+          )}
+        </TouchableOpacity>
+      ) : (
+        <View style={[preStyles.startBtn, preStyles.startBtnDisabled, windowClosed && preStyles.startBtnClosed]}>
+          <Text style={preStyles.startBtnText}>
+            {windowClosed ? 'Test Window Closed' : windowNotYet ? `Opens at ${formatHHMM(test.available_from!)}` : 'Not Available'}
+          </Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -330,6 +402,7 @@ const preStyles = StyleSheet.create({
   },
   startBtnDisabled: { opacity: 0.6 },
   startBtnResume: { backgroundColor: '#15803D' },
+  startBtnClosed: { backgroundColor: '#DC2626', opacity: 1 },
   startBtnText: { fontSize: 17, fontWeight: '700', color: '#FFFFFF' },
   resumeBanner: {
     width: '100%',
@@ -341,6 +414,23 @@ const preStyles = StyleSheet.create({
     borderLeftColor: '#15803D',
   },
   resumeText: { fontSize: 13, color: '#065F46', fontWeight: '600', lineHeight: 19 },
+  windowCard: {
+    width: '100%',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#9CA3AF',
+  },
+  windowCardOpen: { backgroundColor: '#DCFCE7', borderLeftColor: '#15803D' },
+  windowCardClosed: { backgroundColor: '#FEE2E2', borderLeftColor: '#DC2626' },
+  windowCardBefore: { backgroundColor: '#FEF3C7', borderLeftColor: '#D97706' },
+  windowLabel: { fontSize: 14, fontWeight: '700', color: '#6B7280', marginBottom: 2 },
+  windowLabelOpen: { color: '#15803D' },
+  windowLabelClosed: { color: '#DC2626' },
+  windowLabelBefore: { color: '#D97706' },
+  windowTime: { fontSize: 13, color: '#374151', fontWeight: '500' },
 });
 
 // ── Question pill strip ───────────────────────────────────────────────────────

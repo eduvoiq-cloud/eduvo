@@ -20,6 +20,8 @@ interface TestDetails {
   section: string;
   term: string;
   date: string;
+  start_time: string;
+  end_time: string;
   time_limit_minutes: string;
   shuffle_questions: boolean;
   shuffle_options: boolean;
@@ -48,7 +50,7 @@ const TERM_LABELS: Record<string, string> = { term_1: 'Term 1', term_2: 'Term 2'
 
 const EMPTY_DETAILS: TestDetails = {
   title: '', subject: '', class_name: '', section: '', term: '',
-  date: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: true,
+  date: '', start_time: '', end_time: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: true,
 };
 
 const EMPTY_MCQ: MCQDraft = {
@@ -512,6 +514,11 @@ export default function CreateTestPage() {
         section: details.section,
         term: details.term,
         date: details.date,
+        available_from: details.start_time || null,
+        available_until: details.end_time || null,
+        time_limit_minutes: details.time_limit_minutes ? parseInt(details.time_limit_minutes) : undefined,
+        shuffle_questions: details.shuffle_questions,
+        shuffle_options: details.shuffle_options,
         questions: builtQuestions,
       });
 
@@ -634,6 +641,27 @@ export default function CreateTestPage() {
                   onChange={(e) => setDetails((d) => ({ ...d, time_limit_minutes: e.target.value }))}
                 />
               </FormField>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-700 mb-1.5">Test Window <span className="text-xs font-normal text-gray-400">(optional — restrict when students can start)</span></p>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField label="Opens at" htmlFor="d-start-time">
+                  <input
+                    id="d-start-time" type="time" className={inputClass}
+                    value={details.start_time}
+                    onChange={(e) => setDetails((d) => ({ ...d, start_time: e.target.value }))}
+                  />
+                </FormField>
+                <FormField label="Closes at" htmlFor="d-end-time">
+                  <input
+                    id="d-end-time" type="time" className={inputClass}
+                    value={details.end_time}
+                    onChange={(e) => setDetails((d) => ({ ...d, end_time: e.target.value }))}
+                  />
+                </FormField>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">e.g. 9:00 PM – 10:00 PM. Students who enter at 9:58 PM still get the full time limit.</p>
             </div>
 
             <div className="space-y-3 pt-1">

@@ -721,6 +721,9 @@ export const testsApi = {
     term: string; date: string;
     available_from?: string | null;
     available_until?: string | null;
+    time_limit_minutes?: number;
+    shuffle_questions?: boolean;
+    shuffle_options?: boolean;
     questions: TestQuestion[];
   }) =>
     request<Test>('/api/tests', {

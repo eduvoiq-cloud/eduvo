@@ -23,6 +23,8 @@ interface TestRecord {
   subject_id: string;
   date: string;
   time_limit_minutes: number;
+  available_from: string | null;
+  available_until: string | null;
   question_count: number;
   /** Attempt status derived from test_attempts — may not be present in initial list */
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
@@ -47,6 +49,31 @@ function formatDate(iso: string): string {
 
 function isUpcoming(dateStr: string): boolean {
   return new Date(dateStr) >= new Date(new Date().toDateString());
+}
+
+/** Returns the window state for today: 'before' | 'open' | 'closed' | 'no_window' */
+function getWindowState(
+  date: string,
+  availableFrom: string | null,
+  availableUntil: string | null
+): 'before' | 'open' | 'closed' | 'no_window' {
+  if (!availableFrom && !availableUntil) return 'no_window';
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const testDateStr = new Date(date).toISOString().split('T')[0];
+  if (todayStr !== testDateStr) return 'no_window'; // window only applies on the test date
+  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  if (availableFrom && nowHHMM < availableFrom) return 'before';
+  if (availableUntil && nowHHMM > availableUntil) return 'closed';
+  return 'open';
+}
+
+function formatHHMM(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${mStr} ${ampm}`;
 }
 
 // ── Status config ─────────────────────────────────────────────────────────────
@@ -229,6 +256,8 @@ function TestCard({
   const status = test.attempt_status ?? 'not_started';
   const config = STATUS_CONFIG[status];
   const upcoming = isUpcoming(test.date);
+  const windowState = getWindowState(test.date, test.available_from, test.available_until);
+  const hasWindow = test.available_from || test.available_until;
 
   return (
     <TouchableOpacity
@@ -254,6 +283,32 @@ function TestCard({
           <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
         </View>
       </View>
+
+      {/* Time window banner */}
+      {hasWindow && status !== 'completed' && (
+        <View style={[
+          styles.windowBanner,
+          windowState === 'open' && styles.windowBannerOpen,
+          windowState === 'closed' && styles.windowBannerClosed,
+          windowState === 'before' && styles.windowBannerBefore,
+        ]}>
+          <Text style={[
+            styles.windowBannerText,
+            windowState === 'open' && styles.windowBannerTextOpen,
+            windowState === 'closed' && styles.windowBannerTextClosed,
+            windowState === 'before' && styles.windowBannerTextBefore,
+          ]}>
+            {windowState === 'open'
+              ? `🟢 Window open${test.available_until ? ` · closes at ${formatHHMM(test.available_until)}` : ''}`
+              : windowState === 'before'
+              ? `🕐 Opens at ${formatHHMM(test.available_from!)}${test.available_until ? ` · closes ${formatHHMM(test.available_until)}` : ''}`
+              : windowState === 'closed'
+              ? '🔴 Test window closed'
+              : `⏰ ${test.available_from ? formatHHMM(test.available_from) : ''}${test.available_from && test.available_until ? ' – ' : ''}${test.available_until ? formatHHMM(test.available_until) : ''}`
+            }
+          </Text>
+        </View>
+      )}
 
       {/* Meta row */}
       <View style={styles.metaRow}>
@@ -341,6 +396,8 @@ export default function StudentTestsScreen() {
         time_limit_minutes: test.time_limit_minutes ?? 0,
         question_count: test.question_count,
         attempt_status: test.attempt_status,
+        available_from: test.available_from ?? null,
+        available_until: test.available_until ?? null,
       },
     });
   };
@@ -545,6 +602,23 @@ const styles = StyleSheet.create({
   },
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
   ctaTextCompleted: { color: '#15803D' },
+
+  // Window banner
+  windowBanner: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: '#F3F4F6',
+  },
+  windowBannerOpen: { backgroundColor: '#DCFCE7' },
+  windowBannerClosed: { backgroundColor: '#FEE2E2' },
+  windowBannerBefore: { backgroundColor: '#FEF3C7' },
+  windowBannerText: { fontSize: 12, fontWeight: '600', color: '#6B7280' },
+  windowBannerTextOpen: { color: '#15803D' },
+  windowBannerTextClosed: { color: '#DC2626' },
+  windowBannerTextBefore: { color: '#D97706' },
 
   // Empty / error
   emptyState: { alignItems: 'center', marginTop: 60 },

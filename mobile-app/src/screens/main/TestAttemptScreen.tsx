@@ -27,6 +27,8 @@ export interface TestMeta {
   question_count: number;
   instructions?: string | null;
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
+  available_from?: string | null;
+  available_until?: string | null;
 }
 
 interface Question {
@@ -169,6 +171,28 @@ function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function formatHHMM(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${mStr} ${ampm}`;
+}
+
+type WindowState = 'before' | 'open' | 'closed' | 'no_window';
+
+function getWindowState(
+  availableFrom: string | null | undefined,
+  availableUntil: string | null | undefined,
+): WindowState {
+  if (!availableFrom && !availableUntil) return 'no_window';
+  const now = new Date();
+  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  if (availableFrom && nowHHMM < availableFrom) return 'before';
+  if (availableUntil && nowHHMM > availableUntil) return 'closed';
+  return 'open';
 }
 
 // ── Pre-test screen ───────────────────────────────────────────────────────────
