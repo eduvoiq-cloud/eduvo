@@ -328,7 +328,9 @@ export default function TestsPage() {
     }
   }
 
-  // ── Derived ───────────────────────────────────────────────────────────────  const myClasses = [...new Set(assignments.map((a) => a.class_name))];
+  // ── Derived ───────────────────────────────────────────────────────────────
+
+  const myClasses = [...new Set(assignments.map((a) => a.class_name))];
   const mySections = [...new Set(assignments.filter((a) => a.class_name === filterClass).map((a) => a.section))];
   const mySubjects = [...new Set(assignments.filter((a) => a.class_name === filterClass && (!filterSection || a.section === filterSection)).map((a) => a.subject))];
   const totalMarks = questions.reduce((sum, q) => sum + parseFloat(q.marks || '0'), 0);
