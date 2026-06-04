@@ -10,16 +10,19 @@ import { useAuthStore } from '../store/authStore';
 import LoginScreen from '../screens/auth/LoginScreen';
 import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
 
-// Main screens
+// Main screens (used by students)
 import DashboardScreen from '../screens/main/DashboardScreen';
 import AttendanceScreen from '../screens/main/AttendanceScreen';
 import MarksScreen from '../screens/main/MarksScreen';
 import TimetableScreen from '../screens/main/TimetableScreen';
 import HomeworkScreen from '../screens/main/HomeworkScreen';
-import TestsScreen from '../screens/main/TestsScreen';
 import ComplaintsScreen from '../screens/main/ComplaintsScreen';
 import NotificationsScreen from '../screens/main/NotificationsScreen';
+import FeeStatusScreen from '../screens/main/FeeStatusScreen';
 import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
+
+// Student-specific screens
+import StudentTestsScreen from '../screens/student/TestsScreen';
 
 // More home screen
 import MoreHomeScreen from '../screens/main/MoreHomeScreen';
@@ -39,6 +42,7 @@ export type MainTabParamList = {
   Home: undefined;
   Attendance: undefined;
   Marks: undefined;
+  Tests: undefined;
   More: undefined;
 };
 
@@ -49,21 +53,8 @@ export type MainStackParamList = {
   LinkChild: undefined;
 };
 
-// ── Student navigator types (reuse main for now) ──────────────────────────────
-
-export type StudentTabParamList = {
-  Home: undefined;
-  Attendance: undefined;
-  Marks: undefined;
-  Tests: undefined;
-  More: undefined;
-};
-
-export type StudentStackParamList = {
-  StudentTabs: undefined;
-  TestAttempt: { test: TestMeta };
-  ChangePassword: undefined;
-};
+// Keep StudentStackParamList as an alias so existing student screens don't break
+export type StudentStackParamList = MainStackParamList;
 
 // ── Parent navigator types ────────────────────────────────────────────────────
 
@@ -118,26 +109,6 @@ function MoreNavigator() {
         options={{ title: 'More' }}
       />
       <MoreStack.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{ title: 'Settings' }}
-      />
-      <MoreStack.Screen
-        name="Timetable"
-        component={TimetableScreen}
-        options={{ title: 'Timetable' }}
-      />
-      <MoreStack.Screen
-        name="Homework"
-        component={HomeworkScreen}
-        options={{ title: 'Homework' }}
-      />
-      <MoreStack.Screen
-        name="Tests"
-        component={TestsScreen}
-        options={{ title: 'Tests' }}
-      />
-      <MoreStack.Screen
         name="Complaints"
         component={ComplaintsScreen}
         options={{ title: 'Complaints' }}
@@ -146,6 +117,36 @@ function MoreNavigator() {
         name="Notifications"
         component={NotificationsScreen}
         options={{ title: 'Notifications' }}
+      />
+      <MoreStack.Screen
+        name="FeeStatus"
+        component={FeeStatusScreen}
+        options={{ title: 'Fee Remaining' }}
+      />
+      <MoreStack.Screen
+        name="ChangePassword"
+        component={ChangePasswordScreen}
+        options={{ title: 'Change Password' }}
+      />
+      <MoreStack.Screen
+        name="LinkChild"
+        component={LinkChildScreen}
+        options={{ title: 'Link Another Student' }}
+      />
+      <MoreStack.Screen
+        name="Homework"
+        component={HomeworkScreen}
+        options={{ title: 'Homework' }}
+      />
+      <MoreStack.Screen
+        name="Timetable"
+        component={TimetableScreen}
+        options={{ title: 'Timetable' }}
+      />
+      <MoreStack.Screen
+        name="Settings"
+        component={SettingsScreen}
+        options={{ title: 'Settings' }}
       />
     </MoreStack.Navigator>
   );
@@ -190,6 +191,14 @@ function MainTabNavigator() {
         }}
       />
       <MainTab.Screen
+        name="Tests"
+        component={StudentTestsScreen}
+        options={{
+          title: 'Tests',
+          tabBarIcon: ({ focused }) => <TabIcon label="📝" focused={focused} />,
+        }}
+      />
+      <MainTab.Screen
         name="More"
         component={MoreNavigator}
         options={{
@@ -231,7 +240,7 @@ function MainNavigator() {
         component={LinkChildScreen}
         options={{
           headerShown: true,
-          headerTitle: 'Link Another Child',
+          headerTitle: 'Link Another Student',
           headerStyle: { backgroundColor: '#1D4ED8' },
           headerTintColor: '#FFFFFF',
           headerTitleStyle: { fontWeight: '600' },

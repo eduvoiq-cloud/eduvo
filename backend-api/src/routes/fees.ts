@@ -1,11 +1,59 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 
 const router = Router();
+
+// ── GET /api/fees/my-status ───────────────────────────────────────────────────
+/**
+ * Returns the fee record for the currently authenticated student.
+ * Auth: student token
+ */
+router.get('/my-status', authenticateStudent, async (req: Request, res: Response) => {
+  const studentId = req.student!.id;
+
+  const { data, error } = await supabaseAdmin
+    .from('student_fees')
+    .select('fee_paid, total_fee_amount, amount_paid, term, academic_year, notes')
+    .eq('student_id', studentId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    sendError(res, error.message, 500);
+    return;
+  }
+
+  if (!data) {
+    sendSuccess(res, null);
+    return;
+  }
+
+  const totalFee = data.total_fee_amount ?? 0;
+  const amountPaid = data.amount_paid ?? 0;
+  let paymentStatus: 'paid' | 'partial' | 'unpaid' = 'unpaid';
+  if (totalFee > 0) {
+    if (amountPaid >= totalFee) paymentStatus = 'paid';
+    else if (amountPaid > 0) paymentStatus = 'partial';
+  } else if (data.fee_paid) {
+    paymentStatus = 'paid';
+  }
+
+  sendSuccess(res, {
+    fee_paid: paymentStatus === 'paid',
+    total_fee_amount: totalFee,
+    amount_paid: amountPaid,
+    payment_status: paymentStatus,
+    term: data.term ?? null,
+    academic_year: data.academic_year ?? null,
+    notes: data.notes ?? null,
+  });
+});
+
 router.use(authenticate);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────

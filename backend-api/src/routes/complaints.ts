@@ -26,10 +26,12 @@ const complaintRateLimit = rateLimit({
 
 const createComplaintSchema = z.object({
   message: z.string().min(1, 'Message is required').max(1000, 'Message must be 1000 characters or less'),
-  recipient_type: z.enum(['class_teacher', 'school_admin'] as const, {
-    message: 'recipient_type must be "class_teacher" or "school_admin"',
+  recipient_type: z.enum(['class_teacher', 'school_admin', 'subject_teacher'] as const, {
+    message: 'recipient_type must be "class_teacher", "subject_teacher", or "school_admin"',
   }),
   subject: z.string().max(200, 'Subject must be 200 characters or less').optional(),
+  // Required when recipient_type is 'subject_teacher' — the teacher_id to send the complaint to
+  subject_teacher_id: z.string().uuid('subject_teacher_id must be a valid UUID').optional(),
 });
 
 const updateStatusSchema = z.object({
@@ -136,11 +138,17 @@ router.post(
       return;
     }
 
-    const { message, recipient_type, subject } = parsed.data;
+    const { message, recipient_type, subject, subject_teacher_id } = parsed.data;
     const student = req.student!;
 
     if (!student.class_name || !student.section) {
       sendError(res, 'Your student profile is missing class or section information', 400);
+      return;
+    }
+
+    // Validate subject_teacher_id is provided when recipient_type is 'subject_teacher'
+    if (recipient_type === 'subject_teacher' && !subject_teacher_id) {
+      sendError(res, 'subject_teacher_id is required when recipient_type is "subject_teacher"', 400);
       return;
     }
 
@@ -170,6 +178,29 @@ router.post(
 
       teacherId = assignment.teacher_id;
       notifyUserId = assignment.teacher_id;
+    } else if (recipient_type === 'subject_teacher') {
+      // Verify the given teacher is actually assigned to this student's class
+      const { data: assignment, error: assignErr } = await supabaseAdmin
+        .from('teacher_assignments')
+        .select('teacher_id')
+        .eq('school_id', student.school_id)
+        .eq('class_name', student.class_name)
+        .eq('section', student.section)
+        .eq('teacher_id', subject_teacher_id!)
+        .maybeSingle();
+
+      if (assignErr) {
+        sendError(res, 'Failed to verify subject teacher assignment', 500);
+        return;
+      }
+
+      if (!assignment) {
+        sendError(res, 'The selected teacher is not assigned to your class', 404);
+        return;
+      }
+
+      teacherId = subject_teacher_id!;
+      notifyUserId = subject_teacher_id!;
     } else {
       // recipient_type === 'school_admin'
       // Find the school admin for this school
@@ -217,16 +248,15 @@ router.post(
     // Send in-app notification to recipient
     if (notifyUserId) {
       const notifTitle =
-        recipient_type === 'class_teacher'
-          ? `New complaint from a student in your class ${student.class_name} ${student.section}`
-          : 'New student complaint submitted to school admin';
+        recipient_type === 'school_admin'
+          ? 'New student complaint submitted to school admin'
+          : `New complaint from a student in class ${student.class_name} ${student.section}`;
 
       const notifBody = subject
         ? `Subject: ${subject}`
         : 'A student has submitted a complaint. Please review it.';
 
-      // Use student.id as a pseudo sender — notifications table requires a users FK,
-      // so we use the recipient as sender for system-generated notifications.
+      // Use recipient as sender for system-generated notifications.
       await createNotification(notifyUserId, notifyUserId, notifTitle, notifBody);
     }
 
@@ -239,6 +269,7 @@ router.post(
       section: student.section,
       // student_id is logged so admins can investigate if needed, but message is not
       student_id: student.id,
+      ...(recipient_type === 'subject_teacher' && { subject_teacher_id }),
     });
 
     sendSuccess(res, { success: true, complaint_id: complaint.id }, 'Complaint submitted', 201);
@@ -384,6 +415,48 @@ router.get(
         section: student?.section ?? null,
       };
     });
+
+    sendSuccess(res, result);
+  }
+);
+
+// ── GET /api/complaints/my-teachers ──────────────────────────────────────────
+/**
+ * Returns the distinct subject teachers assigned to the student's class/section.
+ * Used by the mobile app to populate the "Complain to Subject Teacher" picker.
+ * Auth: student token
+ */
+router.get(
+  '/my-teachers',
+  authenticateStudent,
+  async (req: Request, res: Response) => {
+    const student = req.student!;
+
+    if (!student.class_name || !student.section) {
+      sendError(res, 'Your student profile is missing class or section information', 400);
+      return;
+    }
+
+    // Get all teacher assignments for this class/section, with teacher name
+    const { data, error } = await supabaseAdmin
+      .from('teacher_assignments')
+      .select('teacher_id, subject, users!teacher_assignments_teacher_id_fkey(name)')
+      .eq('school_id', student.school_id)
+      .eq('class_name', student.class_name)
+      .eq('section', student.section);
+
+    if (error) {
+      sendError(res, error.message, 500);
+      return;
+    }
+
+    // Deduplicate by teacher_id (a teacher may have multiple subjects listed)
+    // Return one entry per subject assignment
+    const result = (data ?? []).map((row: Record<string, unknown>) => ({
+      teacher_id: row.teacher_id as string,
+      subject: row.subject as string | null,
+      teacher_name: (row.users as { name: string } | null)?.name ?? 'Unknown Teacher',
+    }));
 
     sendSuccess(res, result);
   }

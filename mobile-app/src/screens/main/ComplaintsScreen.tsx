@@ -13,12 +13,13 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  FlatList,
 } from 'react-native';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type RecipientType = 'class_teacher' | 'school_admin';
+type RecipientType = 'class_teacher' | 'school_admin' | 'subject_teacher';
 
 interface Complaint {
   id: string;
@@ -26,8 +27,14 @@ interface Complaint {
   message: string;
   recipient_type: RecipientType;
   status: 'pending' | 'reviewed' | 'resolved';
-  response: string | null;
+  resolution_note: string | null;
   created_at: string;
+}
+
+interface SubjectTeacher {
+  teacher_id: string;
+  teacher_name: string;
+  subject: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,25 +66,172 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function recipientLabel(c: Complaint): string {
+  switch (c.recipient_type) {
+    case 'class_teacher':   return 'Class Teacher';
+    case 'subject_teacher': return 'Subject Teacher';
+    case 'school_admin':    return 'School Admin';
+    default:                return 'Unknown';
+  }
+}
+
+// ── Subject teacher picker modal ──────────────────────────────────────────────
+
+function SubjectPickerModal({
+  visible,
+  teachers,
+  loading,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  teachers: SubjectTeacher[];
+  loading: boolean;
+  onSelect: (teacher: SubjectTeacher) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+      accessibilityViewIsModal
+    >
+      <View style={pickerStyles.overlay}>
+        <View style={pickerStyles.sheet}>
+          <View style={pickerStyles.header}>
+            <Text style={pickerStyles.title}>Select Subject Teacher</Text>
+            <TouchableOpacity
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+            >
+              <Text style={pickerStyles.closeBtn}>✕</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={pickerStyles.subtitle}>
+            Choose the teacher you want to send your complaint to.
+          </Text>
+          {loading ? (
+            <ActivityIndicator size="large" color="#1D4ED8" style={{ marginTop: 24 }} />
+          ) : teachers.length === 0 ? (
+            <View style={pickerStyles.empty}>
+              <Text style={pickerStyles.emptyText}>
+                No subject teachers found for your class.
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={teachers}
+              keyExtractor={(item) => item.teacher_id + (item.subject ?? '')}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={pickerStyles.teacherRow}
+                  onPress={() => onSelect(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.teacher_name}${item.subject ? ', ' + item.subject : ''}`}
+                >
+                  <View style={pickerStyles.teacherIcon}>
+                    <Text style={pickerStyles.teacherIconText}>
+                      {item.teacher_name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={pickerStyles.teacherInfo}>
+                    <Text style={pickerStyles.teacherName}>{item.teacher_name}</Text>
+                    {item.subject ? (
+                      <Text style={pickerStyles.teacherSubject}>{item.subject}</Text>
+                    ) : null}
+                  </View>
+                  <Text style={pickerStyles.arrow}>›</Text>
+                </TouchableOpacity>
+              )}
+              style={{ maxHeight: 360 }}
+            />
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const pickerStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingBottom: 40,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  title: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  closeBtn: { fontSize: 18, color: '#9CA3AF', paddingLeft: 12 },
+  subtitle: { fontSize: 13, color: '#6B7280', marginBottom: 16 },
+  empty: { alignItems: 'center', paddingVertical: 24 },
+  emptyText: { fontSize: 14, color: '#9CA3AF' },
+  teacherRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  teacherIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  teacherIconText: { fontSize: 16, fontWeight: '700', color: '#1D4ED8' },
+  teacherInfo: { flex: 1 },
+  teacherName: { fontSize: 15, fontWeight: '600', color: '#111827' },
+  teacherSubject: { fontSize: 12, color: '#6B7280', marginTop: 2 },
+  arrow: { fontSize: 20, color: '#D1D5DB' },
+});
+
 // ── Complaint form modal ──────────────────────────────────────────────────────
 
 function ComplaintModal({
   visible,
   recipientType,
+  selectedTeacher,
   onClose,
   onSubmit,
 }: {
   visible: boolean;
   recipientType: RecipientType;
+  selectedTeacher: SubjectTeacher | null;
   onClose: () => void;
-  onSubmit: (subject: string, message: string, recipientType: RecipientType) => Promise<void>;
+  onSubmit: (
+    subject: string,
+    message: string,
+    recipientType: RecipientType,
+    teacherId?: string
+  ) => Promise<void>;
 }) {
   const [subject, setSubject] = useState('');
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const title =
-    recipientType === 'class_teacher' ? 'Complain to Class Teacher' : 'Complain to School Admin';
+    recipientType === 'class_teacher'
+      ? 'Complain to Class Teacher'
+      : recipientType === 'subject_teacher'
+      ? `Complain to ${selectedTeacher?.teacher_name ?? 'Subject Teacher'}`
+      : 'Complain to School Admin';
 
   const handleSubmit = async () => {
     if (!message.trim()) {
@@ -86,7 +240,12 @@ function ComplaintModal({
     }
     setSubmitting(true);
     try {
-      await onSubmit(subject.trim(), message.trim(), recipientType);
+      await onSubmit(
+        subject.trim(),
+        message.trim(),
+        recipientType,
+        recipientType === 'subject_teacher' ? selectedTeacher?.teacher_id : undefined
+      );
       setSubject('');
       setMessage('');
       onClose();
@@ -119,6 +278,15 @@ function ComplaintModal({
               <Text style={modalStyles.closeBtn}>✕</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Subject teacher badge */}
+          {recipientType === 'subject_teacher' && selectedTeacher?.subject ? (
+            <View style={modalStyles.teacherBadge}>
+              <Text style={modalStyles.teacherBadgeText}>
+                📚 Subject: {selectedTeacher.subject}
+              </Text>
+            </View>
+          ) : null}
 
           {/* Subject */}
           <Text style={modalStyles.label}>Subject (optional)</Text>
@@ -191,6 +359,14 @@ const modalStyles = StyleSheet.create({
   },
   title: { fontSize: 18, fontWeight: '700', color: '#111827', flex: 1 },
   closeBtn: { fontSize: 18, color: '#9CA3AF', paddingLeft: 12 },
+  teacherBadge: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 16,
+  },
+  teacherBadgeText: { fontSize: 13, color: '#1D4ED8', fontWeight: '600' },
   label: { fontSize: 13, fontWeight: '600', color: '#374151', marginBottom: 6 },
   input: {
     backgroundColor: '#F9FAFB',
@@ -263,13 +439,12 @@ function ComplaintDetailModal({
           ) : null}
           <Text style={detailStyles.message}>{complaint.message}</Text>
           <Text style={detailStyles.meta}>
-            {complaint.recipient_type === 'class_teacher' ? 'To: Class Teacher' : 'To: School Admin'} ·{' '}
-            {timeAgo(complaint.created_at)}
+            To: {recipientLabel(complaint)} · {timeAgo(complaint.created_at)}
           </Text>
-          {complaint.response ? (
+          {complaint.resolution_note ? (
             <View style={detailStyles.responseBox}>
               <Text style={detailStyles.responseLabel}>Response</Text>
-              <Text style={detailStyles.responseText}>{complaint.response}</Text>
+              <Text style={detailStyles.responseText}>{complaint.resolution_note}</Text>
             </View>
           ) : (
             <Text style={detailStyles.noResponse}>No response yet. You will be notified when reviewed.</Text>
@@ -334,9 +509,15 @@ export default function ComplaintsScreen() {
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null);
   const [successMessage, setSuccessMessage] = useState('');
 
+  // Subject teacher picker state
+  const [showTeacherPicker, setShowTeacherPicker] = useState(false);
+  const [teachers, setTeachers] = useState<SubjectTeacher[]>([]);
+  const [teachersLoading, setTeachersLoading] = useState(false);
+  const [selectedTeacher, setSelectedTeacher] = useState<SubjectTeacher | null>(null);
+
   const fetchComplaints = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/complaints');
+      const response = await apiClient.get('/api/complaints/student');
       setComplaints(response.data.data ?? []);
     } catch (err) {
       console.warn('[Complaints] fetch error:', err);
@@ -353,15 +534,41 @@ export default function ComplaintsScreen() {
     fetchComplaints();
   }, [fetchComplaints]);
 
+  const fetchTeachers = useCallback(async () => {
+    setTeachersLoading(true);
+    try {
+      const response = await apiClient.get('/api/complaints/my-teachers');
+      setTeachers(response.data.data ?? []);
+    } catch (err) {
+      console.warn('[Complaints] fetch teachers error:', err);
+      setTeachers([]);
+    } finally {
+      setTeachersLoading(false);
+    }
+  }, []);
+
+  const handleSubjectTeacherPress = useCallback(async () => {
+    setShowTeacherPicker(true);
+    await fetchTeachers();
+  }, [fetchTeachers]);
+
+  const handleTeacherSelect = useCallback((teacher: SubjectTeacher) => {
+    setSelectedTeacher(teacher);
+    setShowTeacherPicker(false);
+    setModalRecipient('subject_teacher');
+  }, []);
+
   const handleSubmit = async (
     subject: string,
     message: string,
-    recipientType: RecipientType
+    recipientType: RecipientType,
+    teacherId?: string
   ) => {
     await apiClient.post('/api/complaints', {
       subject: subject || null,
       message,
       recipient_type: recipientType,
+      ...(teacherId ? { subject_teacher_id: teacherId } : {}),
     });
     setSuccessMessage('Complaint submitted. You will be notified when reviewed.');
     setTimeout(() => setSuccessMessage(''), 4000);
@@ -387,7 +594,7 @@ export default function ComplaintsScreen() {
           </View>
         )}
 
-        {/* Option buttons */}
+        {/* Complain to Class Teacher */}
         <TouchableOpacity
           style={[styles.optionButton, styles.optionBlue]}
           onPress={() => setModalRecipient('class_teacher')}
@@ -396,12 +603,32 @@ export default function ComplaintsScreen() {
         >
           <Text style={styles.optionIcon}>👨‍🏫</Text>
           <View style={styles.optionText}>
-            <Text style={styles.optionTitle}>Complain to My Class Teacher</Text>
-            <Text style={styles.optionDesc}>For classroom related issues</Text>
+            <Text style={styles.optionTitle}>Complain to Class Teacher</Text>
+            <Text style={styles.optionDesc}>For general classroom issues</Text>
           </View>
           <Text style={styles.optionArrow}>›</Text>
         </TouchableOpacity>
 
+        {/* Complain to Subject Teacher */}
+        <TouchableOpacity
+          style={[styles.optionButton, styles.optionGreen]}
+          onPress={handleSubjectTeacherPress}
+          accessibilityRole="button"
+          accessibilityLabel="Complain to a subject teacher"
+        >
+          <Text style={styles.optionIcon}>📚</Text>
+          <View style={styles.optionText}>
+            <Text style={[styles.optionTitle, { color: '#065F46' }]}>
+              Complain to Subject Teacher
+            </Text>
+            <Text style={[styles.optionDesc, { color: '#059669' }]}>
+              Select a subject, goes only to that teacher
+            </Text>
+          </View>
+          <Text style={[styles.optionArrow, { color: '#059669' }]}>›</Text>
+        </TouchableOpacity>
+
+        {/* Complain to School Admin */}
         <TouchableOpacity
           style={[styles.optionButton, styles.optionOrange]}
           onPress={() => setModalRecipient('school_admin')}
@@ -410,8 +637,12 @@ export default function ComplaintsScreen() {
         >
           <Text style={styles.optionIcon}>🏫</Text>
           <View style={styles.optionText}>
-            <Text style={[styles.optionTitle, { color: '#92400E' }]}>Complain to School Admin</Text>
-            <Text style={[styles.optionDesc, { color: '#B45309' }]}>For school related issues</Text>
+            <Text style={[styles.optionTitle, { color: '#92400E' }]}>
+              Complain to School Admin
+            </Text>
+            <Text style={[styles.optionDesc, { color: '#B45309' }]}>
+              For school-wide issues
+            </Text>
           </View>
           <Text style={[styles.optionArrow, { color: '#B45309' }]}>›</Text>
         </TouchableOpacity>
@@ -446,8 +677,7 @@ export default function ComplaintsScreen() {
                 </View>
               </View>
               <Text style={styles.complaintMeta}>
-                {c.recipient_type === 'class_teacher' ? 'Class Teacher' : 'School Admin'} ·{' '}
-                {timeAgo(c.created_at)}
+                {recipientLabel(c)} · {timeAgo(c.created_at)}
               </Text>
               <Text style={styles.complaintPreview} numberOfLines={2}>
                 {c.message}
@@ -457,12 +687,25 @@ export default function ComplaintsScreen() {
         )}
       </ScrollView>
 
+      {/* Subject teacher picker */}
+      <SubjectPickerModal
+        visible={showTeacherPicker}
+        teachers={teachers}
+        loading={teachersLoading}
+        onSelect={handleTeacherSelect}
+        onClose={() => setShowTeacherPicker(false)}
+      />
+
       {/* Complaint form modal */}
       {modalRecipient && (
         <ComplaintModal
           visible={!!modalRecipient}
           recipientType={modalRecipient}
-          onClose={() => setModalRecipient(null)}
+          selectedTeacher={selectedTeacher}
+          onClose={() => {
+            setModalRecipient(null);
+            setSelectedTeacher(null);
+          }}
           onSubmit={handleSubmit}
         />
       )}
@@ -503,7 +746,8 @@ const styles = StyleSheet.create({
     shadowRadius: 5,
     elevation: 2,
   },
-  optionBlue: { backgroundColor: '#EFF6FF', borderLeftWidth: 4, borderLeftColor: '#1D4ED8' },
+  optionBlue:   { backgroundColor: '#EFF6FF', borderLeftWidth: 4, borderLeftColor: '#1D4ED8' },
+  optionGreen:  { backgroundColor: '#F0FDF4', borderLeftWidth: 4, borderLeftColor: '#10B981' },
   optionOrange: { backgroundColor: '#FFFBEB', borderLeftWidth: 4, borderLeftColor: '#F59E0B' },
   optionIcon: { fontSize: 28, marginRight: 14 },
   optionText: { flex: 1 },
