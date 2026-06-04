@@ -1201,15 +1201,14 @@ router.get('/:test_id/attempts', authenticate, requireRole('teacher', 'schooladm
   const studentIds = attempts.map((a) => a.student_id);
   const { data: students, error: sErr } = await supabaseAdmin
     .from('students')
-    .select('id, roll_no, users!inner(id, name)')
+    .select('id, roll_number, full_name')
     .in('id', studentIds);
 
   if (sErr) { sendError(res, sErr.message, 500); return; }
 
   const studentMap = new Map(
-    (students ?? []).map((s: { id: string; roll_no: string; users: { id: string; name: string } | { id: string; name: string }[] }) => {
-      const userObj = Array.isArray(s.users) ? s.users[0] : s.users;
-      return [s.id, { roll_no: s.roll_no, name: userObj?.name ?? 'Unknown' }];
+    (students ?? []).map((s: { id: string; roll_number: string; full_name: string }) => {
+      return [s.id, { roll_no: s.roll_number, name: s.full_name ?? 'Unknown' }];
     })
   );
 
@@ -1289,7 +1288,7 @@ router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher',
   // Fetch student details
   const { data: student } = await supabaseAdmin
     .from('students')
-    .select('id, roll_no, users!inner(name)')
+    .select('id, roll_number, full_name')
     .eq('id', attempt.student_id)
     .single();
 
@@ -1385,8 +1384,8 @@ router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher',
     test_id: test.id,
     test_title: test.title,
     student_id: attempt.student_id,
-    student_name: student ? (Array.isArray(student.users) ? student.users[0]?.name : (student.users as { name: string })?.name) ?? 'Unknown' : 'Unknown',
-    roll_no: student?.roll_no ?? '',
+    student_name: student?.full_name ?? 'Unknown',
+    roll_no: student?.roll_number ?? '',
     started_at: attempt.started_at,
     submitted_at: attempt.submitted_at,
     mcq_score: attempt.mcq_score,
@@ -1471,6 +1470,222 @@ router.post('/backfill-marks', authenticate, requireRole('teacher', 'schooladmin
   }
 
   sendSuccess(res, { inserted, updated }, `Backfilled ${inserted} new and updated ${updated} existing marks records`);
+});
+
+// ── GET /api/tests/:test_id/results-summary ───────────────────────────────────
+/**
+ * Teacher views a full summary for a test:
+ * - All students in the class/section with their attempt status & score
+ * - Stats: total students, attempted, not attempted, highest score, lowest score, avg score
+ */
+router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const { test_id } = req.params;
+
+  // Verify test exists and teacher has access
+  const { data: test, error: tErr } = await supabaseAdmin
+    .from('tests')
+    .select('id, class, section, school_id, title, date, available_from, available_until')
+    .eq('id', test_id)
+    .eq('school_id', req.user!.school_id ?? '')
+    .single();
+
+  if (tErr || !test) { sendError(res, 'Test not found', 404); return; }
+
+  if (req.user!.role === 'teacher') {
+    const allowed = await teacherOwnsClass(
+      req.user!.id,
+      req.user!.school_id ?? '',
+      (test as Record<string, unknown>)['class'] as string,
+      test.section
+    );
+    if (!allowed) { sendError(res, 'You are not assigned to this class/section', 403); return; }
+  }
+
+  // Fetch all students in the class/section
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, roll_number')
+    .eq('school_id', req.user!.school_id ?? '')
+    .ilike('class_name', (test as Record<string, unknown>)['class'] as string)
+    .ilike('section', test.section)
+    .eq('is_deleted', false)
+    .order('roll_number', { ascending: true });
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+
+  // Fetch all submitted attempts for this test
+  const { data: attempts, error: aErr } = await supabaseAdmin
+    .from('test_attempts')
+    .select('id, student_id, mcq_score, total_score, submitted_at, is_submitted')
+    .eq('test_id', test_id)
+    .eq('is_submitted', true);
+
+  if (aErr) { sendError(res, aErr.message, 500); return; }
+
+  // Get max possible marks
+  const { data: testQuestions } = await supabaseAdmin
+    .from('test_questions')
+    .select('marks')
+    .eq('test_id', test_id);
+  const maxScore = (testQuestions ?? []).reduce((sum: number, q: { marks: number }) => sum + Number(q.marks), 0);
+
+  // Check pending theory for each attempt
+  const { data: theoryAnswers } = await supabaseAdmin
+    .from('student_answers')
+    .select('attempt_id, marks_awarded')
+    .in('attempt_id', (attempts ?? []).map((a) => a.id))
+    .not('theory_answer', 'is', null);
+
+  const theoryPendingMap = new Map<string, boolean>();
+  for (const ans of (theoryAnswers ?? [])) {
+    if (ans.marks_awarded === null) theoryPendingMap.set(ans.attempt_id, true);
+  }
+
+  const attemptMap = new Map<string, { score: number | null; submitted_at: string; theory_pending: boolean }>();
+  for (const a of (attempts ?? [])) {
+    const score = a.total_score ?? a.mcq_score;
+    attemptMap.set(a.student_id, {
+      score,
+      submitted_at: a.submitted_at,
+      theory_pending: theoryPendingMap.get(a.id) ?? false,
+    });
+  }
+
+  // Build per-student rows
+  const rows = (students ?? []).map((s: { id: string; full_name: string; roll_number: string }) => {
+    const attempt = attemptMap.get(s.id);
+    return {
+      student_id: s.id,
+      student_name: s.full_name,
+      roll_no: s.roll_number,
+      attempted: !!attempt,
+      score: attempt?.score ?? null,
+      max_score: maxScore,
+      submitted_at: attempt?.submitted_at ?? null,
+      theory_pending: attempt?.theory_pending ?? false,
+    };
+  });
+
+  // Compute stats
+  const attemptedRows = rows.filter((r) => r.attempted && r.score !== null);
+  const scores = attemptedRows.map((r) => r.score as number);
+  const highestScore = scores.length > 0 ? Math.max(...scores) : null;
+  const lowestScore = scores.length > 0 ? Math.min(...scores) : null;
+  const avgScore = scores.length > 0 ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 : null;
+
+  sendSuccess(res, {
+    test_id,
+    test_title: test.title,
+    max_score: maxScore,
+    total_students: rows.length,
+    attempted_count: attemptedRows.length,
+    not_attempted_count: rows.length - attemptedRows.length,
+    highest_score: highestScore,
+    lowest_score: lowestScore,
+    avg_score: avgScore,
+    students: rows,
+  });
+});
+
+// ── GET /api/tests/:test_id/leaderboard ──────────────────────────────────────
+/**
+ * Student views the top 3 scorers for a test after the window has closed.
+ * Only available after available_until has passed (or test date is past).
+ * Returns anonymised rank, score, and first name only.
+ */
+router.get('/:test_id/leaderboard', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  const { test_id } = req.params;
+
+  const studentRecord = {
+    id: req.student!.id,
+    class_name: req.student!.class_name,
+    section: req.student!.section,
+    school_id: req.student!.school_id,
+  };
+
+  // Fetch test
+  const { data: test, error: tErr } = await supabaseAdmin
+    .from('tests')
+    .select('id, title, date, available_from, available_until, class, section, school_id')
+    .eq('id', test_id)
+    .eq('school_id', studentRecord.school_id)
+    .single();
+
+  if (tErr || !test) { sendError(res, 'Test not found', 404); return; }
+
+  // Only expose leaderboard when window has closed or test date has passed
+  // We compare server UTC date against the test date to decide
+  const now = new Date();
+  const testDate = new Date(test.date);
+  // Strip time from both for date-only comparison
+  const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const testDateOnly = new Date(testDate.getFullYear(), testDate.getMonth(), testDate.getDate());
+
+  const isTestDatePast = todayDate > testDateOnly;
+  const windowClosed = test.available_until
+    ? (() => {
+        // Only check window on same date
+        if (todayDate.getTime() !== testDateOnly.getTime()) return isTestDatePast;
+        const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        return nowHHMM > test.available_until;
+      })()
+    : isTestDatePast;
+
+  if (!windowClosed) {
+    sendError(res, 'Leaderboard is only available after the test window closes', 403);
+    return;
+  }
+
+  // Fetch top 3 submitted attempts by score (total_score first, fallback to mcq_score)
+  const { data: attempts, error: aErr } = await supabaseAdmin
+    .from('test_attempts')
+    .select('student_id, mcq_score, total_score')
+    .eq('test_id', test_id)
+    .eq('is_submitted', true);
+
+  if (aErr) { sendError(res, aErr.message, 500); return; }
+
+  if (!attempts || attempts.length === 0) {
+    sendSuccess(res, { leaderboard: [], max_score: 0 });
+    return;
+  }
+
+  // Get max possible marks
+  const { data: testQuestions } = await supabaseAdmin
+    .from('test_questions')
+    .select('marks')
+    .eq('test_id', test_id);
+  const maxScore = (testQuestions ?? []).reduce((sum: number, q: { marks: number }) => sum + Number(q.marks), 0);
+
+  // Sort by best score descending, take top 3
+  const sorted = [...attempts]
+    .map((a) => ({ student_id: a.student_id, score: (a.total_score ?? a.mcq_score ?? 0) as number }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  // Fetch first names only (privacy)
+  const studentIds = sorted.map((s) => s.student_id);
+  const { data: students } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name')
+    .in('id', studentIds);
+
+  const studentMap = new Map((students ?? []).map((s: { id: string; full_name: string }) => [s.id, s.full_name]));
+
+  const leaderboard = sorted.map((entry, idx) => {
+    const fullName = studentMap.get(entry.student_id) ?? 'Student';
+    // Only expose first name for privacy
+    const firstName = fullName.split(' ')[0];
+    return {
+      rank: idx + 1,
+      first_name: firstName,
+      score: entry.score,
+      max_score: maxScore,
+      is_self: entry.student_id === studentRecord.id,
+    };
+  });
+
+  sendSuccess(res, { leaderboard, max_score: maxScore });
 });
 
 export default router;

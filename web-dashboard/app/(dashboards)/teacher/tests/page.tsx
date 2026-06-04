@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   assignmentsApi, testsApi,
   type TeacherAssignment, type Test, type TestQuestion, type MCQQuestion, type TheoryQuestion,
-  type TestAttemptSummary, type TestAttemptDetail, type TestAnswerDetail,
+  type TestResultsSummary, type TestResultsSummaryRow, type TestAttemptDetail, type TestAnswerDetail,
 } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -75,7 +75,7 @@ export default function TestsPage() {
 
   // Submissions
   const [submissionsTest, setSubmissionsTest] = useState<Test | null>(null);
-  const [attempts, setAttempts] = useState<TestAttemptSummary[]>([]);
+  const [resultsSummary, setResultsSummary] = useState<TestResultsSummary | null>(null);
   const [attemptsLoading, setAttemptsLoading] = useState(false);
   const [attemptsError, setAttemptsError] = useState('');
 
@@ -247,16 +247,16 @@ export default function TestsPage() {
 
   async function openSubmissions(test: Test) {
     setSubmissionsTest(test);
-    setAttempts([]);
+    setResultsSummary(null);
     setAttemptsError('');
     setAttemptsLoading(true);
     try {
       const token = getToken();
       if (!token) return;
-      const res = await testsApi.listAttempts(token, test.id);
-      setAttempts(res.data);
+      const res = await testsApi.getResultsSummary(token, test.id);
+      setResultsSummary(res.data);
     } catch (e: unknown) {
-      setAttemptsError(e instanceof Error ? e.message : 'Failed to load submissions');
+      setAttemptsError(e instanceof Error ? e.message : 'Failed to load results');
     } finally {
       setAttemptsLoading(false);
     }
@@ -316,10 +316,10 @@ export default function TestsPage() {
       await testsApi.markTheory(token, { attempt_id: viewAttempt.attempt_id, theory_marks: payload });
       // Refresh attempt detail to show updated scores
       await openAttemptDetail(viewAttempt.attempt_id);
-      // Refresh the submissions list
+      // Refresh the results summary
       if (submissionsTest) {
-        const res = await testsApi.listAttempts(token, submissionsTest.id);
-        setAttempts(res.data);
+        const res = await testsApi.getResultsSummary(token, submissionsTest.id);
+        setResultsSummary(res.data);
       }
     } catch (e: unknown) {
       setMarkingError(e instanceof Error ? e.message : 'Failed to save marks');
@@ -712,8 +712,8 @@ export default function TestsPage() {
         </div>
       </Modal>
 
-      {/* ── Submissions List Modal ──────────────────────────────────────────── */}
-      <Modal open={!!submissionsTest} onClose={() => setSubmissionsTest(null)} title={`Submissions — ${submissionsTest?.title ?? ''}`} size="lg">
+      {/* ── Submissions List Modal ──────────────────────────────────────── */}
+      <Modal open={!!submissionsTest} onClose={() => setSubmissionsTest(null)} title={`Results — ${submissionsTest?.title ?? ''}`} size="lg">
         <div className="space-y-4">
           {attemptsError && (
             <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{attemptsError}</div>
@@ -722,56 +722,103 @@ export default function TestsPage() {
             <div className="flex justify-center py-10">
               <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
             </div>
-          ) : attempts.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-10">No submissions yet for this test.</p>
-          ) : (
-            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Roll No</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Student</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">MCQ Score</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Total</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Status</th>
-                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Submitted</th>
-                    <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {attempts.map((a) => (
-                    <tr key={a.attempt_id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{a.roll_no}</td>
-                      <td className="px-4 py-3 font-medium text-gray-900">{a.student_name}</td>
-                      <td className="px-4 py-3 text-gray-600">{a.mcq_score ?? '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{a.total_score ?? (a.theory_pending ? <span className="text-amber-600 text-xs">Pending</span> : '—')}</td>
-                      <td className="px-4 py-3">
-                        {a.theory_pending ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-                            Needs marking
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                            Marked
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500 text-xs">
-                        {a.submitted_at ? new Date(a.submitted_at).toLocaleString() : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => openAttemptDetail(a.attempt_id)}
-                          className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
-                        >
-                          {a.theory_pending ? 'Mark' : 'Review'}
-                        </button>
-                      </td>
+          ) : resultsSummary ? (
+            <div className="space-y-4">
+              {/* Stats bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {[
+                  { label: 'Total Students', value: resultsSummary.total_students, color: 'text-gray-700', bg: 'bg-gray-50' },
+                  { label: 'Attempted', value: resultsSummary.attempted_count, color: 'text-blue-700', bg: 'bg-blue-50' },
+                  { label: 'Not Attempted', value: resultsSummary.not_attempted_count, color: 'text-red-600', bg: 'bg-red-50' },
+                  { label: 'Highest', value: resultsSummary.highest_score !== null ? `${resultsSummary.highest_score} / ${resultsSummary.max_score}` : '—', color: 'text-green-700', bg: 'bg-green-50' },
+                  { label: 'Lowest', value: resultsSummary.lowest_score !== null ? `${resultsSummary.lowest_score} / ${resultsSummary.max_score}` : '—', color: 'text-amber-700', bg: 'bg-amber-50' },
+                ].map((stat) => (
+                  <div key={stat.label} className={`${stat.bg} rounded-lg p-3 text-center`}>
+                    <div className={`text-lg font-bold ${stat.color}`}>{stat.value}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{stat.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Average */}
+              {resultsSummary.avg_score !== null && (
+                <p className="text-xs text-gray-500 text-right">
+                  Class average: <span className="font-semibold text-gray-700">{resultsSummary.avg_score} / {resultsSummary.max_score}</span>
+                </p>
+              )}
+
+              {/* Student table */}
+              <div className="overflow-x-auto max-h-[55vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white">
+                    <tr className="border-b border-gray-200">
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Roll No</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Student</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Score</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Submitted</th>
+                      <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Action</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {resultsSummary.students.map((row: TestResultsSummaryRow) => (
+                      <tr key={row.student_id} className={`hover:bg-gray-50 transition-colors ${!row.attempted ? 'opacity-60' : ''}`}>
+                        <td className="px-3 py-3 text-gray-500 font-mono text-xs">{row.roll_no || '—'}</td>
+                        <td className="px-3 py-3 font-medium text-gray-900">{row.student_name}</td>
+                        <td className="px-3 py-3">
+                          {!row.attempted ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                              Not Attempted
+                            </span>
+                          ) : row.theory_pending ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                              Needs Marking
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                              Marked
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-3 text-gray-700 font-semibold">
+                          {row.attempted
+                            ? row.theory_pending
+                              ? <span className="text-amber-600 text-xs">Pending</span>
+                              : `${row.score ?? 0} / ${row.max_score}`
+                            : <span className="text-gray-400">—</span>
+                          }
+                        </td>
+                        <td className="px-3 py-3 text-gray-500 text-xs">
+                          {row.submitted_at ? new Date(row.submitted_at).toLocaleString() : '—'}
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          {row.attempted && (
+                            <button
+                              onClick={async () => {
+                                // We need the attempt_id to open the detail view.
+                                // Fetch it from the old attempts endpoint.
+                                const token = getToken();
+                                if (!token || !submissionsTest) return;
+                                try {
+                                  const res = await testsApi.listAttempts(token, submissionsTest.id);
+                                  const match = res.data.find((a) => a.student_id === row.student_id);
+                                  if (match) await openAttemptDetail(match.attempt_id);
+                                } catch { /* silent */ }
+                              }}
+                              className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                            >
+                              {row.theory_pending ? 'Mark' : 'Review'}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          ) : (
+            <p className="text-sm text-gray-400 text-center py-10">No data available.</p>
           )}
         </div>
       </Modal>

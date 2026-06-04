@@ -76,6 +76,19 @@ interface ResultData {
   answers: ResultAnswer[];
 }
 
+interface LeaderboardEntry {
+  rank: number;
+  first_name: string;
+  score: number;
+  max_score: number;
+  is_self: boolean;
+}
+
+interface LeaderboardData {
+  leaderboard: LeaderboardEntry[];
+  max_score: number;
+}
+
 // ── Navigation prop type (stack-compatible) ───────────────────────────────────
 
 interface TestAttemptScreenProps {
@@ -98,7 +111,7 @@ interface SavedProgress {
   attempt_id: string;
   answers: Answer[];
   currentIndex: number;
-  secondsLeft: number | null;
+  // secondsLeft intentionally NOT saved — timer is always recomputed from started_at
   savedAt: string;
 }
 
@@ -107,13 +120,12 @@ async function saveProgress(
   attempt_id: string,
   answers: Answer[],
   currentIndex: number,
-  secondsLeft: number | null
+  _secondsLeft: number | null  // kept in signature for call-site compat, ignored
 ): Promise<void> {
   const payload: SavedProgress = {
     attempt_id,
     answers,
     currentIndex,
-    secondsLeft,
     savedAt: new Date().toISOString(),
   };
   await AsyncStorage.setItem(progressKey(testId), JSON.stringify(payload));
@@ -770,18 +782,24 @@ const modalStyles = StyleSheet.create({
 // ── Results screen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
+  testId,
   testTitle,
   results,
+  leaderboard,
   onBack,
 }: {
+  testId: string;
   testTitle: string;
   results: ResultData;
+  leaderboard: LeaderboardData | null;
   onBack: () => void;
 }) {
   const mcqAnswers = results.answers.filter((a) => a.question_type === 'mcq');
   const theoryAnswers = results.answers.filter((a) => a.question_type === 'theory');
   const totalMcqMarks = mcqAnswers.reduce((s, a) => s + a.marks, 0);
   const correctCount = mcqAnswers.filter((a) => a.is_correct).length;
+
+  const RANK_MEDALS = ['🥇', '🥈', '🥉'];
 
   return (
     <ScrollView style={resStyles.container} contentContainerStyle={resStyles.content}>
@@ -815,6 +833,30 @@ function ResultsScreen({
           </>
         )}
       </View>
+
+      {/* Leaderboard — top 3 after window closes */}
+      {leaderboard && leaderboard.leaderboard.length > 0 && (
+        <View style={resStyles.leaderboardCard}>
+          <Text style={resStyles.leaderboardTitle}>🏆 Class Top Scorers</Text>
+          {leaderboard.leaderboard.map((entry) => (
+            <View
+              key={entry.rank}
+              style={[
+                resStyles.leaderboardRow,
+                entry.is_self && resStyles.leaderboardRowSelf,
+              ]}
+            >
+              <Text style={resStyles.leaderboardMedal}>{RANK_MEDALS[entry.rank - 1]}</Text>
+              <Text style={[resStyles.leaderboardName, entry.is_self && resStyles.leaderboardNameSelf]}>
+                {entry.first_name}{entry.is_self ? ' (You)' : ''}
+              </Text>
+              <Text style={resStyles.leaderboardScore}>
+                {entry.score} / {entry.max_score}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* MCQ per-question breakdown */}
       {mcqAnswers.length > 0 && (
@@ -972,6 +1014,42 @@ const resStyles = StyleSheet.create({
     marginTop: 8,
   },
   backBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+
+  // Leaderboard
+  leaderboardCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 5,
+    elevation: 2,
+    borderTopWidth: 3,
+    borderTopColor: '#F59E0B',
+  },
+  leaderboardTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  leaderboardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  leaderboardRowSelf: {
+    backgroundColor: '#EFF6FF',
+  },
+  leaderboardMedal: { fontSize: 22, width: 36 },
+  leaderboardName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151' },
+  leaderboardNameSelf: { color: '#1D4ED8' },
+  leaderboardScore: { fontSize: 14, fontWeight: '700', color: '#111827' },
 });
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -989,6 +1067,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [results, setResults] = useState<ResultData | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardData | null>(null);
 
   // ── Timer ───────────────────────────────────────────────────────────────────
   const hasTimeLimit = test.time_limit_minutes > 0;
@@ -1058,6 +1137,11 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
               const resultData = resResponse.data.data as ResultData;
               setResults(resultData);
               setAttemptId(attemptIdFromErr);
+              // Try leaderboard
+              try {
+                const lbResponse = await apiClient.get(`/api/tests/${test.id}/leaderboard`);
+                setLeaderboard(lbResponse.data.data as LeaderboardData);
+              } catch { setLeaderboard(null); }
               setPhase('results');
               return;
             } catch {
@@ -1098,17 +1182,14 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       if (saved && saved.attempt_id === payload.attempt_id) {
         setAnswers(saved.answers);
         setCurrentIndex(saved.currentIndex);
-        if (saved.secondsLeft !== null) {
-          setSecondsLeft(saved.secondsLeft);
-        } else if (hasTimeLimit) {
-          const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
-          setSecondsLeft(Math.max(0, payload.time_limit_minutes * 60 - elapsed));
-        }
-      } else if (payload.resumed && hasTimeLimit) {
+      }
+
+      // Timer is ALWAYS computed from started_at so it keeps running
+      // even when the app is backgrounded or killed and relaunched.
+      if (hasTimeLimit) {
         const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
-        setSecondsLeft(Math.max(0, payload.time_limit_minutes * 60 - elapsed));
-      } else if (hasTimeLimit) {
-        setSecondsLeft(payload.time_limit_minutes * 60);
+        const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
+        setSecondsLeft(remaining);
       }
 
       setPhase('active');
@@ -1128,6 +1209,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             const resultData = resResponse.data.data as ResultData;
             setResults(resultData);
             setAttemptId(attemptIdFromErr);
+            try {
+              const lbResponse = await apiClient.get(`/api/tests/${test.id}/leaderboard`);
+              setLeaderboard(lbResponse.data.data as LeaderboardData);
+            } catch { setLeaderboard(null); }
             setPhase('results');
           } else {
             Alert.alert('Already Submitted', 'This test has been submitted. Check the tests list for your results.');
@@ -1195,6 +1280,15 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       const resultData = resResponse.data.data as ResultData;
       setResults(resultData);
 
+      // Try to fetch leaderboard (only available after window closes — may 403)
+      try {
+        const lbResponse = await apiClient.get(`/api/tests/${test.id}/leaderboard`);
+        setLeaderboard(lbResponse.data.data as LeaderboardData);
+      } catch {
+        // Window not closed yet — leaderboard not available, that's fine
+        setLeaderboard(null);
+      }
+
       // Clear saved progress
       await clearProgress(test.id);
 
@@ -1228,8 +1322,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   if (phase === 'results' && results) {
     return (
       <ResultsScreen
+        testId={test.id}
         testTitle={test.title}
         results={results}
+        leaderboard={leaderboard}
         onBack={() => navigation.goBack()}
       />
     );

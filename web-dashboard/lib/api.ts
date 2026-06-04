@@ -254,6 +254,30 @@ export interface TestAttemptSummary {
   theory_pending: boolean;
 }
 
+export interface TestResultsSummaryRow {
+  student_id: string;
+  student_name: string;
+  roll_no: string;
+  attempted: boolean;
+  score: number | null;
+  max_score: number;
+  submitted_at: string | null;
+  theory_pending: boolean;
+}
+
+export interface TestResultsSummary {
+  test_id: string;
+  test_title: string;
+  max_score: number;
+  total_students: number;
+  attempted_count: number;
+  not_attempted_count: number;
+  highest_score: number | null;
+  lowest_score: number | null;
+  avg_score: number | null;
+  students: TestResultsSummaryRow[];
+}
+
 export interface TestAnswerDetail {
   question_id: string;
   order_index: number;
@@ -753,6 +777,9 @@ export const testsApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }, token),
+
+  getResultsSummary: (token: string, testId: string) =>
+    request<TestResultsSummary>(`/api/tests/${testId}/results-summary`, { method: 'GET' }, token),
 };
 
 // ── Onboarding endpoints ──────────────────────────────────────────────────────

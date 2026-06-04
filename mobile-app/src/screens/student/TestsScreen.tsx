@@ -48,8 +48,14 @@ function formatDate(iso: string): string {
   });
 }
 
+/** True when the test date is strictly in the future (not today). */
 function isUpcoming(dateStr: string): boolean {
-  return new Date(dateStr) >= new Date(new Date().toDateString());
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const testDate = new Date(dateStr);
+  const testStr = `${testDate.getFullYear()}-${pad(testDate.getMonth() + 1)}-${pad(testDate.getDate())}`;
+  return testStr > todayStr;
 }
 
 /** Returns the window state for today: 'before' | 'open' | 'closed' | 'no_window' */
@@ -263,10 +269,13 @@ function TestCard({
   const upcoming = isUpcoming(test.date);
   const windowState = getWindowState(test.date, test.available_from, test.available_until);
   const hasWindow = test.available_from || test.available_until;
+  // A test is locked if it's a future date OR before the window opens
+  const isLocked = (upcoming || windowState === 'before') && status === 'not_started';
+  const isClosed = windowState === 'closed' && status === 'not_started';
 
   return (
     <TouchableOpacity
-      style={[styles.card, upcoming && styles.cardUpcoming]}
+      style={[styles.card, upcoming && styles.cardUpcoming, isClosed && styles.cardClosed]}
       onPress={onPress}
       activeOpacity={0.8}
       accessibilityRole="button"
@@ -289,8 +298,16 @@ function TestCard({
         </View>
       </View>
 
-      {/* Time window banner */}
-      {hasWindow && status !== 'completed' && (
+      {/* Time window banner — show on test date; also show on upcoming dates */}
+      {upcoming && status === 'not_started' && (
+        <View style={[styles.windowBanner, styles.windowBannerBefore]}>
+          <Text style={[styles.windowBannerText, styles.windowBannerTextBefore]}>
+            🔒 Available on {formatDate(test.date)}
+            {test.available_from ? ` at ${formatHHMM(test.available_from)}` : ''}
+          </Text>
+        </View>
+      )}
+      {!upcoming && hasWindow && status !== 'completed' && (
         <View style={[
           styles.windowBanner,
           windowState === 'open' && styles.windowBannerOpen,
@@ -308,7 +325,7 @@ function TestCard({
               : windowState === 'before'
               ? `🕐 Opens at ${formatHHMM(test.available_from!)}${test.available_until ? ` · closes ${formatHHMM(test.available_until)}` : ''}`
               : windowState === 'closed'
-              ? '🔴 Test window closed'
+              ? '🔴 Test window closed · Unattempted'
               : `⏰ ${test.available_from ? formatHHMM(test.available_from) : ''}${test.available_from && test.available_until ? ' – ' : ''}${test.available_until ? formatHHMM(test.available_until) : ''}`
             }
           </Text>
@@ -329,14 +346,26 @@ function TestCard({
         <View style={styles.metaDivider} />
         <View style={styles.metaItem}>
           <Text style={styles.metaLabel}>TIME LIMIT</Text>
-          <Text style={styles.metaValue}>{test.time_limit_minutes} min</Text>
+          <Text style={styles.metaValue}>{test.time_limit_minutes > 0 ? `${test.time_limit_minutes} min` : '—'}</Text>
         </View>
       </View>
 
       {/* CTA */}
       <View style={styles.ctaRow}>
-        <Text style={[styles.ctaText, status === 'completed' && styles.ctaTextCompleted]}>
-          {status === 'completed' ? 'View Results →' : status === 'in_progress' ? 'Continue Test →' : 'Start Test →'}
+        <Text style={[
+          styles.ctaText,
+          status === 'completed' && styles.ctaTextCompleted,
+          (isLocked || isClosed) && styles.ctaTextLocked,
+        ]}>
+          {status === 'completed'
+            ? 'View Results →'
+            : status === 'in_progress'
+            ? 'Continue Test →'
+            : isClosed
+            ? '🔴 Window Closed'
+            : isLocked
+            ? '🔒 Locked'
+            : 'Start Test →'}
         </Text>
       </View>
     </TouchableOpacity>
@@ -396,6 +425,17 @@ export default function StudentTestsScreen() {
   const handleTestPress = (test: TestRecord) => {
     const windowState = getWindowState(test.date, test.available_from, test.available_until);
     const status = test.attempt_status ?? 'not_started';
+    const upcoming = isUpcoming(test.date);
+
+    // Test date is in the future — block entirely regardless of window
+    if (upcoming && status === 'not_started') {
+      Alert.alert(
+        'Test Not Available Yet',
+        `This test is scheduled for ${formatDate(test.date)}. It will be available on that date.`,
+        [{ text: 'OK' }]
+      );
+      return;
+    }
 
     // Block access when the window is closed and the student hasn't started yet.
     // Students who have an in-progress or completed attempt are always allowed through.
@@ -580,6 +620,11 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#1D4ED8',
   },
+  cardClosed: {
+    opacity: 0.75,
+    borderLeftWidth: 4,
+    borderLeftColor: '#DC2626',
+  },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -633,6 +678,7 @@ const styles = StyleSheet.create({
   },
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
   ctaTextCompleted: { color: '#15803D' },
+  ctaTextLocked: { color: '#9CA3AF' },
 
   // Window banner
   windowBanner: {
