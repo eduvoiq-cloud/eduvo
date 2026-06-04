@@ -406,8 +406,8 @@ export default function TestsPage() {
                     <td className="px-6 py-3 text-gray-600">{t.subject}</td>
                     <td className="px-6 py-3 text-gray-600">{new Date(t.date).toLocaleDateString()}</td>
                     <td className="px-6 py-3 text-gray-600 text-xs">
-                      {(t as unknown as Record<string,unknown>).available_from
-                        ? `${(t as unknown as Record<string,unknown>).available_from} – ${(t as unknown as Record<string,unknown>).available_until || '—'}`
+                      {t.available_from
+                        ? `${t.available_from} – ${t.available_until || '—'}`
                         : <span className="text-gray-400">Any time</span>}
                     </td>
                     <td className="px-6 py-3 text-gray-600">{t.term}</td>
@@ -640,8 +640,8 @@ export default function TestsPage() {
                 { label: 'Subject', value: viewTest.subject },
                 { label: 'Term', value: viewTest.term },
                 { label: 'Date', value: new Date(viewTest.date).toLocaleDateString() },
-                ...((viewTest as unknown as Record<string,unknown>).available_from
-                  ? [{ label: 'Window', value: `${(viewTest as unknown as Record<string,unknown>).available_from} – ${(viewTest as unknown as Record<string,unknown>).available_until || 'no close'}` }]
+                ...(viewTest.available_from
+                  ? [{ label: 'Window', value: `${viewTest.available_from} – ${viewTest.available_until || 'no close'}` }]
                   : []),
               ].map((item) => (
                 <span key={item.label} className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full">

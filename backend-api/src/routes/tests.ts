@@ -374,24 +374,10 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   if (tErr || !test) { sendError(res, 'Test not found or not available for your class', 404); return; }
 
   // Enforce scheduled time window if set
-  if ((test.available_from || test.available_until) && test.date) {
-    const now = new Date();
-    const testDate = new Date(test.date);
-    const todayStr = now.toISOString().split('T')[0];
-    const testDateStr = testDate.toISOString().split('T')[0];
-
-    if (todayStr === testDateStr) {
-      const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      if (test.available_from && nowHHMM < test.available_from) {
-        sendError(res, `This test is not available yet. It opens at ${test.available_from}.`, 403);
-        return;
-      }
-      if (test.available_until && nowHHMM > test.available_until) {
-        sendError(res, `This test window has closed. It was available until ${test.available_until}.`, 403);
-        return;
-      }
-    }
-  }
+  // NOTE: available_from / available_until are stored as HH:MM in the school's
+  // local time. The server cannot reliably know the school's timezone, so
+  // window enforcement is done client-side. We skip it here to avoid
+  // incorrect UTC-vs-local mismatches on the server.
 
   // Prevent duplicate active attempts
   const { data: existingAttempt } = await supabaseAdmin

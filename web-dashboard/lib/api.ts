@@ -232,6 +232,11 @@ export interface Test {
   section: string;
   term: string;
   date: string;
+  available_from?: string | null;
+  available_until?: string | null;
+  time_limit_minutes?: number | null;
+  shuffle_questions?: boolean;
+  shuffle_options?: boolean;
   school_id: string;
   created_by: string;
   created_at: string;
