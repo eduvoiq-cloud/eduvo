@@ -238,6 +238,51 @@ export interface Test {
   test_questions?: (TestQuestion & { id: string; order_index: number; test_id: string })[];
 }
 
+export interface TestAttemptSummary {
+  attempt_id: string;
+  student_id: string;
+  student_name: string;
+  roll_no: string;
+  submitted_at: string;
+  mcq_score: number | null;
+  total_score: number | null;
+  theory_pending: boolean;
+}
+
+export interface TestAnswerDetail {
+  question_id: string;
+  order_index: number;
+  question_text: string;
+  question_type: 'mcq' | 'theory';
+  marks: number;
+  // MCQ fields
+  option_a?: string | null;
+  option_b?: string | null;
+  option_c?: string | null;
+  option_d?: string | null;
+  correct_option?: string | null;
+  selected_option?: string | null;
+  is_correct?: boolean | null;
+  // Theory fields
+  theory_answer?: string | null;
+  // Common
+  marks_awarded: number | null;
+}
+
+export interface TestAttemptDetail {
+  attempt_id: string;
+  test_id: string;
+  test_title: string;
+  student_id: string;
+  student_name: string;
+  roll_no: string;
+  started_at: string;
+  submitted_at: string;
+  mcq_score: number | null;
+  total_score: number | null;
+  answers: TestAnswerDetail[];
+}
+
 export interface Complaint {
   id: string;
   subject: string;
@@ -685,6 +730,21 @@ export const testsApi = {
 
   remove: (token: string, id: string) =>
     request<null>(`/api/tests/${id}`, { method: 'DELETE' }, token),
+
+  listAttempts: (token: string, testId: string) =>
+    request<TestAttemptSummary[]>(`/api/tests/${testId}/attempts`, { method: 'GET' }, token),
+
+  getAttemptDetail: (token: string, attemptId: string) =>
+    request<TestAttemptDetail>(`/api/tests/attempts/${attemptId}/details`, { method: 'GET' }, token),
+
+  markTheory: (token: string, payload: {
+    attempt_id: string;
+    theory_marks: { question_id: string; marks_awarded: number }[];
+  }) =>
+    request<{ attempt_id: string; total_score: number }>('/api/tests/theory/mark', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
 };
 
 // ── Onboarding endpoints ──────────────────────────────────────────────────────

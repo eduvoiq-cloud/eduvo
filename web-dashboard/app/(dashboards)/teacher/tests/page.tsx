@@ -5,6 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import {
   assignmentsApi, testsApi,
   type TeacherAssignment, type Test, type TestQuestion, type MCQQuestion, type TheoryQuestion,
+  type TestAttemptSummary, type TestAttemptDetail, type TestAnswerDetail,
 } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -71,6 +72,19 @@ export default function TestsPage() {
 
   // Delete confirm
   const [deleteTarget, setDeleteTarget] = useState<Test | null>(null);
+
+  // Submissions
+  const [submissionsTest, setSubmissionsTest] = useState<Test | null>(null);
+  const [attempts, setAttempts] = useState<TestAttemptSummary[]>([]);
+  const [attemptsLoading, setAttemptsLoading] = useState(false);
+  const [attemptsError, setAttemptsError] = useState('');
+
+  // Attempt detail / theory marking
+  const [viewAttempt, setViewAttempt] = useState<TestAttemptDetail | null>(null);
+  const [attemptLoading, setAttemptLoading] = useState(false);
+  const [theoryMarks, setTheoryMarks] = useState<Record<string, string>>({});
+  const [markingSubmitting, setMarkingSubmitting] = useState(false);
+  const [markingError, setMarkingError] = useState('');
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
 
@@ -229,9 +243,92 @@ export default function TestsPage() {
     }
   }
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ── Submissions handlers ─────────────────────────────────────────────────
 
-  const myClasses = [...new Set(assignments.map((a) => a.class_name))];
+  async function openSubmissions(test: Test) {
+    setSubmissionsTest(test);
+    setAttempts([]);
+    setAttemptsError('');
+    setAttemptsLoading(true);
+    try {
+      const token = getToken();
+      if (!token) return;
+      const res = await testsApi.listAttempts(token, test.id);
+      setAttempts(res.data);
+    } catch (e: unknown) {
+      setAttemptsError(e instanceof Error ? e.message : 'Failed to load submissions');
+    } finally {
+      setAttemptsLoading(false);
+    }
+  }
+
+  async function openAttemptDetail(attemptId: string) {
+    setAttemptLoading(true);
+    setMarkingError('');
+    setViewAttempt(null);
+    try {
+      const token = getToken();
+      if (!token) return;
+      const res = await testsApi.getAttemptDetail(token, attemptId);
+      setViewAttempt(res.data);
+      // Pre-fill any already-awarded theory marks
+      const prefilled: Record<string, string> = {};
+      for (const ans of res.data.answers) {
+        if (ans.question_type === 'theory' && ans.marks_awarded !== null) {
+          prefilled[ans.question_id] = String(ans.marks_awarded);
+        }
+      }
+      setTheoryMarks(prefilled);
+    } catch (e: unknown) {
+      setMarkingError(e instanceof Error ? e.message : 'Failed to load attempt');
+    } finally {
+      setAttemptLoading(false);
+    }
+  }
+
+  async function submitTheoryMarks() {
+    if (!viewAttempt) return;
+    setMarkingError('');
+    const token = getToken();
+    if (!token) return;
+
+    const theoryQuestions = viewAttempt.answers.filter((a) => a.question_type === 'theory');
+    // Validate all theory questions have marks entered
+    for (const q of theoryQuestions) {
+      const val = theoryMarks[q.question_id];
+      if (val === undefined || val === '') {
+        setMarkingError(`Please enter marks for all theory questions (missing Q: ${q.question_text.slice(0, 40)}…)`);
+        return;
+      }
+      const n = parseFloat(val);
+      if (isNaN(n) || n < 0 || n > q.marks) {
+        setMarkingError(`Marks for "${q.question_text.slice(0, 40)}…" must be between 0 and ${q.marks}.`);
+        return;
+      }
+    }
+
+    setMarkingSubmitting(true);
+    try {
+      const payload = theoryQuestions.map((q) => ({
+        question_id: q.question_id,
+        marks_awarded: parseFloat(theoryMarks[q.question_id]),
+      }));
+      await testsApi.markTheory(token, { attempt_id: viewAttempt.attempt_id, theory_marks: payload });
+      // Refresh attempt detail to show updated scores
+      await openAttemptDetail(viewAttempt.attempt_id);
+      // Refresh the submissions list
+      if (submissionsTest) {
+        const res = await testsApi.listAttempts(token, submissionsTest.id);
+        setAttempts(res.data);
+      }
+    } catch (e: unknown) {
+      setMarkingError(e instanceof Error ? e.message : 'Failed to save marks');
+    } finally {
+      setMarkingSubmitting(false);
+    }
+  }
+
+  // ── Derived ───────────────────────────────────────────────────────────────  const myClasses = [...new Set(assignments.map((a) => a.class_name))];
   const mySections = [...new Set(assignments.filter((a) => a.class_name === filterClass).map((a) => a.section))];
   const mySubjects = [...new Set(assignments.filter((a) => a.class_name === filterClass && (!filterSection || a.section === filterSection)).map((a) => a.subject))];
   const totalMarks = questions.reduce((sum, q) => sum + parseFloat(q.marks || '0'), 0);
@@ -317,6 +414,10 @@ export default function TestsPage() {
                         <button onClick={() => setViewTest(t)}
                           className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors">
                           View
+                        </button>
+                        <button onClick={() => openSubmissions(t)}
+                          className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors">
+                          Submissions
                         </button>
                         <button onClick={() => setDeleteTarget(t)}
                           className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors">
@@ -607,6 +708,182 @@ export default function TestsPage() {
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* ── Submissions List Modal ──────────────────────────────────────────── */}
+      <Modal open={!!submissionsTest} onClose={() => setSubmissionsTest(null)} title={`Submissions — ${submissionsTest?.title ?? ''}`} size="lg">
+        <div className="space-y-4">
+          {attemptsError && (
+            <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{attemptsError}</div>
+          )}
+          {attemptsLoading ? (
+            <div className="flex justify-center py-10">
+              <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : attempts.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-10">No submissions yet for this test.</p>
+          ) : (
+            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Roll No</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Student</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">MCQ Score</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Total</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Status</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Submitted</th>
+                    <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {attempts.map((a) => (
+                    <tr key={a.attempt_id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{a.roll_no}</td>
+                      <td className="px-4 py-3 font-medium text-gray-900">{a.student_name}</td>
+                      <td className="px-4 py-3 text-gray-600">{a.mcq_score ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{a.total_score ?? (a.theory_pending ? <span className="text-amber-600 text-xs">Pending</span> : '—')}</td>
+                      <td className="px-4 py-3">
+                        {a.theory_pending ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                            Needs marking
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                            Marked
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500 text-xs">
+                        {a.submitted_at ? new Date(a.submitted_at).toLocaleString() : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => openAttemptDetail(a.attempt_id)}
+                          className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                        >
+                          {a.theory_pending ? 'Mark' : 'Review'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      {/* ── Attempt Detail / Theory Marking Modal ──────────────────────────── */}
+      <Modal
+        open={!!viewAttempt || attemptLoading}
+        onClose={() => { setViewAttempt(null); setMarkingError(''); setTheoryMarks({}); }}
+        title={viewAttempt ? `${viewAttempt.student_name} — ${viewAttempt.test_title}` : 'Loading…'}
+        size="lg"
+      >
+        {attemptLoading ? (
+          <div className="flex justify-center py-10">
+            <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : viewAttempt ? (
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+            {/* Summary bar */}
+            <div className="flex flex-wrap gap-2 text-xs">
+              {[
+                { label: 'Roll No', value: viewAttempt.roll_no },
+                { label: 'MCQ Score', value: viewAttempt.mcq_score ?? '—' },
+                { label: 'Total', value: viewAttempt.total_score ?? 'Pending' },
+                { label: 'Submitted', value: new Date(viewAttempt.submitted_at).toLocaleString() },
+              ].map((item) => (
+                <span key={item.label} className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full">
+                  <span className="font-medium">{item.label}:</span> {item.value}
+                </span>
+              ))}
+            </div>
+
+            {markingError && (
+              <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{markingError}</div>
+            )}
+
+            {/* Answers */}
+            <div className="space-y-3">
+              {viewAttempt.answers.map((ans: TestAnswerDetail, idx: number) => (
+                <div key={ans.question_id} className="border border-gray-200 rounded-lg p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-medium text-gray-900">
+                      <span className="text-gray-400 mr-2">Q{idx + 1}.</span>{ans.question_text}
+                    </p>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${ans.question_type === 'mcq' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                        {ans.question_type.toUpperCase()}
+                      </span>
+                      <span className="text-xs text-gray-500">{ans.marks}m</span>
+                    </div>
+                  </div>
+
+                  {ans.question_type === 'mcq' ? (
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(['a', 'b', 'c', 'd'] as const).map((letter, oi) => {
+                        const optKey = `option_${letter}` as keyof TestAnswerDetail;
+                        const optText = ans[optKey] as string | null;
+                        if (!optText) return null;
+                        const isCorrect = ans.correct_option === letter;
+                        const isSelected = ans.selected_option === letter;
+                        return (
+                          <div key={letter} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${
+                            isCorrect ? 'bg-green-50 border border-green-200 text-green-700 font-medium'
+                            : isSelected && !isCorrect ? 'bg-red-50 border border-red-200 text-red-600'
+                            : 'bg-gray-50 text-gray-600'
+                          }`}>
+                            <span className="font-bold">{letter.toUpperCase()}.</span>
+                            {optText}
+                            {isSelected && <span className="ml-auto text-xs">{isCorrect ? '✓' : '✗'}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="px-3 py-2.5 bg-gray-50 rounded-lg text-sm text-gray-700 min-h-[3rem]">
+                        {ans.theory_answer || <span className="text-gray-400 italic">No answer provided</span>}
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="text-xs font-medium text-gray-600">
+                          Marks awarded (max {ans.marks}):
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={ans.marks}
+                          step={0.5}
+                          className="w-20 px-2 py-1 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          value={theoryMarks[ans.question_id] ?? (ans.marks_awarded !== null ? String(ans.marks_awarded) : '')}
+                          onChange={(e) => setTheoryMarks((prev) => ({ ...prev, [ans.question_id]: e.target.value }))}
+                        />
+                        {ans.marks_awarded !== null && (
+                          <span className="text-xs text-green-600 font-medium">Currently: {ans.marks_awarded}/{ans.marks}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Save marks button — only show if there are theory questions */}
+            {viewAttempt.answers.some((a) => a.question_type === 'theory') && (
+              <div className="flex justify-end pt-1">
+                <button
+                  onClick={submitTheoryMarks}
+                  disabled={markingSubmitting}
+                  className="px-5 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg transition-colors"
+                >
+                  {markingSubmitting ? 'Saving…' : 'Save Theory Marks'}
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
       </Modal>
     </>
   );

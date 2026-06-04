@@ -1050,4 +1050,249 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async
   sendSuccess(res, null, 'Test deleted');
 });
 
+// ── GET /api/tests/:test_id/attempts ──────────────────────────────────────────
+/**
+ * Teacher lists all student attempts (submissions) for a test.
+ * Returns: student name, mcq_score, total_score, submitted_at, whether theory marking is pending.
+ */
+router.get('/:test_id/attempts', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const { test_id } = req.params;
+
+  // Verify test exists and teacher has access
+  const { data: test, error: tErr } = await supabaseAdmin
+    .from('tests')
+    .select('id, class, section, school_id')
+    .eq('id', test_id)
+    .eq('school_id', req.user!.school_id ?? '')
+    .single();
+
+  if (tErr || !test) { sendError(res, 'Test not found', 404); return; }
+
+  // Verify teacher owns this class/section
+  if (req.user!.role === 'teacher') {
+    const allowed = await teacherOwnsClass(
+      req.user!.id,
+      req.user!.school_id ?? '',
+      (test as Record<string, unknown>)['class'] as string,
+      test.section
+    );
+    if (!allowed) {
+      sendError(res, 'You are not assigned to this class/section', 403);
+      return;
+    }
+  }
+
+  // Fetch all submitted attempts
+  const { data: attempts, error: aErr } = await supabaseAdmin
+    .from('test_attempts')
+    .select('id, student_id, started_at, submitted_at, is_submitted, mcq_score, total_score')
+    .eq('test_id', test_id)
+    .eq('is_submitted', true)
+    .order('submitted_at', { ascending: false });
+
+  if (aErr) { sendError(res, aErr.message, 500); return; }
+
+  if (!attempts || attempts.length === 0) {
+    sendSuccess(res, []);
+    return;
+  }
+
+  // Fetch student details
+  const studentIds = attempts.map((a) => a.student_id);
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, roll_no, users!inner(id, name)')
+    .in('id', studentIds);
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+
+  const studentMap = new Map(
+    (students ?? []).map((s: { id: string; roll_no: string; users: { id: string; name: string } }) => [
+      s.id,
+      { roll_no: s.roll_no, name: s.users.name },
+    ])
+  );
+
+  // Check for pending theory marks per attempt
+  const { data: allAnswers } = await supabaseAdmin
+    .from('student_answers')
+    .select('attempt_id, theory_answer, marks_awarded')
+    .in('attempt_id', attempts.map((a) => a.id))
+    .not('theory_answer', 'is', null);
+
+  const theoryPendingMap = new Map<string, boolean>();
+  for (const ans of (allAnswers ?? [])) {
+    if (ans.marks_awarded === null) {
+      theoryPendingMap.set(ans.attempt_id, true);
+    }
+  }
+
+  // Build response
+  const result = attempts.map((a) => {
+    const student = studentMap.get(a.student_id);
+    return {
+      attempt_id: a.id,
+      student_id: a.student_id,
+      student_name: student?.name ?? 'Unknown',
+      roll_no: student?.roll_no ?? '',
+      submitted_at: a.submitted_at,
+      mcq_score: a.mcq_score,
+      total_score: a.total_score,
+      theory_pending: theoryPendingMap.get(a.id) ?? false,
+    };
+  });
+
+  sendSuccess(res, result);
+});
+
+// ── GET /api/tests/attempts/:attempt_id/details ──────────────────────────────
+/**
+ * Teacher views full attempt details with all answers and questions for marking.
+ * Returns questions with student answers, marks awarded, and for theory shows the student's text answer.
+ */
+router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const { attempt_id } = req.params;
+
+  // Fetch attempt
+  const { data: attempt, error: aErr } = await supabaseAdmin
+    .from('test_attempts')
+    .select('id, test_id, student_id, started_at, submitted_at, is_submitted, mcq_score, total_score')
+    .eq('id', attempt_id)
+    .single();
+
+  if (aErr || !attempt) { sendError(res, 'Attempt not found', 404); return; }
+  if (!attempt.is_submitted) { sendError(res, 'This attempt has not been submitted yet', 400); return; }
+
+  // Verify test access
+  const { data: test, error: tErr } = await supabaseAdmin
+    .from('tests')
+    .select('id, title, class, section, school_id')
+    .eq('id', attempt.test_id)
+    .eq('school_id', req.user!.school_id ?? '')
+    .single();
+
+  if (tErr || !test) { sendError(res, 'Test not found', 404); return; }
+
+  if (req.user!.role === 'teacher') {
+    const allowed = await teacherOwnsClass(
+      req.user!.id,
+      req.user!.school_id ?? '',
+      (test as Record<string, unknown>)['class'] as string,
+      test.section
+    );
+    if (!allowed) {
+      sendError(res, 'You are not assigned to this class/section', 403);
+      return;
+    }
+  }
+
+  // Fetch student details
+  const { data: student } = await supabaseAdmin
+    .from('students')
+    .select('id, roll_no, users!inner(name)')
+    .eq('id', attempt.student_id)
+    .single();
+
+  // Fetch answers
+  const { data: answers, error: ansErr } = await supabaseAdmin
+    .from('student_answers')
+    .select('question_id, selected_option, theory_answer, is_correct, marks_awarded')
+    .eq('attempt_id', attempt_id);
+
+  if (ansErr) { sendError(res, ansErr.message, 500); return; }
+
+  // Fetch questions
+  const questionIds = (answers ?? []).map((a: { question_id: string }) => a.question_id);
+  const questionMap = new Map<string, {
+    id: string;
+    question_text: string;
+    question_type: string;
+    option_a: string | null;
+    option_b: string | null;
+    option_c: string | null;
+    option_d: string | null;
+    correct_option: string | null;
+    marks: number;
+    order_index: number;
+  }>();
+
+  if (questionIds.length > 0) {
+    const { data: tqData } = await supabaseAdmin
+      .from('test_questions')
+      .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+      .in('id', questionIds);
+
+    for (const q of (tqData ?? [])) {
+      questionMap.set(q.id, q);
+    }
+
+    const missing = questionIds.filter((id) => !questionMap.has(id));
+    if (missing.length > 0) {
+      const { data: qData } = await supabaseAdmin
+        .from('questions')
+        .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+        .in('id', missing);
+
+      for (const q of (qData ?? [])) {
+        questionMap.set(q.id, q);
+      }
+    }
+  }
+
+  // Build formatted response
+  const formattedAnswers = (answers ?? []).map((ans: {
+    question_id: string;
+    selected_option: string | null;
+    theory_answer: string | null;
+    is_correct: boolean | null;
+    marks_awarded: number | null;
+  }) => {
+    const q = questionMap.get(ans.question_id);
+    if (!q) return null;
+
+    if (q.question_type === 'mcq') {
+      return {
+        question_id: q.id,
+        order_index: q.order_index,
+        question_text: q.question_text,
+        question_type: 'mcq',
+        marks: q.marks,
+        option_a: q.option_a,
+        option_b: q.option_b,
+        option_c: q.option_c,
+        option_d: q.option_d,
+        correct_option: q.correct_option,
+        selected_option: ans.selected_option,
+        is_correct: ans.is_correct,
+        marks_awarded: ans.marks_awarded,
+      };
+    } else {
+      return {
+        question_id: q.id,
+        order_index: q.order_index,
+        question_text: q.question_text,
+        question_type: 'theory',
+        marks: q.marks,
+        theory_answer: ans.theory_answer,
+        marks_awarded: ans.marks_awarded,
+      };
+    }
+  }).filter((a) => a !== null)
+    .sort((a, b) => (a?.order_index ?? 0) - (b?.order_index ?? 0));
+
+  sendSuccess(res, {
+    attempt_id: attempt.id,
+    test_id: test.id,
+    test_title: test.title,
+    student_id: attempt.student_id,
+    student_name: student ? (student.users as { name: string }).name : 'Unknown',
+    roll_no: student?.roll_no ?? '',
+    started_at: attempt.started_at,
+    submitted_at: attempt.submitted_at,
+    mcq_score: attempt.mcq_score,
+    total_score: attempt.total_score,
+    answers: formattedAnswers,
+  });
+});
+
 export default router;
