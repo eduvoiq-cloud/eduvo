@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
  *   - Wrong-role users → their correct dashboard
  */
 
-const PUBLIC_PATHS = ['/login', '/gate'];
+const PUBLIC_PATHS = ['/login', '/gate', '/forgot-password', '/reset-password', '/force-reset-password', '/delete-account', '/terms-of-service', '/privacy-policy'];
 
 // Which path prefixes each role is allowed on
 const ROLE_PREFIXES: Record<string, string> = {
