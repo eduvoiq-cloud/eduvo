@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -18,7 +18,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import apiClient from '../../api/client';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ Types ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 export interface TestMeta {
   id: string;
@@ -76,20 +76,7 @@ interface ResultData {
   answers: ResultAnswer[];
 }
 
-interface LeaderboardEntry {
-  rank: number;
-  first_name: string;
-  score: number;
-  max_score: number;
-  is_self: boolean;
-}
-
-interface LeaderboardData {
-  leaderboard: LeaderboardEntry[];
-  max_score: number;
-}
-
-// ── Navigation prop type (stack-compatible) ───────────────────────────────────
+// ΓöÇΓöÇ Navigation prop type (stack-compatible) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 interface TestAttemptScreenProps {
   route: {
@@ -103,7 +90,7 @@ interface TestAttemptScreenProps {
   };
 }
 
-// ── AsyncStorage key helpers ──────────────────────────────────────────────────
+// ΓöÇΓöÇ AsyncStorage key helpers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const progressKey = (testId: string) => `eduvo_test_progress_${testId}`;
 
@@ -145,7 +132,7 @@ async function clearProgress(testId: string): Promise<void> {
   await AsyncStorage.removeItem(progressKey(testId));
 }
 
-// ── Timer hook ────────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ Timer hook ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function useCountdown(
   _initialSeconds: number | null,
@@ -156,11 +143,15 @@ function useCountdown(
   onExpireRef.current = onExpire;
 
   useEffect(() => {
+    // No timer active
     if (secondsLeft === null) return;
+
+    // Already expired
     if (secondsLeft <= 0) {
       onExpireRef.current();
       return;
     }
+
     const id = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev === null) return null;
@@ -168,6 +159,7 @@ function useCountdown(
         return prev - 1;
       });
     }, 1000);
+
     return () => clearInterval(id);
   }, [secondsLeft]);
 
@@ -190,50 +182,19 @@ function formatHHMM(hhmm: string): string {
 
 type WindowState = 'before' | 'open' | 'closed' | 'no_window';
 
-/** Converts "HH:MM" to minutes-since-midnight for arithmetic comparison. */
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
-
-/**
- * Returns the window state for the attempt screen.
- * The date-boundary check is already done in TestsScreen before navigation,
- * so here we only need to verify the HH:MM range — including overnight windows
- * (e.g. 23:00 → 00:30 where available_until < available_from).
- */
 function getWindowState(
   availableFrom: string | null | undefined,
   availableUntil: string | null | undefined,
 ): WindowState {
   if (!availableFrom && !availableUntil) return 'no_window';
   const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const nowHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const nowMins  = toMinutes(nowHHMM);
-
-  const fromMins  = availableFrom  ? toMinutes(availableFrom)  : null;
-  const untilMins = availableUntil ? toMinutes(availableUntil) : null;
-
-  // Overnight window: until < from (e.g. 23:00 → 00:30)
-  const isOvernight = fromMins !== null && untilMins !== null && untilMins < fromMins;
-  if (isOvernight) {
-    // Open if we're past the from time OR before/at the until time
-    if (fromMins !== null && nowMins >= fromMins) return 'open';
-    if (untilMins !== null && nowMins <= untilMins) return 'open';
-    // We're in the gap between until and from on the same day → before
-    return 'before';
-  }
-
-  // Normal same-day window
-  if (fromMins !== null && nowMins < fromMins) return 'before';
-  // Zero-duration window (until == from) → treat as no close time
-  const effectiveUntil = (availableUntil && availableUntil !== availableFrom) ? availableUntil : null;
-  if (effectiveUntil && nowMins > toMinutes(effectiveUntil)) return 'closed';
+  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  if (availableFrom && nowHHMM < availableFrom) return 'before';
+  if (availableUntil && nowHHMM > availableUntil) return 'closed';
   return 'open';
 }
 
-// ── Pre-test screen ───────────────────────────────────────────────────────────
+// ΓöÇΓöÇ Pre-test screen ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function PreTestScreen({
   test,
@@ -256,7 +217,7 @@ function PreTestScreen({
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
 
       <View style={preStyles.iconWrap}>
-        <Text style={preStyles.icon}>{windowClosed ? '🔴' : '📝'}</Text>
+        <Text style={preStyles.icon}>{windowClosed ? '≡ƒö┤' : '≡ƒô¥'}</Text>
       </View>
 
       <Text style={preStyles.title}>{test.title}</Text>
@@ -276,15 +237,15 @@ function PreTestScreen({
             windowState === 'open' && preStyles.windowLabelOpen,
           ]}>
             {windowClosed
-              ? '🔴 Test window has closed'
+              ? '≡ƒö┤ Test window has closed'
               : windowNotYet
-              ? `🕐 Opens at ${formatHHMM(test.available_from!)}`
-              : '🟢 Test window is open'}
+              ? `≡ƒòÉ Opens at ${formatHHMM(test.available_from!)}`
+              : '≡ƒƒó Test window is open'}
           </Text>
           {(test.available_from || test.available_until) && (
             <Text style={preStyles.windowTime}>
               {test.available_from ? formatHHMM(test.available_from) : ''}
-              {test.available_from && test.available_until ? ' – ' : ''}
+              {test.available_from && test.available_until ? ' ΓÇô ' : ''}
               {test.available_until ? formatHHMM(test.available_until) : ''}
             </Text>
           )}
@@ -324,7 +285,7 @@ function PreTestScreen({
             'You must confirm before final submission.',
           ].filter(Boolean).map((line, i) => (
             <View key={i} style={preStyles.instrRow}>
-              <Text style={preStyles.instrBullet}>•</Text>
+              <Text style={preStyles.instrBullet}>ΓÇó</Text>
               <Text style={preStyles.instrText}>{line}</Text>
             </View>
           ))}
@@ -340,7 +301,7 @@ function PreTestScreen({
       {/* Resume banner */}
       {isResume && !windowClosed && (
         <View style={preStyles.resumeBanner}>
-          <Text style={preStyles.resumeText}>⏸ You have an attempt in progress. Tap below to continue.</Text>
+          <Text style={preStyles.resumeText}>ΓÅ╕ You have an attempt in progress. Tap below to continue.</Text>
         </View>
       )}
 
@@ -355,7 +316,7 @@ function PreTestScreen({
           {starting ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
-            <Text style={preStyles.startBtnText}>{isResume ? 'Continue Test →' : 'Start Test →'}</Text>
+            <Text style={preStyles.startBtnText}>{isResume ? 'Continue Test ΓåÆ' : 'Start Test ΓåÆ'}</Text>
           )}
         </TouchableOpacity>
       ) : (
@@ -472,7 +433,7 @@ const preStyles = StyleSheet.create({
   windowTime: { fontSize: 13, color: '#374151', fontWeight: '500' },
 });
 
-// ── Question pill strip ───────────────────────────────────────────────────────
+// ΓöÇΓöÇ Question pill strip ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function QuestionPills({
   total,
@@ -553,7 +514,7 @@ const pillStyles = StyleSheet.create({
   pillTextCurrent: { color: '#FFFFFF' },
 });
 
-// ── MCQ question view ─────────────────────────────────────────────────────────
+// ΓöÇΓöÇ MCQ question view ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const OPTION_LABELS: OptionKey[] = ['a', 'b', 'c', 'd'];
 const OPTION_DISPLAY: Record<OptionKey, string> = { a: 'A', b: 'B', c: 'C', d: 'D' };
@@ -577,7 +538,7 @@ function MCQQuestion({
   return (
     <View style={qStyles.container}>
       <View style={qStyles.marksRow}>
-        <Text style={qStyles.marksLabel}>MCQ · {question.marks} mark{question.marks !== 1 ? 's' : ''}</Text>
+        <Text style={qStyles.marksLabel}>MCQ ┬╖ {question.marks} mark{question.marks !== 1 ? 's' : ''}</Text>
       </View>
       <Text style={qStyles.questionText}>{question.question_text}</Text>
 
@@ -611,7 +572,7 @@ function MCQQuestion({
   );
 }
 
-// ── Theory question view ──────────────────────────────────────────────────────
+// ΓöÇΓöÇ Theory question view ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function TheoryQuestion({
   question,
@@ -625,14 +586,14 @@ function TheoryQuestion({
   return (
     <View style={qStyles.container}>
       <View style={qStyles.marksRow}>
-        <Text style={qStyles.marksLabel}>Theory · {question.marks} mark{question.marks !== 1 ? 's' : ''}</Text>
+        <Text style={qStyles.marksLabel}>Theory ┬╖ {question.marks} mark{question.marks !== 1 ? 's' : ''}</Text>
       </View>
       <Text style={qStyles.questionText}>{question.question_text}</Text>
 
       <TextInput
         style={qStyles.theoryInput}
         multiline
-        placeholder="Type your answer here…"
+        placeholder="Type your answer hereΓÇª"
         placeholderTextColor="#9CA3AF"
         value={answer?.theory_answer ?? ''}
         onChangeText={onChange}
@@ -706,7 +667,7 @@ const qStyles = StyleSheet.create({
   },
 });
 
-// ── Submit confirmation modal ─────────────────────────────────────────────────
+// ΓöÇΓöÇ Submit confirmation modal ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function SubmitModal({
   visible,
@@ -805,27 +766,21 @@ const modalStyles = StyleSheet.create({
   btnConfirmText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
 });
 
-// ── Results screen ────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ Results screen ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function ResultsScreen({
-  testId,
   testTitle,
   results,
-  leaderboard,
   onBack,
 }: {
-  testId: string;
   testTitle: string;
   results: ResultData;
-  leaderboard: LeaderboardData | null;
   onBack: () => void;
 }) {
   const mcqAnswers = results.answers.filter((a) => a.question_type === 'mcq');
   const theoryAnswers = results.answers.filter((a) => a.question_type === 'theory');
   const totalMcqMarks = mcqAnswers.reduce((s, a) => s + a.marks, 0);
   const correctCount = mcqAnswers.filter((a) => a.is_correct).length;
-
-  const RANK_MEDALS = ['🥇', '🥈', '🥉'];
 
   return (
     <ScrollView style={resStyles.container} contentContainerStyle={resStyles.content}>
@@ -852,37 +807,13 @@ function ResultsScreen({
             <View style={resStyles.scoreBlock}>
               <Text style={resStyles.scoreLabel}>Theory</Text>
               <Text style={[resStyles.scoreValue, resStyles.scorePending]}>
-                {results.total_score_pending ? 'Pending' : results.total_score ?? '—'}
+                {results.total_score_pending ? 'Pending' : results.total_score ?? 'ΓÇö'}
               </Text>
               <Text style={resStyles.scoreSubtext}>Awaiting teacher review</Text>
             </View>
           </>
         )}
       </View>
-
-      {/* Leaderboard — top 3 after window closes */}
-      {leaderboard && leaderboard.leaderboard.length > 0 && (
-        <View style={resStyles.leaderboardCard}>
-          <Text style={resStyles.leaderboardTitle}>🏆 Class Top Scorers</Text>
-          {leaderboard.leaderboard.map((entry) => (
-            <View
-              key={entry.rank}
-              style={[
-                resStyles.leaderboardRow,
-                entry.is_self && resStyles.leaderboardRowSelf,
-              ]}
-            >
-              <Text style={resStyles.leaderboardMedal}>{RANK_MEDALS[entry.rank - 1]}</Text>
-              <Text style={[resStyles.leaderboardName, entry.is_self && resStyles.leaderboardNameSelf]}>
-                {entry.first_name}{entry.is_self ? ' (You)' : ''}
-              </Text>
-              <Text style={resStyles.leaderboardScore}>
-                {entry.score} / {entry.max_score}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
 
       {/* MCQ per-question breakdown */}
       {mcqAnswers.length > 0 && (
@@ -907,7 +838,7 @@ function ResultsScreen({
                 <View style={resStyles.qRowHeader}>
                   <Text style={resStyles.qNum}>Q{idx + 1}</Text>
                   <Text style={correct ? resStyles.tick : resStyles.cross}>
-                    {skipped ? '—' : correct ? '✓' : '✗'}
+                    {skipped ? 'ΓÇö' : correct ? 'Γ£ô' : 'Γ£ù'}
                   </Text>
                 </View>
                 <Text style={resStyles.qText}>{ans.question_text}</Text>
@@ -915,7 +846,7 @@ function ResultsScreen({
                   <Text style={resStyles.qYourAnswer}>
                     Your answer:{' '}
                     <Text style={correct ? resStyles.ansCorrect : resStyles.ansWrong}>
-                      {ans.selected_option?.toUpperCase()} — {optionText(ans.selected_option)}
+                      {ans.selected_option?.toUpperCase()} ΓÇö {optionText(ans.selected_option)}
                     </Text>
                   </Text>
                 )}
@@ -939,7 +870,7 @@ function ResultsScreen({
           <Text style={resStyles.sectionTitle}>Theory Questions</Text>
           <View style={resStyles.theoryNote}>
             <Text style={resStyles.theoryNoteText}>
-              🕐 Theory answers are reviewed by your teacher. Marks will appear once graded.
+              ≡ƒòÉ Theory answers are reviewed by your teacher. Marks will appear once graded.
             </Text>
           </View>
           {theoryAnswers.map((ans, idx) => (
@@ -963,7 +894,7 @@ function ResultsScreen({
         accessibilityRole="button"
         accessibilityLabel="Back to tests list"
       >
-        <Text style={resStyles.backBtnText}>← Back to Tests</Text>
+        <Text style={resStyles.backBtnText}>ΓåÉ Back to Tests</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -1040,50 +971,14 @@ const resStyles = StyleSheet.create({
     marginTop: 8,
   },
   backBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
-
-  // Leaderboard
-  leaderboardCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.07,
-    shadowRadius: 5,
-    elevation: 2,
-    borderTopWidth: 3,
-    borderTopColor: '#F59E0B',
-  },
-  leaderboardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
-  },
-  leaderboardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  leaderboardRowSelf: {
-    backgroundColor: '#EFF6FF',
-  },
-  leaderboardMedal: { fontSize: 22, width: 36 },
-  leaderboardName: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151' },
-  leaderboardNameSelf: { color: '#1D4ED8' },
-  leaderboardScore: { fontSize: 14, fontWeight: '700', color: '#111827' },
 });
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ΓöÇΓöÇ Main component ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 export default function TestAttemptScreen({ route, navigation }: TestAttemptScreenProps) {
   const { test } = route.params;
 
-  // ── Phase & core state ──────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Phase & core state ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const [phase, setPhase] = useState<Phase>('pre');
   const [starting, setStarting] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -1093,16 +988,15 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [results, setResults] = useState<ResultData | null>(null);
-  const [leaderboard, setLeaderboard] = useState<LeaderboardData | null>(null);
 
-  // ── Timer ───────────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Timer ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const hasTimeLimit = test.time_limit_minutes > 0;
   const initialSeconds = hasTimeLimit ? test.time_limit_minutes * 60 : null;
   const { secondsLeft, setSecondsLeft } = useCountdown(
     null, // start as null; set when test begins
     () => {
-      // Auto-submit when timer hits 0 — use phaseRef to avoid stale closure
-      if (phaseRef.current === 'active') {
+      // Auto-submit when timer hits 0
+      if (phase === 'active') {
         handleSubmit(true);
       }
     }
@@ -1113,73 +1007,76 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const attemptIdRef = useRef<string | null>(null);
   const currentIndexRef = useRef(0);
   const secondsLeftRef = useRef<number | null>(null);
-  // Store the server-side started_at timestamp and time limit so the AppState
-  // handler can recompute remaining time when the app returns to foreground.
-  const startedAtRef = useRef<string | null>(null);
-  const timeLimitSecondsRef = useRef<number | null>(null);
-  const phaseRef = useRef<Phase>('pre');
 
   useEffect(() => { answersRef.current = answers; }, [answers]);
   useEffect(() => { attemptIdRef.current = attemptId; }, [attemptId]);
   useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
   useEffect(() => { secondsLeftRef.current = secondsLeft; }, [secondsLeft]);
-  useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  // ── AppState: save progress on background; correct timer on foreground ──────
+  // ΓöÇΓöÇ AppState: save progress when app goes to background ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   useEffect(() => {
-    let hasGoneToBackground = false;
-
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background' || state === 'inactive') {
-        hasGoneToBackground = true;
         const aid = attemptIdRef.current;
-        if (aid && phaseRef.current === 'active') {
+        if (aid && phase === 'active') {
           saveProgress(
             test.id,
             aid,
             answersRef.current,
             currentIndexRef.current,
             secondsLeftRef.current
-          ).catch(() => {});
-        }
-      } else if (state === 'active' && hasGoneToBackground) {
-        // App returned from background — recalculate remaining time from server started_at
-        if (
-          phaseRef.current === 'active' &&
-          startedAtRef.current !== null &&
-          timeLimitSecondsRef.current !== null
-        ) {
-          const elapsed = Math.floor(
-            (Date.now() - new Date(startedAtRef.current).getTime()) / 1000
-          );
-          const remaining = Math.max(0, timeLimitSecondsRef.current - elapsed);
-          setSecondsLeft(remaining);
+          ).catch(() => {/* silent */});
         }
       }
     });
     return () => sub.remove();
-  }, [test.id, setSecondsLeft]);
+  }, [phase, test.id]);
 
-  // ── Start / resume test ─────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Start / resume test ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
 
-  // On mount: only check for a locally saved in-progress attempt.
-  // Do NOT auto-navigate based on attempt_status from the list — that data can be
-  // stale and was causing the test to auto-submit before the student saw any questions.
-  // The handleStart function already handles the 409 "already submitted" case correctly.
   useEffect(() => {
-    const checkLocalProgress = async () => {
+    // Always check backend first for submitted attempts ΓÇö don't rely on local cache
+    const checkAttemptStatus = async () => {
+      // If attempt_status passed from list says completed, or we have local progress,
+      // try to load results directly
+      if (test.attempt_status === 'completed') {
+        setPhase('submitting'); // show spinner while loading
+        try {
+          // Call start ΓÇö it will 409 with attempt_id if already submitted
+          await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
+        } catch (err: unknown) {
+          const attemptIdFromErr =
+            (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
+          const msg =
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? '';
+
+          if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
+            try {
+              const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
+              const resultData = resResponse.data.data as ResultData;
+              setResults(resultData);
+              setAttemptId(attemptIdFromErr);
+              setPhase('results');
+              return;
+            } catch {
+              // fall through to pre screen
+            }
+          }
+        }
+        setPhase('pre');
+        return;
+      }
+
       const saved = await loadProgress(test.id);
       if (saved) setHasActiveAttempt(true);
     };
-    void checkLocalProgress();
-  }, [test.id]);
+
+    void checkAttemptStatus();
+  }, [test.id, test.attempt_status]);
 
   const handleStart = useCallback(async () => {
     setStarting(true);
-    // Reset refs from any previous attempt so stale data can't bleed in
-    startedAtRef.current = null;
-    timeLimitSecondsRef.current = null;
     try {
       const res = await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
       const payload = res.data.data as {
@@ -1200,9 +1097,8 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       if (saved && saved.attempt_id === payload.attempt_id) {
         setAnswers(saved.answers);
         setCurrentIndex(saved.currentIndex);
-        // Restore timer from saved progress if available, otherwise recompute from started_at
-        if (saved.secondsLeft !== null && saved.secondsLeft !== undefined) {
-          if (hasTimeLimit) setSecondsLeft(saved.secondsLeft);
+        if (saved.secondsLeft !== null) {
+          setSecondsLeft(saved.secondsLeft);
         } else if (hasTimeLimit) {
           const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
           setSecondsLeft(Math.max(0, payload.time_limit_minutes * 60 - elapsed));
@@ -1214,11 +1110,6 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         setSecondsLeft(payload.time_limit_minutes * 60);
       }
 
-      // Store started_at and time limit in refs for AppState foreground recalculation
-      startedAtRef.current = payload.started_at;
-      timeLimitSecondsRef.current = hasTimeLimit ? payload.time_limit_minutes * 60 : null;
-
-      phaseRef.current = 'active';
       setPhase('active');
     } catch (err: unknown) {
       const errMsg =
@@ -1236,10 +1127,6 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             const resultData = resResponse.data.data as ResultData;
             setResults(resultData);
             setAttemptId(attemptIdFromErr);
-            try {
-              const lbResponse = await apiClient.get(`/api/tests/${test.id}/leaderboard`);
-              setLeaderboard(lbResponse.data.data as LeaderboardData);
-            } catch { setLeaderboard(null); }
             setPhase('results');
           } else {
             Alert.alert('Already Submitted', 'This test has been submitted. Check the tests list for your results.');
@@ -1255,7 +1142,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     }
   }, [test.id, hasTimeLimit, setSecondsLeft]);
 
-  // ── Answer handlers ─────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Answer handlers ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const handleSelectOption = useCallback((opt: OptionKey) => {
     setAnswers((prev) =>
       prev.map((a, i) =>
@@ -1272,22 +1159,21 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     );
   }, [currentIndex]);
 
-  // ── Navigation ──────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Navigation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const goTo = useCallback((idx: number) => {
     setCurrentIndex(Math.max(0, Math.min(idx, questions.length - 1)));
   }, [questions.length]);
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Submit ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const handleSubmit = useCallback(async (autoSubmit = false) => {
     if (!attemptId) return;
     setShowSubmitModal(false);
-    phaseRef.current = 'submitting'; // sync immediately so onExpire can't double-fire
     setPhase('submitting');
     setSubmitError(null);
 
     const currentAnswers = answersRef.current;
 
-    // Build payload — include all questions, even unanswered ones
+    // Build payload ΓÇö include all questions, even unanswered ones
     const answersPayload = currentAnswers.map((a) => {
       const entry: { question_id: string; selected_option?: OptionKey; theory_answer?: string } = {
         question_id: a.question_id,
@@ -1308,15 +1194,6 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       const resultData = resResponse.data.data as ResultData;
       setResults(resultData);
 
-      // Try to fetch leaderboard (only available after window closes — may 403)
-      try {
-        const lbResponse = await apiClient.get(`/api/tests/${test.id}/leaderboard`);
-        setLeaderboard(lbResponse.data.data as LeaderboardData);
-      } catch {
-        // Window not closed yet — leaderboard not available, that's fine
-        setLeaderboard(null);
-      }
-
       // Clear saved progress
       await clearProgress(test.id);
 
@@ -1330,46 +1207,44 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     }
   }, [attemptId, test.id]);
 
-  // ── Answered count ──────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Answered count ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const answeredCount = answers.filter(
     (a) => a.selected_option || (a.theory_answer && a.theory_answer.trim().length > 0)
   ).length;
 
-  // ── Timer warning colour ────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Timer warning colour ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const timerWarning = secondsLeft !== null && secondsLeft <= 60;
   const timerCritical = secondsLeft !== null && secondsLeft <= 30;
 
-  // ── Render: pre-test ────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Render: pre-test ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (phase === 'pre') {
     return (
       <PreTestScreen test={test} onStart={handleStart} starting={starting} isResume={hasActiveAttempt} />
     );
   }
 
-  // ── Render: results ─────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Render: results ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (phase === 'results' && results) {
     return (
       <ResultsScreen
-        testId={test.id}
         testTitle={test.title}
         results={results}
-        leaderboard={leaderboard}
         onBack={() => navigation.goBack()}
       />
     );
   }
 
-  // ── Render: submitting overlay ───────────────────────────────────────────────
+  // ΓöÇΓöÇ Render: submitting overlay ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (phase === 'submitting') {
     return (
       <View style={activeStyles.centered}>
         <ActivityIndicator size="large" color="#1D4ED8" />
-        <Text style={activeStyles.submittingText}>Submitting your test…</Text>
+        <Text style={activeStyles.submittingText}>Submitting your testΓÇª</Text>
       </View>
     );
   }
 
-  // ── Render: active test ──────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Render: active test ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const currentQuestion = questions[currentIndex];
   const currentAnswer = answers[currentIndex];
   const isLast = currentIndex === questions.length - 1;
@@ -1381,7 +1256,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     >
       <StatusBar barStyle="light-content" backgroundColor="#1D4ED8" />
 
-      {/* ── Header ── */}
+      {/* ΓöÇΓöÇ Header ΓöÇΓöÇ */}
       <View style={activeStyles.header}>
         <View style={activeStyles.headerTop}>
           <Text style={activeStyles.headerTitle} numberOfLines={1}>{test.title}</Text>
@@ -1395,7 +1270,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
                 activeStyles.timerText,
                 timerWarning && activeStyles.timerTextWarn,
               ]}>
-                ⏱ {formatTime(secondsLeft)}
+                ΓÅ▒ {formatTime(secondsLeft)}
               </Text>
             </View>
           )}
@@ -1405,7 +1280,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         </Text>
       </View>
 
-      {/* ── Question pills ── */}
+      {/* ΓöÇΓöÇ Question pills ΓöÇΓöÇ */}
       <View style={activeStyles.pillsWrapper}>
         <QuestionPills
           total={questions.length}
@@ -1415,10 +1290,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         />
       </View>
 
-      {/* ── Submit error banner ── */}
+      {/* ΓöÇΓöÇ Submit error banner ΓöÇΓöÇ */}
       {submitError && (
         <View style={activeStyles.errorBanner}>
-          <Text style={activeStyles.errorText}>⚠️ {submitError}</Text>
+          <Text style={activeStyles.errorText}>ΓÜá∩╕Å {submitError}</Text>
           <TouchableOpacity
             onPress={() => handleSubmit()}
             accessibilityRole="button"
@@ -1429,7 +1304,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         </View>
       )}
 
-      {/* ── Question body ── */}
+      {/* ΓöÇΓöÇ Question body ΓöÇΓöÇ */}
       <ScrollView
         style={activeStyles.questionScroll}
         contentContainerStyle={activeStyles.questionScrollContent}
@@ -1450,7 +1325,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         ) : null}
       </ScrollView>
 
-      {/* ── Navigation footer ── */}
+      {/* ΓöÇΓöÇ Navigation footer ΓöÇΓöÇ */}
       <View style={activeStyles.footer}>
         <TouchableOpacity
           style={[activeStyles.navBtn, currentIndex === 0 && activeStyles.navBtnDisabled]}
@@ -1460,7 +1335,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
           accessibilityLabel="Previous question"
         >
           <Text style={[activeStyles.navBtnText, currentIndex === 0 && activeStyles.navBtnTextDisabled]}>
-            ← Prev
+            ΓåÉ Prev
           </Text>
         </TouchableOpacity>
 
@@ -1480,12 +1355,12 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             accessibilityRole="button"
             accessibilityLabel="Next question"
           >
-            <Text style={activeStyles.navBtnText}>Next →</Text>
+            <Text style={activeStyles.navBtnText}>Next ΓåÆ</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* ── Submit confirmation modal ── */}
+      {/* ΓöÇΓöÇ Submit confirmation modal ΓöÇΓöÇ */}
       <SubmitModal
         visible={showSubmitModal}
         answeredCount={answeredCount}
@@ -1497,7 +1372,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   );
 }
 
-// ── Active test styles ────────────────────────────────────────────────────────
+// ΓöÇΓöÇ Active test styles ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const activeStyles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F9FAFB' },

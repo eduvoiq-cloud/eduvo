@@ -142,30 +142,13 @@ function useCountdown(
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
-  // Only fire onExpire after the timer has actually been counting down from a
-  // positive value. This prevents an instant auto-submit when remaining time
-  // is computed as 0 on the very first assignment (e.g. clock skew or a
-  // resumed attempt whose time limit already elapsed).
-  const hasTickedRef = useRef(false);
 
   useEffect(() => {
-    // No timer active — reset ticked flag
-    if (secondsLeft === null) {
-      hasTickedRef.current = false;
-      return;
-    }
-
-    // Expired — only call onExpire if we actually counted down to 0
+    if (secondsLeft === null) return;
     if (secondsLeft <= 0) {
-      if (hasTickedRef.current) {
-        onExpireRef.current();
-      }
+      onExpireRef.current();
       return;
     }
-
-    // Timer running — mark that we've seen at least one positive tick
-    hasTickedRef.current = true;
-
     const id = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev === null) return null;
@@ -173,7 +156,6 @@ function useCountdown(
         return prev - 1;
       });
     }, 1000);
-
     return () => clearInterval(id);
   }, [secondsLeft]);
 
@@ -956,9 +938,6 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   // ── Phase & core state ──────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('pre');
-  const [loadingResults, setLoadingResults] = useState(
-    test.attempt_status === 'completed'
-  ); // true while silently fetching results for completed tests
   const [starting, setStarting] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
@@ -1000,9 +979,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   // ── AppState: correct timer on foreground; save progress on background ──────
   useEffect(() => {
+    let hasGoneToBackground = false;
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background' || state === 'inactive') {
-        // Save progress when leaving — timer is NOT saved, it will be recomputed on return
+        hasGoneToBackground = true;
         const aid = attemptIdRef.current;
         if (aid && phaseRef.current === 'active') {
           saveProgress(
@@ -1010,18 +990,15 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             aid,
             answersRef.current,
             currentIndexRef.current,
-            null  // never persist secondsLeft — always recompute from server timestamp
-          ).catch(() => {/* silent */});
+            secondsLeftRef.current
+          ).catch(() => {});
         }
-      } else if (state === 'active') {
-        // App came back to foreground — recalculate remaining time from server started_at.
-        // This corrects any time the student spent outside the app.
+      } else if (state === 'active' && hasGoneToBackground) {
+        // App returned from background — recalculate remaining time from server started_at
         if (phaseRef.current === 'active' && startedAtRef.current && timeLimitSecondsRef.current !== null) {
           const elapsed = Math.floor((Date.now() - new Date(startedAtRef.current).getTime()) / 1000);
           const remaining = Math.max(0, timeLimitSecondsRef.current - elapsed);
-          setSecondsLeft(remaining);
-          // If time has already expired while in background, the countdown hook will
-          // fire onExpire (→ handleSubmit) as soon as secondsLeft reaches 0.
+          setSecondsLeft(remaining > 0 ? remaining : 1);
         }
       }
     });
@@ -1031,50 +1008,14 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   // ── Start / resume test ─────────────────────────────────────────────────────
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
 
-  // On mount: if the test is already completed, skip the pre-screen and load results directly.
-  // Otherwise check for saved local progress to show resume option.
+  // On mount: check for saved local progress to show resume option.
   useEffect(() => {
     const checkAttemptStatus = async () => {
-      if (test.attempt_status === 'completed') {
-        // Silently fetch results in background — no spinner, no phase change until data is ready
-        try {
-          // Hit start — backend returns 409 with attempt_id for already-submitted tests
-          await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
-          // Succeeded (edge case — test not actually submitted yet), show pre screen
-          setLoadingResults(false);
-          setPhase('pre');
-        } catch (err: unknown) {
-          const attemptIdFromErr =
-            (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
-          const msg =
-            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? '';
-
-          if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
-            try {
-              const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
-              const resultData = resResponse.data.data as ResultData;
-              setResults(resultData);
-              setAttemptId(attemptIdFromErr);
-              setLoadingResults(false);
-              setPhase('results');
-              return;
-            } catch {
-              // fall through to pre screen
-            }
-          }
-          setLoadingResults(false);
-          setPhase('pre');
-        }
-        return;
-      }
-
-      // Not completed — check for saved local progress (in-progress attempt)
       const saved = await loadProgress(test.id);
       if (saved) setHasActiveAttempt(true);
     };
-
     void checkAttemptStatus();
-  }, [test.id, test.attempt_status]);
+  }, [test.id]);
 
   const handleStart = useCallback(async () => {
     setStarting(true);
@@ -1224,19 +1165,6 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   // ── Timer warning colour ────────────────────────────────────────────────────
   const timerWarning = secondsLeft !== null && secondsLeft <= 60;
   const timerCritical = secondsLeft !== null && secondsLeft <= 30;
-
-  // ── Render: loading results (completed test, fetching silently) ─────────────
-  if (loadingResults) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' }}>
-        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
-        <ActivityIndicator size="large" color="#1D4ED8" />
-        <Text style={{ marginTop: 14, fontSize: 14, color: '#6B7280', fontWeight: '500' }}>
-          Loading your results…
-        </Text>
-      </View>
-    );
-  }
 
   // ── Render: pre-test ────────────────────────────────────────────────────────
   if (phase === 'pre') {
