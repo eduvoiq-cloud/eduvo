@@ -1226,11 +1226,46 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
  * DELETE /api/tests/:id
  */
 router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const testId = req.params.id;
+
+  // Verify the test belongs to this school before deleting
+  const { data: testCheck, error: checkErr } = await supabaseAdmin
+    .from('tests')
+    .select('id')
+    .eq('id', testId)
+    .eq('school_id', req.user!.school_id ?? '')
+    .maybeSingle();
+
+  if (checkErr) { sendError(res, checkErr.message, 500); return; }
+  if (!testCheck) { sendError(res, 'Test not found', 404); return; }
+
+  // Delete child records in dependency order to avoid FK constraint violations:
+  // 1. student_answers (references test_attempts)
+  const { data: attempts } = await supabaseAdmin
+    .from('test_attempts')
+    .select('id')
+    .eq('test_id', testId);
+
+  if (attempts && attempts.length > 0) {
+    const attemptIds = attempts.map((a: { id: string }) => a.id);
+    await supabaseAdmin.from('student_answers').delete().in('attempt_id', attemptIds);
+  }
+
+  // 2. test_attempts (references tests)
+  await supabaseAdmin.from('test_attempts').delete().eq('test_id', testId);
+
+  // 3. test_restrictions (references tests)
+  await supabaseAdmin.from('test_restrictions').delete().eq('test_id', testId);
+
+  // 4. questions / test_questions (references tests)
+  await supabaseAdmin.from('test_questions').delete().eq('test_id', testId);
+  await supabaseAdmin.from('questions').delete().eq('test_id', testId);
+
+  // 5. Finally delete the test itself
   const { error } = await supabaseAdmin
     .from('tests')
     .delete()
-    .eq('id', req.params.id)
-    .eq('school_id', req.user!.school_id ?? '');
+    .eq('id', testId);
 
   if (error) { sendError(res, error.message, 500); return; }
 
@@ -1238,7 +1273,7 @@ router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'te
     user_id:    req.user!.id,
     action:     'TEST_DELETED',
     table_name: 'tests',
-    details:    { test_id: req.params.id },
+    details:    { test_id: testId },
     created_at: new Date().toISOString(),
   });
 
