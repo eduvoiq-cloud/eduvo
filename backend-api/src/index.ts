@@ -220,6 +220,14 @@ async function startServer() {
   // ── Body parsing ─────────────────────────────────────────────────────────────
   app.use(express.json());
 
+  // ── Request logging (temporary debug) ────────────────────────────────────────
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    if (req.path.includes('/tests')) {
+      console.log(`[REQ] ${req.method} ${req.path}`, JSON.stringify(req.body ?? {}));
+    }
+    next();
+  });
+
   // ── Global rate limit (applies to every route) ───────────────────────────────
   app.use(globalRateLimit);
 
