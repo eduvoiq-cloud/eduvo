@@ -247,9 +247,16 @@ function ComplaintModal({
       setMessage('');
       onClose();
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-        'Failed to submit complaint. Please try again.';
+      const axiosErr = err as { response?: { data?: { message?: string; errors?: { fieldErrors?: Record<string, string[]> } } } };
+      const data = axiosErr?.response?.data;
+      // Try to get a human-readable message from field errors first
+      let msg = data?.message ?? 'Failed to submit complaint. Please try again.';
+      if (data?.errors?.fieldErrors) {
+        const fieldMsgs = Object.entries(data.errors.fieldErrors)
+          .map(([k, v]) => `${k}: ${(v as string[]).join(', ')}`)
+          .join('\n');
+        if (fieldMsgs) msg = fieldMsgs;
+      }
       Alert.alert('Error', msg);
     } finally {
       setSubmitting(false);
@@ -567,7 +574,7 @@ export default function ComplaintsScreen() {
     teacherId?: string
   ) => {
     await apiClient.post('/api/complaints', {
-      subject: subject || null,
+      ...(subject ? { subject } : {}),
       message,
       recipient_type: recipientType,
       ...(teacherId ? { subject_teacher_id: teacherId } : {}),

@@ -29,7 +29,7 @@ const createComplaintSchema = z.object({
   recipient_type: z.enum(['school_admin', 'subject_teacher'] as const, {
     message: 'recipient_type must be "subject_teacher" or "school_admin"',
   }),
-  subject: z.string().max(200, 'Subject must be 200 characters or less').optional(),
+  subject: z.string().max(200, 'Subject must be 200 characters or less').nullable().optional(),
   // Required when recipient_type is 'subject_teacher' — the teacher_id to send the complaint to
   subject_teacher_id: z.string().uuid('subject_teacher_id must be a valid UUID').optional(),
 });
@@ -134,7 +134,13 @@ router.post(
   async (req: Request, res: Response) => {
     const parsed = createComplaintSchema.safeParse(req.body);
     if (!parsed.success) {
-      sendValidationError(res, parsed.error.flatten());
+      const flat = parsed.error.flatten();
+      console.error('[complaints] Validation failed. Body:', JSON.stringify(req.body), 'Errors:', JSON.stringify(flat));
+      // Return full field errors so the client can show what went wrong
+      const firstFieldError = Object.entries(flat.fieldErrors ?? {}).map(([k, v]) => `${k}: ${(v as string[]).join(', ')}`).join('; ');
+      const firstFormError = (flat.formErrors ?? []).join('; ');
+      const humanMessage = firstFieldError || firstFormError || 'Validation failed';
+      res.status(422).json({ success: false, message: humanMessage, errors: flat });
       return;
     }
 
