@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { complaintsApi, studentsApi, testsApi, type TeacherAssignment, type Student } from '@/lib/api';
+import { complaintsApi, testsApi, type TeacherAssignment, type Student } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
@@ -91,22 +91,9 @@ export default function TeacherDashboard() {
           const allStudents: Student[] = studentResults.flatMap((r) => r?.data ?? []);
           // Deduplicate by id in case a student appears in multiple results
           uniqueStudents = [...new Map(allStudents.map((s) => [s.id, s])).values()];
-        } else {
-          // No assignments yet — fall back to all students in the school
-          // so the count is accurate even before class assignments are set up
-          try {
-            const studentsRes = await studentsApi.list(token!, {
-              school_id: schoolId,
-              limit: 0,
-            });
-            const raw = studentsRes.data;
-            uniqueStudents = Array.isArray(raw)
-              ? (raw as Student[])
-              : ((raw as { data: Student[] })?.data ?? []);
-          } catch {
-            // Non-critical — leave uniqueStudents as []
-          }
         }
+        // No else fallback — if a teacher has no assignments, student count is 0.
+        // The admin needs to assign classes before the teacher can see students.
 
         setStudents(uniqueStudents);
 
@@ -147,6 +134,22 @@ export default function TeacherDashboard() {
         <StatCard label="Tests Created" value={loading ? '—' : testsThisMonth}
           sub="Created by you" icon={<TestIcon />} />
       </div>
+
+      {/* No assignments notice */}
+      {!loading && assignments.length === 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-6 py-5 mb-6 flex items-start gap-3">
+          <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <div>
+            <p className="text-sm font-medium text-amber-800">No classes assigned yet</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Your school admin needs to assign you to a class before you can mark attendance, enter marks, or see students.
+              Contact your administrator.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Assigned classes */}
       {!loading && assignments.length > 0 && (
