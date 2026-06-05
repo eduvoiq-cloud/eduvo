@@ -183,6 +183,18 @@ function formatHHMM(hhmm: string): string {
 
 type WindowState = 'before' | 'open' | 'closed' | 'no_window';
 
+/** Converts "HH:MM" to minutes-since-midnight for arithmetic comparison. */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/**
+ * Returns the window state for the attempt screen.
+ * The date-boundary check is already done in TestsScreen before navigation,
+ * so here we only need to verify the HH:MM range — including overnight windows
+ * (e.g. 23:00 → 00:30 where available_until < available_from).
+ */
 function getWindowState(
   availableFrom: string | null | undefined,
   availableUntil: string | null | undefined,
@@ -190,8 +202,24 @@ function getWindowState(
   if (!availableFrom && !availableUntil) return 'no_window';
   const now = new Date();
   const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  if (availableFrom && nowHHMM < availableFrom) return 'before';
-  if (availableUntil && nowHHMM > availableUntil) return 'closed';
+  const nowMins  = toMinutes(nowHHMM);
+
+  const fromMins  = availableFrom  ? toMinutes(availableFrom)  : null;
+  const untilMins = availableUntil ? toMinutes(availableUntil) : null;
+
+  // Overnight window: until < from (e.g. 23:00 → 00:30)
+  const isOvernight = fromMins !== null && untilMins !== null && untilMins < fromMins;
+  if (isOvernight) {
+    if (fromMins !== null && nowMins >= fromMins) return 'open';
+    if (untilMins !== null && nowMins <= untilMins) return 'open';
+    return 'before';
+  }
+
+  // Normal same-day window
+  if (fromMins !== null && nowMins < fromMins) return 'before';
+  // Zero-duration window (until == from) → treat as no close time
+  const effectiveUntil = (availableUntil && availableUntil !== availableFrom) ? availableUntil : null;
+  if (effectiveUntil && nowMins > toMinutes(effectiveUntil)) return 'closed';
   return 'open';
 }
 

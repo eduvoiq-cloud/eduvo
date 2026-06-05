@@ -547,6 +547,12 @@ export default function CreateTestPage() {
     const token = getToken();
     if (!token) { setPublishError('Session expired. Please log in again.'); return; }
 
+    // Validate test window: "Closes at" must differ from "Opens at"
+    if (details.start_time && details.end_time && details.start_time === details.end_time) {
+      setPublishError('"Closes at" and "Opens at" cannot be the same time. If you only want to set an open time, leave "Closes at" empty.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const builtQuestions: TestQuestion[] = questions.map((q) => {
@@ -744,6 +750,9 @@ export default function CreateTestPage() {
                 </FormField>
               </div>
               <p className="text-xs text-gray-400 mt-1">e.g. 9:00 PM – 10:00 PM. Students who enter at 9:58 PM still get the full time limit.</p>
+              {details.start_time && details.end_time && details.start_time === details.end_time && (
+                <p className="text-xs text-red-500 mt-1">⚠️ &quot;Closes at&quot; cannot equal &quot;Opens at&quot;. Leave &quot;Closes at&quot; empty if you don&apos;t want a closing time. Overnight windows (e.g. 11 PM – 12 AM) are supported.</p>
+              )}
             </div>
 
             <div className="space-y-3 pt-1">

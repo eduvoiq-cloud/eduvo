@@ -201,8 +201,8 @@ export default function TestsPage() {
       setFormError('All test fields are required.'); return;
     }
     if (questions.length === 0) { setFormError('Add at least one question.'); return; }
-    if (testForm.available_from && testForm.available_until && testForm.available_from >= testForm.available_until) {
-      setFormError('"Closes at" time must be after "Opens at" time.'); return;
+    if (testForm.available_from && testForm.available_until && testForm.available_from === testForm.available_until) {
+      setFormError('"Closes at" and "Opens at" cannot be the same time. Overnight windows (e.g. 11 PM – 12 AM) are supported.'); return;
     }
 
     const token = getToken();
@@ -588,8 +588,8 @@ export default function TestsPage() {
                   />
                 </FormField>
               </div>
-              {testForm.available_from && testForm.available_until && testForm.available_from >= testForm.available_until && (
-                <p className="text-xs text-red-500">⚠️ &quot;Closes at&quot; must be after &quot;Opens at&quot;.</p>
+              {testForm.available_from && testForm.available_until && testForm.available_from === testForm.available_until && (
+                <p className="text-xs text-red-500">⚠️ &quot;Closes at&quot; cannot equal &quot;Opens at&quot;. Overnight windows (e.g. 11 PM – 12 AM) are supported.</p>
               )}
               {(testForm.available_from || testForm.available_until) && (
                 <p className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">

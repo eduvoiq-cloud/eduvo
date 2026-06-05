@@ -57,7 +57,20 @@ function isUpcoming(dateStr: string): boolean {
   return testStr > todayStr;
 }
 
-/** Returns the window state for today: 'before' | 'open' | 'closed' | 'no_window' */
+/** Converts "HH:MM" to minutes-since-midnight for arithmetic comparison. */
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+/**
+ * Returns the window state for the given test.
+ *
+ * Handles overnight windows (e.g. 23:00 – 00:30) where available_until is
+ * numerically less than available_from.  In that case the window spans midnight
+ * and the student can open the test on the test date after available_from OR on
+ * the following day before available_until.
+ */
 function getWindowState(
   date: string,
   availableFrom: string | null,
@@ -65,16 +78,54 @@ function getWindowState(
 ): 'before' | 'open' | 'closed' | 'no_window' {
   if (!availableFrom && !availableUntil) return 'no_window';
   const now = new Date();
-  // Use local date parts so the comparison is never off by a timezone day boundary
   const pad = (n: number) => String(n).padStart(2, '0');
   const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  // Parse the test date in local time (treat as local noon to avoid any UTC boundary issues)
-  const testDate = new Date(date);
-  const testDateStr = `${testDate.getFullYear()}-${pad(testDate.getMonth() + 1)}-${pad(testDate.getDate())}`;
-  if (todayStr !== testDateStr) return 'no_window'; // window only applies on the test date
+  // Split the YYYY-MM-DD string directly — never use new Date('YYYY-MM-DD') because
+  // JS parses bare date strings as UTC midnight, which gives the wrong local date for
+  // timezones behind UTC.
+  const [y, m, d] = date.split('-');
+  const testDateStr = `${y}-${m}-${d}`;
+
+  // For overnight windows the "until" part falls on the next calendar day.
+  // Build the next-day string so we can check it too.
+  const testDateObj = new Date(parseInt(y), parseInt(m) - 1, parseInt(d));
+  const nextDay = new Date(testDateObj);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const nextDayStr = `${nextDay.getFullYear()}-${pad(nextDay.getMonth() + 1)}-${pad(nextDay.getDate())}`;
+
+  const isTestDate = todayStr === testDateStr;
+  const isNextDay  = todayStr === nextDayStr;
+
   const nowHHMM = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  if (availableFrom && nowHHMM < availableFrom) return 'before';
-  if (availableUntil && nowHHMM > availableUntil) return 'closed';
+  const nowMins  = toMinutes(nowHHMM);
+
+  // Determine if this is an overnight window: until < from (e.g. 23:00 → 00:30)
+  const fromMins  = availableFrom  ? toMinutes(availableFrom)  : null;
+  const untilMins = availableUntil ? toMinutes(availableUntil) : null;
+  const isOvernight = fromMins !== null && untilMins !== null && untilMins < fromMins;
+
+  if (isOvernight) {
+    // On the test date: before the open time → 'before'; from open time onward → 'open'
+    if (isTestDate) {
+      if (fromMins !== null && nowMins < fromMins) return 'before';
+      return 'open';
+    }
+    // On the next calendar day: still within the until time → 'open'; past it → 'closed'
+    if (isNextDay) {
+      if (untilMins !== null && nowMins <= untilMins) return 'open';
+      return 'closed';
+    }
+    return 'no_window';
+  }
+
+  // Normal (same-day) window
+  if (!isTestDate) return 'no_window';
+
+  if (availableFrom && nowMins < toMinutes(availableFrom)) return 'before';
+  // If until == from the teacher accidentally set a zero-duration window — treat as
+  // no close time so students aren't locked out immediately.
+  const effectiveUntil = (availableUntil && availableUntil !== availableFrom) ? availableUntil : null;
+  if (effectiveUntil && nowMins > toMinutes(effectiveUntil)) return 'closed';
   return 'open';
 }
 
@@ -245,8 +296,16 @@ export default function StudentTestsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tick every 30 s so window-state banners (before / open / closed) update
+  // automatically without the student having to pull-to-refresh.
+  const [, setTick] = useState(0);
 
   const navigation = useNavigation<StackNavigationProp<StudentStackParamList>>();
+
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   const fetchTests = useCallback(async () => {
     setError(null);
