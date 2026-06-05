@@ -65,7 +65,7 @@ async function logAudit(
 
 /**
  * Create an in-app notification for a staff user (teacher or school_admin).
- * Uses the 'message' column (live DB column name).
+ * Uses the 'body' column (renamed from 'message' via migration).
  */
 async function createNotification(
   recipientId: string,
@@ -76,7 +76,7 @@ async function createNotification(
   try {
     await supabaseAdmin.from('notifications').insert({
       title,
-      message: body,
+      body,
       type: 'alert',
       recipient_id: recipientId,
       sender_id: senderId,
