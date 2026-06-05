@@ -1144,8 +1144,17 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   // ── AppState: correct timer on foreground; save progress on background ──────
   useEffect(() => {
+    // Track whether we've seen at least one background event first.
+    // This prevents the 'active' handler from firing on mount (Android fires
+    // 'active' immediately when the component mounts while the app is already
+    // in the foreground, which caused the timer to be recalculated using a
+    // stale started_at from a previous attempt, setting secondsLeft to 0 and
+    // triggering an immediate auto-submit).
+    let hasGoneToBackground = false;
+
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background' || state === 'inactive') {
+        hasGoneToBackground = true;
         // Save progress when leaving — timer is NOT saved, it will be recomputed on return
         const aid = attemptIdRef.current;
         if (aid && phaseRef.current === 'active') {
@@ -1157,7 +1166,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             null  // never persist secondsLeft — always recompute from server timestamp
           ).catch(() => {/* silent */});
         }
-      } else if (state === 'active') {
+      } else if (state === 'active' && hasGoneToBackground) {
         // App came back to foreground — recalculate remaining time from server started_at.
         // This corrects any time the student spent outside the app.
         if (phaseRef.current === 'active' && startedAtRef.current && timeLimitSecondsRef.current !== null) {
