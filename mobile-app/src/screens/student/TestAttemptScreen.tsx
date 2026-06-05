@@ -1175,50 +1175,17 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   // ── Start / resume test ─────────────────────────────────────────────────────
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
 
+  // On mount: only check for a locally saved in-progress attempt.
+  // Do NOT auto-navigate based on attempt_status from the list — that data can be
+  // stale and was causing the test to auto-submit before the student saw any questions.
+  // The handleStart function already handles the 409 "already submitted" case correctly.
   useEffect(() => {
-    // Always check backend first for submitted attempts — don't rely on local cache
-    const checkAttemptStatus = async () => {
-      // If attempt_status passed from list says completed, or we have local progress,
-      // try to load results directly
-      if (test.attempt_status === 'completed') {
-        setPhase('submitting'); // show spinner while loading
-        try {
-          // Call start — it will 409 with attempt_id if already submitted
-          await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
-        } catch (err: unknown) {
-          const attemptIdFromErr =
-            (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
-          const msg =
-            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? '';
-
-          if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
-            try {
-              const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
-              const resultData = resResponse.data.data as ResultData;
-              setResults(resultData);
-              setAttemptId(attemptIdFromErr);
-              // Try leaderboard
-              try {
-                const lbResponse = await apiClient.get(`/api/tests/${test.id}/leaderboard`);
-                setLeaderboard(lbResponse.data.data as LeaderboardData);
-              } catch { setLeaderboard(null); }
-              setPhase('results');
-              return;
-            } catch {
-              // fall through to pre screen
-            }
-          }
-        }
-        setPhase('pre');
-        return;
-      }
-
+    const checkLocalProgress = async () => {
       const saved = await loadProgress(test.id);
       if (saved) setHasActiveAttempt(true);
     };
-
-    void checkAttemptStatus();
-  }, [test.id, test.attempt_status]);
+    void checkLocalProgress();
+  }, [test.id]);
 
   const handleStart = useCallback(async () => {
     setStarting(true);
