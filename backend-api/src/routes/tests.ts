@@ -421,35 +421,29 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
         const limitSeconds = test.time_limit_minutes * 60;
 
         if (elapsedSeconds >= limitSeconds) {
-          // Time is up on the old attempt. Delete it and create a fresh one
-          // so the student gets a full new attempt rather than being locked out
-          // with 0 answers they never submitted.
-          await supabaseAdmin
+          // Time is up on the old attempt. Reset started_at to now so the student
+          // gets a full fresh timer. (Deleting fails if child rows exist due to FK constraints.)
+          const { data: resetAttempt, error: resetErr } = await supabaseAdmin
             .from('test_attempts')
-            .delete()
-            .eq('id', existingFull.id);
-
-          // Clear any saved local-progress key (handled client-side, but belt-and-suspenders)
-          // Fall through to create a brand-new attempt below
-          const { data: newAttempt, error: aErr } = await supabaseAdmin
-            .from('test_attempts')
-            .insert({
-              test_id,
-              student_id: studentRecord.id,
+            .update({
               started_at: new Date().toISOString(),
               is_submitted: false,
             })
+            .eq('id', existingFull.id)
             .select('id, started_at')
             .single();
 
-          if (aErr || !newAttempt) {
+          if (resetErr || !resetAttempt) {
             sendError(res, 'Failed to reset expired attempt', 500);
             return;
           }
 
-          // Fetch questions (same logic as below — reuse rawQuestionsData already fetched)
-          // We need to jump past the normal existingAttempt path, so we handle the full
-          // response here and return early.
+          // Also clear any previously saved answers for this attempt
+          await supabaseAdmin
+            .from('student_answers')
+            .delete()
+            .eq('attempt_id', existingFull.id);
+
           const { data: tqReset, error: tqResetErr } = await supabaseAdmin
             .from('test_questions')
             .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
@@ -474,9 +468,9 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
           }
 
           sendSuccess(res, {
-            attempt_id: newAttempt.id,
+            attempt_id: resetAttempt.id,
             time_limit_minutes: test.time_limit_minutes,
-            started_at: newAttempt.started_at,
+            started_at: resetAttempt.started_at,
             resumed: false,
             questions: resetQuestions,
           }, 'Test started');
