@@ -421,21 +421,65 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
         const limitSeconds = test.time_limit_minutes * 60;
 
         if (elapsedSeconds >= limitSeconds) {
-          // Time is up — mark the attempt as submitted with whatever was saved
+          // Time is up on the old attempt. Delete it and create a fresh one
+          // so the student gets a full new attempt rather than being locked out
+          // with 0 answers they never submitted.
           await supabaseAdmin
             .from('test_attempts')
-            .update({
-              mcq_score: 0,
-              is_submitted: true,
-              submitted_at: new Date().toISOString(),
-            })
+            .delete()
             .eq('id', existingFull.id);
 
-          res.status(409).json({
-            success: false,
-            message: 'You have already submitted this test',
-            attempt_id: existingFull.id,
-          });
+          // Clear any saved local-progress key (handled client-side, but belt-and-suspenders)
+          // Fall through to create a brand-new attempt below
+          const { data: newAttempt, error: aErr } = await supabaseAdmin
+            .from('test_attempts')
+            .insert({
+              test_id,
+              student_id: studentRecord.id,
+              started_at: new Date().toISOString(),
+              is_submitted: false,
+            })
+            .select('id, started_at')
+            .single();
+
+          if (aErr || !newAttempt) {
+            sendError(res, 'Failed to reset expired attempt', 500);
+            return;
+          }
+
+          // Fetch questions (same logic as below — reuse rawQuestionsData already fetched)
+          // We need to jump past the normal existingAttempt path, so we handle the full
+          // response here and return early.
+          const { data: tqReset, error: tqResetErr } = await supabaseAdmin
+            .from('test_questions')
+            .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+            .eq('test_id', test_id)
+            .order('order_index', { ascending: true });
+
+          let resetQuestions = null;
+          if (!tqResetErr && tqReset && tqReset.length > 0) {
+            resetQuestions = tqReset;
+          } else {
+            const { data: qReset } = await supabaseAdmin
+              .from('questions')
+              .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+              .eq('test_id', test_id)
+              .order('order_index', { ascending: true });
+            resetQuestions = qReset;
+          }
+
+          if (!resetQuestions || resetQuestions.length === 0) {
+            sendError(res, 'This test has no questions yet. Contact your teacher.', 404);
+            return;
+          }
+
+          sendSuccess(res, {
+            attempt_id: newAttempt.id,
+            time_limit_minutes: test.time_limit_minutes,
+            started_at: newAttempt.started_at,
+            resumed: false,
+            questions: resetQuestions,
+          }, 'Test started');
           return;
         }
       }

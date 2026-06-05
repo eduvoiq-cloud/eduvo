@@ -1113,18 +1113,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
         const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
 
-        // If time has already fully elapsed before the student sees a question,
-        // don't silently force-submit with 0 answers. Show a clear message instead.
-        if (remaining === 0) {
-          Alert.alert(
-            'Time Expired',
-            'The time limit for this test has already elapsed. Please contact your teacher.',
-          );
-          setStarting(false);
-          return;
-        }
-
-        setSecondsLeft(remaining);
+        // The backend now resets any expired attempt and gives a fresh started_at,
+        // so remaining should always be positive here. If extreme clock skew causes
+        // it to round down to 0, use 1 so the student isn't blocked from starting.
+        setSecondsLeft(remaining > 0 ? remaining : 1);
       }
 
       // Sync phaseRef immediately before setPhase so onExpire never fires while
