@@ -61,6 +61,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Persist the refreshed profile so future loads are up-to-date
         saveSession(token, freshUser);
         setState({ user: freshUser, token, loading: false });
+
+        // If this is a first-login teacher who hasn't reset their password,
+        // redirect them before they can access any dashboard page.
+        if (freshUser.must_reset_password) {
+          router.push('/force-reset-password');
+        }
       })
       .catch((err: unknown) => {
         // If the server explicitly rejected the token (401/403), the session
@@ -92,7 +98,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     saveSession(token, user);
     setState({ user, token, loading: false });
-    router.push(dashboardPath(user.role));
+
+    // Force password reset before going to dashboard
+    if (res.data.must_reset_password || user.must_reset_password) {
+      router.push('/force-reset-password');
+    } else {
+      router.push(dashboardPath(user.role));
+    }
   }, [router]);
 
   const logout = useCallback(async () => {

@@ -10,12 +10,14 @@
  *   Student → custom JWT signed with JWT_SECRET  { type: "student", sub: student.id, school_id }
  *
  * Routes:
- *   POST /api/auth/login/staff            — staff login
- *   POST /api/auth/login/student          — student (+ parent) login
- *   POST /api/auth/student/change-password — student changes own password
- *   POST /api/auth/student/reset-password  — school_admin resets a student's password
- *   GET  /api/auth/me                     — restore any session
- *   POST /api/auth/logout                 — sign out
+ *   POST /api/auth/login/staff              — staff login (returns must_reset_password flag)
+ *   POST /api/auth/login/student            — student (+ parent) login
+ *   POST /api/auth/staff/change-password    — staff sets new password (clears must_reset_password)
+ *   POST /api/auth/staff/forgot-password    — send Supabase password-reset email
+ *   POST /api/auth/student/change-password  — student changes own password
+ *   POST /api/auth/student/reset-password   — school_admin resets a student's password
+ *   GET  /api/auth/me                       — restore any session
+ *   POST /api/auth/logout                   — sign out
  */
 
 import { Router, Request, Response } from 'express';
@@ -128,7 +130,7 @@ router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) 
   // 2. Fetch profile — role lives here, never in the JWT
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('users')
-    .select('id, name, email, role, school_id')
+    .select('id, name, email, role, school_id, must_reset_password, phone')
     .eq('id', authUser.id)
     .single();
 
@@ -146,17 +148,22 @@ router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) 
 
   await logAudit(authUser.id, 'STAFF_LOGIN_SUCCESS', { email, role: profile.role });
 
+  const p = profile as Record<string, unknown>;
+
   sendSuccess(res, {
     token: session.access_token,
     refresh_token: session.refresh_token,
     expires_at: session.expires_at,
     token_type: 'staff',
+    must_reset_password: p.must_reset_password === true,
     user: {
       id: profile.id,
       name: profile.name,
       email: profile.email,
       role: profile.role,
       school_id: profile.school_id ?? null,
+      must_reset_password: p.must_reset_password === true,
+      phone: (p.phone as string | null) ?? null,
     },
   });
 });
@@ -403,14 +410,98 @@ router.post(
   }
 );
 
+// ── POST /api/auth/staff/change-password ──────────────────────────────────────
+
+/**
+ * Authenticated staff member (teacher / admin) sets a new password.
+ * Called after first login when must_reset_password = true, or from settings.
+ * On success, clears the must_reset_password flag in the users table.
+ *
+ * Requires a valid staff session token.
+ */
+const staffChangePasswordSchema = z.object({
+  new_password: z.string().min(8).max(128),
+});
+
+router.post('/staff/change-password', authenticate, async (req: Request, res: Response) => {
+  const parsed = staffChangePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { new_password } = parsed.data;
+  const staffUser = req.user!;
+
+  // Update password in Supabase Auth (service-role key bypasses email confirmation)
+  const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(
+    staffUser.id,
+    { password: new_password }
+  );
+
+  if (authErr) {
+    sendError(res, 'Failed to update password. Please try again.', 500);
+    return;
+  }
+
+  // Clear the must_reset_password flag
+  const { error: dbErr } = await supabaseAdmin
+    .from('users')
+    .update({ must_reset_password: false })
+    .eq('id', staffUser.id);
+
+  if (dbErr) {
+    // Non-fatal — password was changed successfully; flag will clear on next attempt
+    console.error('[auth] Failed to clear must_reset_password for user', staffUser.id, dbErr.message);
+  }
+
+  await logAudit(staffUser.id, 'STAFF_PASSWORD_CHANGED', { user_id: staffUser.id });
+  sendSuccess(res, null, 'Password changed successfully');
+});
+
+// ── POST /api/auth/staff/forgot-password ──────────────────────────────────────
+
+/**
+ * Triggers a Supabase password-reset email for the given staff email address.
+ * The email contains a secure, time-limited link that redirects the user to
+ * the NEXT_PUBLIC_SITE_URL/reset-password page (configured in Supabase dashboard).
+ *
+ * Public route — no auth required. Rate-limited to prevent email spam.
+ */
+const forgotPasswordSchema = z.object({
+  email: z.string().email().max(254),
+});
+
+router.post('/staff/forgot-password', loginRateLimit, async (req: Request, res: Response) => {
+  const parsed = forgotPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { email } = parsed.data;
+
+  // Always return 200 regardless of whether the email exists — prevents
+  // user enumeration attacks.
+  await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${process.env.SITE_URL ?? ''}/reset-password`,
+  });
+
+  await logAudit(null, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email });
+  sendSuccess(res, null, 'If an account with that email exists, a reset link has been sent.');
+});
+
 // ── GET /api/auth/me ──────────────────────────────────────────────────────────
 
 /**
  * Returns the authenticated user's profile.
  * Accepts both staff tokens and student tokens.
  * Used by the frontend to restore a session after page reload.
+ *
+ * For staff, fetches a fresh profile including must_reset_password so the
+ * frontend always has up-to-date flag state (even after session rehydration).
  */
-router.get('/me', authenticateAny, (req: Request, res: Response) => {
+router.get('/me', authenticateAny, async (req: Request, res: Response) => {
   if (req.tokenType === 'student') {
     const s = req.student!;
     sendSuccess(res, {
@@ -425,12 +516,30 @@ router.get('/me', authenticateAny, (req: Request, res: Response) => {
         // phone_number intentionally omitted — only shown on own profile endpoint
       },
     });
-  } else {
-    sendSuccess(res, {
-      token_type: 'staff',
-      user: req.user,
-    });
+    return;
   }
+
+  // Re-fetch profile to include must_reset_password (not in req.user by default)
+  const { data: profile } = await supabaseAdmin
+    .from('users')
+    .select('id, name, email, role, school_id, must_reset_password, phone')
+    .eq('id', req.user!.id)
+    .single();
+
+  const p = (profile ?? req.user) as Record<string, unknown>;
+
+  sendSuccess(res, {
+    token_type: 'staff',
+    user: {
+      id: p.id,
+      name: p.name,
+      email: p.email,
+      role: p.role,
+      school_id: p.school_id ?? null,
+      must_reset_password: p.must_reset_password === true,
+      phone: (p.phone as string | null) ?? null,
+    },
+  });
 });
 
 // ── POST /api/auth/logout ─────────────────────────────────────────────────────

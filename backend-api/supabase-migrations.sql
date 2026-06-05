@@ -479,3 +479,12 @@ ALTER TABLE public.tests
   CHECK (exam_type IN ('quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test'));
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── users: add must_reset_password and phone columns ─────────────────────────
+-- must_reset_password: true for bulk-imported teachers who haven't changed their
+--   default phone-number password yet. Forces a password-reset screen on login.
+-- phone: store phone number for teachers (needed for phone-as-default-password).
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS must_reset_password boolean NOT NULL DEFAULT false;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone text;
+
+NOTIFY pgrst, 'reload schema';

@@ -663,21 +663,38 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
 router.get('/teachers/template', requireRole('superadmin', 'schooladmin'), templateDownloadRateLimit, (_req: Request, res: Response) => {
   const wb = XLSX.utils.book_new();
 
+  // ── Headers and sample rows ──────────────────────────────────────────────────
+  // A teacher can appear multiple times (same name/email/phone) with different
+  // class/division/subject rows. All rows with the same email are merged into
+  // one account with multiple teacher_assignment rows.
   const headers = [
-    'Teacher Name',
-    'Phone Number',
-    'Email',
-    'Subject',
-    'Assigned Classes',
+    'name',        // required — Full name
+    'email',       // required — Email address (used as login username)
+    'phone',       // required — Phone number (auto-set as default password)
+    'class',       // optional — Class number e.g. 10
+    'division',    // optional — Division/section e.g. A
+    'subject',     // optional — Subject they teach e.g. Maths
   ];
 
   const exampleRows = [
-    ['John Smith', '9876543210', 'john.smith@school.com', 'Mathematics', '10A, 10B, 9A'],
-    ['Jane Doe', '9876543211', 'jane.doe@school.com', 'English', '8A, 8B'],
+    ['Priya Shah',  'priya@school.com',  '9876543210', '10', 'A', 'Maths'],
+    ['Priya Shah',  'priya@school.com',  '9876543210', '10', 'B', 'Maths'],
+    ['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'A', 'Hindi'],
+    ['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'B', 'Hindi'],
+    ['Sita Verma',  'sita@school.com',   '9988776655',  '',   '',  ''],     // no assignment yet
   ];
 
-  const data = [headers, ...exampleRows];
-  const ws = XLSX.utils.aoa_to_sheet(data);
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...exampleRows]);
+
+  // Widen columns for readability
+  ws['!cols'] = [
+    { wch: 20 }, // name
+    { wch: 28 }, // email
+    { wch: 14 }, // phone
+    { wch: 8 },  // class
+    { wch: 10 }, // division
+    { wch: 16 }, // subject
+  ];
 
   XLSX.utils.book_append_sheet(wb, ws, 'Teachers');
 
@@ -718,7 +735,7 @@ router.post(
     const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
 
     const dataRows = rawRows.slice(1).filter((row) => {
-      return row.some((cell) => cell !== '' && cell !== null && cell !== undefined);
+      return (row as unknown[]).some((cell) => cell !== '' && cell !== null && cell !== undefined);
     });
 
     if (dataRows.length === 0) {
@@ -742,75 +759,105 @@ router.post(
       (existingTeachers ?? []).map((t) => String(t.email).toLowerCase())
     );
 
-    const seenInFile = new Set<string>();
+    // ── First pass: collect all rows and group by email ────────────────────────
+    // This detects multi-row teachers (same email, different class/division/subject).
+    interface RawTeacherRow {
+      row_number: number;
+      name: string;
+      email: string;
+      phone: string;
+      class: string;
+      division: string;
+      subject: string;
+    }
+
+    const allRawRows: RawTeacherRow[] = [];
+    for (let i = 0; i < dataRows.length; i++) {
+      const row = dataRows[i] as unknown[];
+      allRawRows.push({
+        row_number: i + 2,
+        name:      String(row[0] ?? '').trim(),
+        email:     String(row[1] ?? '').trim(),
+        phone:     String(row[2] ?? '').trim(),
+        class:     String(row[3] ?? '').trim(),
+        division:  String(row[4] ?? '').trim().toUpperCase(),
+        subject:   String(row[5] ?? '').trim(),
+      });
+    }
+
+    // ── Group rows by email — first occurrence defines name/phone ──────────────
+    const emailToFirstRow = new Map<string, RawTeacherRow>();
+    const emailToAssignments = new Map<string, Array<{ class: string; division: string; subject: string }>>();
+
+    for (const r of allRawRows) {
+      const key = r.email.toLowerCase();
+      if (!emailToFirstRow.has(key)) {
+        emailToFirstRow.set(key, r);
+        emailToAssignments.set(key, []);
+      }
+      if (r.class || r.division || r.subject) {
+        emailToAssignments.get(key)!.push({ class: r.class, division: r.division, subject: r.subject });
+      }
+    }
+
     const previewRows: PreviewRow[] = [];
 
-    for (let i = 0; i < dataRows.length; i++) {
-      const row = dataRows[i];
-      const rowNumber = i + 2;
-
-      const teacherName = row[0];
-      const phone = row[1];
-      const email = row[2];
-      const subject = row[3];
-      const assignedClasses = row[4];
-
+    for (const [emailKey, firstRow] of emailToFirstRow.entries()) {
+      const assignments = emailToAssignments.get(emailKey) ?? [];
       const errors: string[] = [];
 
-      const nameErr = validateTeacherName(teacherName);
-      if (nameErr) errors.push(nameErr);
+      if (!firstRow.name) errors.push('Name is required');
+      if (!firstRow.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(firstRow.email)) {
+        errors.push('Valid email is required');
+      }
+      if (!firstRow.phone || !/^\d{7,15}$/.test(firstRow.phone.replace(/[\s\-+]/g, ''))) {
+        errors.push('Valid phone number is required (7–15 digits)');
+      }
 
-      const phoneErr = validateTeacherPhone(phone);
-      if (phoneErr) errors.push(phoneErr);
-
-      const emailErr = validateTeacherEmail(email);
-      if (emailErr) errors.push(emailErr);
-
-      const subjectErr = validateSubject(subject);
-      if (subjectErr) errors.push(subjectErr);
-
-      const classesErr = validateAssignedClasses(assignedClasses);
-      if (classesErr) errors.push(classesErr);
-
-      const emailStr = String(email || '').trim().toLowerCase();
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
-
-      if (seenInFile.has(emailStr)) {
-        errors.push('Duplicate email within this file');
-        status = 'duplicate';
-      } else if (existingEmails.has(emailStr)) {
+      if (existingEmails.has(emailKey)) {
         errors.push('Email already exists in system');
         status = 'duplicate';
       } else if (errors.length > 0) {
         status = 'invalid';
-      } else {
-        seenInFile.add(emailStr);
       }
 
+      // Format assignments summary for display
+      const assignedClasses = assignments
+        .map((a) => {
+          if (a.class && a.division && a.subject) return `${a.class}${a.division} — ${a.subject}`;
+          if (a.class && a.division) return `${a.class}${a.division}`;
+          return '';
+        })
+        .filter(Boolean)
+        .join(', ');
+
       previewRows.push({
-        row_number: rowNumber,
+        row_number: firstRow.row_number,
         data: {
-          name: String(teacherName || '').trim(),
-          phone: String(phone || '').trim(),
-          email: String(email || '').trim(),
-          subject: String(subject || '').trim(),
-          assigned_classes: String(assignedClasses || '').trim(),
+          name:      firstRow.name,
+          phone:     firstRow.phone,
+          email:     firstRow.email,
+          subject:   assignments.map((a) => a.subject).filter(Boolean).join(', '),
+          assigned_classes: assignedClasses,
+          // Store the structured assignments for confirm
+          assignments,
         },
         status,
         errors,
       });
     }
 
-    const validRows = previewRows.filter((r) => r.status === 'valid').length;
-    const invalidRows = previewRows.filter((r) => r.status === 'invalid').length;
-    const duplicateRows = previewRows.filter((r) => r.status === 'duplicate').length;
+    const validRows      = previewRows.filter((r) => r.status === 'valid').length;
+    const invalidRows    = previewRows.filter((r) => r.status === 'invalid').length;
+    const duplicateRows  = previewRows.filter((r) => r.status === 'duplicate').length;
 
     const preview: PreviewResponse = {
-      total_rows: previewRows.length,
-      valid_rows: validRows,
-      invalid_rows: invalidRows,
+      total_rows:     previewRows.length,
+      valid_rows:     validRows,
+      invalid_rows:   invalidRows,
       duplicate_rows: duplicateRows,
-      rows: previewRows,
+      rows:           previewRows,
     };
 
     const sessionId = uuidv4();
@@ -869,11 +916,18 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
         email: string;
         subject: string;
         assigned_classes: string;
+        assignments?: Array<{ class: string; division: string; subject: string }>;
       };
 
-      // Create Supabase auth user for teacher
+      // ── Clean phone to digits only ─────────────────────────────────────────
+      const phoneDigits = data.phone.replace(/[\s\-+]/g, '');
+      // Default password = full phone number
+      const defaultPassword = phoneDigits;
+
+      // ── Create Supabase Auth user with phone as password ───────────────────
       const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
         email: data.email,
+        password: defaultPassword,
         email_confirm: true,
         user_metadata: {
           name: data.name,
@@ -882,72 +936,75 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
       });
 
       if (authErr || !authUser.user) {
-        errors.push(`Row ${row.row_number}: Failed to create auth user - ${authErr?.message}`);
+        errors.push(`Row ${row.row_number}: Failed to create auth user — ${authErr?.message ?? 'unknown error'}`);
         continue;
       }
 
       const userId = authUser.user.id;
 
-      // Create users record
+      // ── Create users record with must_reset_password = true ────────────────
       const { error: userErr } = await supabaseAdmin.from('users').insert({
-        id: userId,
-        name: data.name,
-        email: data.email,
-        role: 'teacher',
-        school_id: cached.school_id,
-        created_by: req.user!.id,
-        created_at: new Date().toISOString(),
+        id:                  userId,
+        name:                data.name,
+        email:               data.email,
+        phone:               data.phone,
+        role:                'teacher',
+        school_id:           cached.school_id,
+        must_reset_password: true,
+        created_by:          req.user!.id,
+        created_at:          new Date().toISOString(),
       });
 
       if (userErr) {
-        errors.push(`Row ${row.row_number}: Failed to create user record - ${userErr.message}`);
-        // Clean up auth user
+        errors.push(`Row ${row.row_number}: Failed to create user record — ${userErr.message}`);
+        // Clean up auth user to avoid orphaned accounts
         await supabaseAdmin.auth.admin.deleteUser(userId);
         continue;
       }
 
-      // Parse assigned classes: "10A, 10B, 9A" → [{class: "10", section: "A"}, ...]
-      const classesList = data.assigned_classes
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean);
+      // ── Create teacher_assignments for each class/division/subject ──────────
+      const structuredAssignments = data.assignments ?? [];
 
-      const assignments = classesList.map((cls) => {
-        // Extract class and section: "10A" → class="10", section="A"
-        const match = cls.match(/^(\d+)([A-Z])$/i);
-        if (!match) return null;
-        return {
-          teacher_id: userId,
-          school_id: cached.school_id,
-          class_name: match[1],
-          section: match[2].toUpperCase(),
-          subject: data.subject,
-          created_at: new Date().toISOString(),
-        };
-      }).filter((a) => a !== null);
+      if (structuredAssignments.length > 0) {
+        const assignmentRows = structuredAssignments
+          .filter((a) => a.class && a.division && a.subject)
+          .map((a) => ({
+            teacher_id: userId,
+            school_id:  cached.school_id,
+            class_name: a.class,
+            section:    a.division.toUpperCase(),
+            subject:    a.subject,
+            created_at: new Date().toISOString(),
+          }));
 
-      if (assignments.length > 0) {
-        const { error: assignErr } = await supabaseAdmin
-          .from('teacher_assignments')
-          .insert(assignments);
+        if (assignmentRows.length > 0) {
+          const { error: assignErr } = await supabaseAdmin
+            .from('teacher_assignments')
+            .insert(assignmentRows);
 
-        if (assignErr) {
-          errors.push(`Row ${row.row_number}: Failed to create assignments - ${assignErr.message}`);
+          if (assignErr) {
+            // Log but don't fail the import — teacher account was created
+            console.error(`[bulkImport] Assignment insert failed for row ${row.row_number}:`, assignErr.message);
+            errors.push(`Row ${row.row_number}: Teacher created but some assignments failed — ${assignErr.message}`);
+          }
         }
       }
 
-      // TODO: Send welcome email to teacher (requires email service integration)
-      // Intentionally not logging email address to avoid PII in server logs.
-
       imported.push(userId);
+
+      await logAudit(req.user!.id, 'bulk_import_teacher_created', {
+        teacher_id:   userId,
+        teacher_name: data.name,
+        school_id:    cached.school_id,
+      });
     } catch (err) {
       errors.push(`Row ${row.row_number}: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   }
 
-  // Log to audit_logs
+  // Summary audit log
   await logAudit(req.user!.id, 'bulk_import_teachers', {
-    count: imported.length,
+    count:     imported.length,
     school_id: cached.school_id,
   });
 
@@ -956,7 +1013,7 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
 
   sendSuccess(res, {
     imported: imported.length,
-    skipped: validRows.length - imported.length,
+    skipped:  validRows.length - imported.length,
     errors,
   });
 });

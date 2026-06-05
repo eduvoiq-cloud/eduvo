@@ -29,12 +29,15 @@ export interface UserProfile {
   email: string;
   role: AppRole;
   school_id: string | null;
+  must_reset_password?: boolean;
+  phone?: string | null;
 }
 
 export interface LoginResponse {
   token: string;
   refresh_token: string;
   expires_at: number;
+  must_reset_password: boolean;
   user: UserProfile;
 }
 
@@ -342,6 +345,20 @@ export const authApi = {
 
   me: (token: string) =>
     request<{ token_type: string; user: UserProfile }>('/api/auth/me', { method: 'GET' }, token),
+
+  /** Send a password reset email to the given staff email address */
+  forgotPassword: (email: string) =>
+    request<null>('/api/auth/staff/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  /** Authenticated staff member sets a new password (clears must_reset_password) */
+  changePassword: (token: string, newPassword: string) =>
+    request<null>('/api/auth/staff/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ new_password: newPassword }),
+    }, token),
 
   /** Create a new teacher account (school_admin only) */
   createUser: (

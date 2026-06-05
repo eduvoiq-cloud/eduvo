@@ -13,46 +13,52 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 type Step = 'upload' | 'preview' | 'success';
 type TabFilter = 'all' | 'valid' | 'invalid' | 'duplicate';
 
+// Shape returned by the backend preview endpoint
 interface PreviewRow {
-  row: number;
-  teacher_name: string;
-  phone: string;
-  email: string;
-  subject: string;
-  assigned_classes: string;
+  row_number: number;
+  data: {
+    name: string;
+    email: string;
+    phone: string;
+    subject: string;
+    assigned_classes: string;
+  };
   status: 'valid' | 'invalid' | 'duplicate';
   errors: string[];
 }
 
 interface PreviewResult {
-  total: number;
-  valid: number;
-  invalid: number;
-  duplicate: number;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_rows: number;
   rows: PreviewRow[];
+  import_session_id: string;
 }
 
 interface ImportResult {
   imported: number;
   skipped: number;
+  errors?: string[];
 }
 
-// ── Column guide data ─────────────────────────────────────────────────────────
+// ── Column guide — matches new template format ────────────────────────────────
 
 const COLUMNS = [
-  { name: 'Teacher Name', required: true, note: 'Full name of the teacher' },
-  { name: 'Phone', required: true, note: 'Phone number with country code' },
-  { name: 'Email', required: true, note: 'Used to send welcome email and login invite' },
-  { name: 'Subject', required: false, note: 'Primary subject taught e.g. Mathematics' },
-  { name: 'Assigned Classes', required: false, note: 'Comma-separated e.g. Grade 5A, Grade 6B' },
+  { name: 'name',     required: true,  note: 'Full name of the teacher' },
+  { name: 'email',    required: true,  note: 'Email address — used as login username' },
+  { name: 'phone',    required: true,  note: 'Phone number — auto-set as default password' },
+  { name: 'class',    required: false, note: 'Class number e.g. 10' },
+  { name: 'division', required: false, note: 'Division / section e.g. A' },
+  { name: 'subject',  required: false, note: 'Subject they teach e.g. Maths' },
 ];
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
 function StatusBadge({ status, errors }: { status: PreviewRow['status']; errors: string[] }) {
   const map = {
-    valid: 'bg-green-100 text-green-700',
-    invalid: 'bg-red-100 text-red-700',
+    valid:     'bg-green-100 text-green-700',
+    invalid:   'bg-red-100 text-red-700',
     duplicate: 'bg-orange-100 text-orange-700',
   };
   const label = { valid: 'Valid', invalid: 'Invalid', duplicate: 'Duplicate' };
@@ -66,7 +72,7 @@ function StatusBadge({ status, errors }: { status: PreviewRow['status']; errors:
         {label[status]}
       </span>
       {errors.length > 0 && (
-        <div className="absolute left-0 top-full mt-1 z-10 hidden group-hover:block w-56 bg-gray-900 text-white text-xs rounded-lg p-2 shadow-lg">
+        <div className="absolute left-0 top-full mt-1 z-10 hidden group-hover:block w-64 bg-gray-900 text-white text-xs rounded-lg p-2 shadow-lg">
           {errors.map((e, i) => <p key={i}>{e}</p>)}
         </div>
       )}
@@ -76,13 +82,7 @@ function StatusBadge({ status, errors }: { status: PreviewRow['status']; errors:
 
 // ── Drag-and-drop upload zone ─────────────────────────────────────────────────
 
-function DropZone({
-  file,
-  onFile,
-}: {
-  file: File | null;
-  onFile: (f: File) => void;
-}) {
+function DropZone({ file, onFile }: { file: File | null; onFile: (f: File) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -90,22 +90,18 @@ function DropZone({
     e.preventDefault();
     setDragging(false);
     const f = e.dataTransfer.files[0];
-    if (f && isValidFile(f)) onFile(f);
+    if (f && isValid(f)) onFile(f);
   }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
-    if (f && isValidFile(f)) onFile(f);
+    if (f && isValid(f)) onFile(f);
   }
 
-  function isValidFile(f: File) {
-    return f.name.endsWith('.xlsx') || f.name.endsWith('.xls');
-  }
+  function isValid(f: File) { return f.name.endsWith('.xlsx') || f.name.endsWith('.xls'); }
 
-  function formatSize(bytes: number) {
-    return bytes < 1024 * 1024
-      ? `${(bytes / 1024).toFixed(1)} KB`
-      : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  function fmtSize(b: number) {
+    return b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   return (
@@ -127,7 +123,7 @@ function DropZone({
             </svg>
           </div>
           <p className="text-sm font-medium text-gray-900">{file.name}</p>
-          <p className="text-xs text-gray-500">{formatSize(file.size)} · Click to change</p>
+          <p className="text-xs text-gray-500">{fmtSize(file.size)} · Click to change</p>
         </div>
       ) : (
         <div className="flex flex-col items-center gap-3">
@@ -156,12 +152,12 @@ function DropZone({
 export default function ImportTeachersPage() {
   const router = useRouter();
 
-  // ── State ───────────────────────────────────────────────────────────────
   const [step, setStep] = useState<Step>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [previewProgress, setPreviewProgress] = useState('');
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [sessionId, setSessionId] = useState('');
   const [tab, setTab] = useState<TabFilter>('all');
   const [showConfirm, setShowConfirm] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -213,7 +209,9 @@ export default function ImportTeachersPage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Preview failed');
 
-      setPreview(json.data as PreviewResult);
+      const data = json.data as PreviewResult;
+      setPreview(data);
+      setSessionId(data.import_session_id);
       setTab('all');
       setStep('preview');
     } catch (e: unknown) {
@@ -224,24 +222,23 @@ export default function ImportTeachersPage() {
     }
   }, [file]);
 
-  // ── Confirm import ──────────────────────────────────────────────────────
+  // ── Confirm import — sends session_id, not the file again ──────────────
 
   async function handleImport() {
-    if (!file) return;
     const token = getToken();
-    if (!token) return;
+    if (!token || !sessionId) return;
     setShowConfirm(false);
     setImporting(true);
     setError('');
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-
       const res = await fetch(`${BASE_URL}/api/import/teachers/confirm`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ import_session_id: sessionId }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Import failed');
@@ -261,6 +258,7 @@ export default function ImportTeachersPage() {
     setStep('upload');
     setFile(null);
     setPreview(null);
+    setSessionId('');
     setImportResult(null);
     setError('');
     setTab('all');
@@ -303,7 +301,10 @@ export default function ImportTeachersPage() {
               </div>
               <div className="flex-1">
                 <h2 className="text-base font-semibold text-gray-900">Step 1 — Download Teacher Import Template</h2>
-                <p className="mt-1 text-sm text-gray-500">Fill this Excel template with your teacher data, then upload it below.</p>
+                <p className="mt-1 text-sm text-gray-500">
+                  Fill this Excel template with your teacher data, then upload it below.
+                  A teacher can span multiple rows (same email) for multiple class/division/subject assignments.
+                </p>
 
                 {/* Column guide */}
                 <div className="mt-4 overflow-x-auto">
@@ -318,7 +319,7 @@ export default function ImportTeachersPage() {
                     <tbody className="divide-y divide-gray-50">
                       {COLUMNS.map((col) => (
                         <tr key={col.name}>
-                          <td className="py-1.5 pr-4 font-medium text-gray-800">{col.name}</td>
+                          <td className="py-1.5 pr-4 font-mono font-medium text-gray-800">{col.name}</td>
                           <td className="py-1.5 pr-4">
                             {col.required
                               ? <span className="text-red-600 font-medium">Required</span>
@@ -329,6 +330,16 @@ export default function ImportTeachersPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+
+                {/* Multi-row tip */}
+                <div className="mt-3 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+                  <strong>Multiple assignments per teacher:</strong> Use multiple rows with the same email — the system merges them into one account with multiple class assignments.
+                </div>
+
+                {/* Password info */}
+                <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-700">
+                  <strong>Default password:</strong> Each teacher's phone number is set as their initial password. They will be required to change it on first login.
                 </div>
 
                 <button
@@ -390,8 +401,8 @@ export default function ImportTeachersPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-xl font-bold text-green-700">{preview.valid}</p>
-                <p className="text-xs text-green-600">Valid rows ready to import</p>
+                <p className="text-xl font-bold text-green-700">{preview.valid_rows}</p>
+                <p className="text-xs text-green-600">Valid — ready to import</p>
               </div>
             </div>
             <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
@@ -401,8 +412,8 @@ export default function ImportTeachersPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-xl font-bold text-red-700">{preview.invalid}</p>
-                <p className="text-xs text-red-600">Invalid rows (will be skipped)</p>
+                <p className="text-xl font-bold text-red-700">{preview.invalid_rows}</p>
+                <p className="text-xs text-red-600">Invalid (will be skipped)</p>
               </div>
             </div>
             <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3">
@@ -412,27 +423,28 @@ export default function ImportTeachersPage() {
                 </svg>
               </div>
               <div>
-                <p className="text-xl font-bold text-orange-700">{preview.duplicate}</p>
-                <p className="text-xs text-orange-600">Duplicate rows (will be skipped)</p>
+                <p className="text-xl font-bold text-orange-700">{preview.duplicate_rows}</p>
+                <p className="text-xs text-orange-600">Duplicate (will be skipped)</p>
               </div>
             </div>
           </div>
 
           {/* Tab switcher + table */}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-            {/* Tabs */}
             <div className="flex border-b border-gray-100 px-4 pt-4 gap-1">
               {(['all', 'valid', 'invalid', 'duplicate'] as TabFilter[]).map((t) => {
-                const count = t === 'all' ? preview.total : preview[t];
+                const count = t === 'all'
+                  ? preview.total_rows
+                  : t === 'valid' ? preview.valid_rows
+                  : t === 'invalid' ? preview.invalid_rows
+                  : preview.duplicate_rows;
                 const active = tab === t;
                 return (
                   <button
                     key={t}
                     onClick={() => setTab(t)}
                     className={`px-3 py-1.5 text-sm font-medium rounded-t-lg border-b-2 transition-colors capitalize ${
-                      active
-                        ? 'border-blue-600 text-blue-600'
-                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                      active ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
                     }`}
                   >
                     {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -444,12 +456,11 @@ export default function ImportTeachersPage() {
               })}
             </div>
 
-            {/* Table */}
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    {['Row #', 'Teacher Name', 'Phone', 'Email', 'Subject', 'Assigned Classes', 'Status', 'Errors'].map((h) => (
+                    {['Row #', 'Name', 'Email', 'Phone', 'Subjects', 'Class Assignments', 'Status', 'Issues'].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -460,22 +471,22 @@ export default function ImportTeachersPage() {
                       <td colSpan={8} className="text-center py-10 text-sm text-gray-400">No rows in this category</td>
                     </tr>
                   ) : filteredRows.map((row) => (
-                    <tr key={row.row} className={`hover:bg-gray-50 transition-colors ${
-                      row.status !== 'valid' ? 'bg-red-50/30' : ''
-                    }`}>
-                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{row.row}</td>
-                      <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{row.teacher_name || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.phone || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.email || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{row.subject || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600 max-w-xs truncate" title={row.assigned_classes}>{row.assigned_classes || '—'}</td>
+                    <tr key={row.row_number} className={`hover:bg-gray-50 transition-colors ${row.status !== 'valid' ? 'bg-red-50/30' : ''}`}>
+                      <td className="px-4 py-3 text-gray-500 font-mono text-xs">{row.row_number}</td>
+                      <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{row.data.name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">{row.data.email || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.data.phone || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">{row.data.subject || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 text-xs max-w-[180px] truncate" title={row.data.assigned_classes}>
+                        {row.data.assigned_classes || <span className="text-gray-400 italic">None</span>}
+                      </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={row.status} errors={row.errors} />
                       </td>
-                      <td className="px-4 py-3 max-w-xs">
+                      <td className="px-4 py-3 max-w-[200px]">
                         {row.errors.length > 0 ? (
                           <p className="text-xs text-red-600 truncate" title={row.errors.join('; ')}>
-                            {row.errors[0]}{row.errors.length > 1 ? ` (+${row.errors.length - 1} more)` : ''}
+                            {row.errors[0]}{row.errors.length > 1 ? ` (+${row.errors.length - 1})` : ''}
                           </p>
                         ) : (
                           <span className="text-xs text-gray-400">—</span>
@@ -494,7 +505,7 @@ export default function ImportTeachersPage() {
               <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              Invalid and duplicate rows will be skipped automatically
+              Invalid and duplicate rows are skipped automatically
             </p>
             <div className="flex items-center gap-3">
               <button
@@ -505,7 +516,7 @@ export default function ImportTeachersPage() {
               </button>
               <button
                 onClick={() => setShowConfirm(true)}
-                disabled={preview.valid === 0 || importing}
+                disabled={preview.valid_rows === 0 || importing}
                 className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors"
               >
                 {importing ? (
@@ -514,7 +525,7 @@ export default function ImportTeachersPage() {
                     Importing…
                   </>
                 ) : (
-                  `Import ${preview.valid} Valid Teacher${preview.valid !== 1 ? 's' : ''}`
+                  `Import ${preview.valid_rows} Teacher${preview.valid_rows !== 1 ? 's' : ''}`
                 )}
               </button>
             </div>
@@ -531,13 +542,18 @@ export default function ImportTeachersPage() {
             </svg>
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            {importResult.imported} teacher{importResult.imported !== 1 ? 's' : ''} imported. Welcome emails sent.
+            {importResult.imported} teacher{importResult.imported !== 1 ? 's' : ''} imported successfully
           </h2>
-          <p className="text-sm text-gray-500 mb-8">
-            {importResult.skipped > 0
-              ? `${importResult.skipped} row${importResult.skipped !== 1 ? 's' : ''} skipped (invalid or duplicate)`
-              : 'All rows were imported successfully'}
+          <p className="text-sm text-gray-500 mb-2">
+            Each teacher&apos;s phone number has been set as their default password.
+            They will be prompted to change it on first login.
           </p>
+          {importResult.skipped > 0 && (
+            <p className="text-sm text-orange-600 mb-8">
+              {importResult.skipped} row{importResult.skipped !== 1 ? 's' : ''} skipped (invalid or duplicate)
+            </p>
+          )}
+          {(!importResult.skipped || importResult.skipped === 0) && <div className="mb-8" />}
           <div className="flex items-center gap-3 flex-wrap justify-center">
             <button
               onClick={handleReset}
@@ -556,20 +572,15 @@ export default function ImportTeachersPage() {
       )}
 
       {/* ── Confirmation modal ─────────────────────────────────────────── */}
-      <Modal
-        open={showConfirm}
-        onClose={() => setShowConfirm(false)}
-        title="Confirm Import"
-        size="sm"
-      >
+      <Modal open={showConfirm} onClose={() => setShowConfirm(false)} title="Confirm Import" size="sm">
         <div className="space-y-4">
           <p className="text-sm text-gray-700">
-            Import <span className="font-semibold text-gray-900">{preview?.valid} teacher{preview?.valid !== 1 ? 's' : ''}</span>?
-            This cannot be undone.
+            Import <span className="font-semibold text-gray-900">{preview?.valid_rows} teacher{preview?.valid_rows !== 1 ? 's' : ''}</span>?
+            Their phone number will be set as the default password and they&apos;ll be required to change it on first login. This cannot be undone.
           </p>
-          {(preview?.invalid ?? 0) + (preview?.duplicate ?? 0) > 0 && (
+          {(preview?.invalid_rows ?? 0) + (preview?.duplicate_rows ?? 0) > 0 && (
             <p className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
-              {(preview?.invalid ?? 0) + (preview?.duplicate ?? 0)} invalid/duplicate rows will be skipped automatically.
+              {(preview?.invalid_rows ?? 0) + (preview?.duplicate_rows ?? 0)} invalid/duplicate rows will be skipped.
             </p>
           )}
           <div className="flex justify-end gap-3 pt-1">
