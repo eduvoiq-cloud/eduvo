@@ -1118,8 +1118,8 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const { secondsLeft, setSecondsLeft } = useCountdown(
     null, // start as null; set when test begins
     () => {
-      // Auto-submit when timer hits 0
-      if (phase === 'active') {
+      // Auto-submit when timer hits 0 — use phaseRef to avoid stale closure
+      if (phaseRef.current === 'active') {
         handleSubmit(true);
       }
     }
@@ -1270,6 +1270,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         setSecondsLeft(remaining);
       }
 
+      phaseRef.current = 'active';
       setPhase('active');
     } catch (err: unknown) {
       const errMsg =
@@ -1332,6 +1333,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const handleSubmit = useCallback(async (autoSubmit = false) => {
     if (!attemptId) return;
     setShowSubmitModal(false);
+    phaseRef.current = 'submitting'; // sync immediately so onExpire can't double-fire
     setPhase('submitting');
     setSubmitError(null);
 

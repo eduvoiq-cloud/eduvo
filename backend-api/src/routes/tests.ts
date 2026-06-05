@@ -405,6 +405,42 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
       res.status(409).json({ success: false, message: 'You have already submitted this test', attempt_id: existingAttempt.id });
       return;
     }
+
+    // Check if the time limit has already expired for this in-progress attempt.
+    // If so, auto-submit it server-side with zero answers so the student gets a
+    // proper results screen rather than an instant silent submit with 0 marks.
+    if (test.time_limit_minutes > 0) {
+      const { data: existingFull } = await supabaseAdmin
+        .from('test_attempts')
+        .select('id, started_at')
+        .eq('id', existingAttempt.id)
+        .single();
+
+      if (existingFull) {
+        const elapsedSeconds = (Date.now() - new Date(existingFull.started_at).getTime()) / 1000;
+        const limitSeconds = test.time_limit_minutes * 60;
+
+        if (elapsedSeconds >= limitSeconds) {
+          // Time is up — mark the attempt as submitted with whatever was saved
+          await supabaseAdmin
+            .from('test_attempts')
+            .update({
+              mcq_score: 0,
+              is_submitted: true,
+              submitted_at: new Date().toISOString(),
+            })
+            .eq('id', existingFull.id);
+
+          res.status(409).json({
+            success: false,
+            message: 'You have already submitted this test',
+            attempt_id: existingFull.id,
+          });
+          return;
+        }
+      }
+    }
+
     // Resume existing active attempt — fall through with the existing attempt_id
     // (questions are fetched below and returned so the student can continue)
   }
