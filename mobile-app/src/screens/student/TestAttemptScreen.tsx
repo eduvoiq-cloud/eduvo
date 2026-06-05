@@ -751,9 +751,6 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const attemptIdRef = useRef<string | null>(null);
   const currentIndexRef = useRef(0);
   const secondsLeftRef = useRef<number | null>(null);
-  // Store started_at + limit so the AppState foreground handler can recalculate.
-  const startedAtRef = useRef<string | null>(null);
-  const timeLimitSecondsRef = useRef<number | null>(null);
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { answersRef.current = answers; }, [answers]);
@@ -783,11 +780,15 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   // ── AppState: save on background, correct timer on foreground ────────────
   useEffect(() => {
-    let wentToBackground = false;
+    // Track when the app went to background using wall-clock time.
+    // We do NOT use server started_at here. That timestamp is from the original
+    // attempt creation and can be hours old — making remaining a large negative
+    // number and triggering instant auto-submit on foreground.
+    let backgroundedAt: number | null = null;
 
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background' || state === 'inactive') {
-        wentToBackground = true;
+        backgroundedAt = Date.now();
         const aid = attemptIdRef.current;
         if (aid && phaseRef.current === 'active') {
           saveProgress(
@@ -795,22 +796,18 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             answersRef.current, currentIndexRef.current, secondsLeftRef.current,
           ).catch(() => {});
         }
-      } else if (state === 'active' && wentToBackground) {
-        wentToBackground = false;
-        // Only recalculate if the timer is running and we have a server reference point.
-        if (
-          phaseRef.current === 'active' &&
-          startedAtRef.current !== null &&
-          timeLimitSecondsRef.current !== null
-        ) {
-          const elapsed = Math.floor(
-            (Date.now() - new Date(startedAtRef.current).getTime()) / 1000,
-          );
-          const remaining = timeLimitSecondsRef.current - elapsed;
+      } else if (state === 'active' && backgroundedAt !== null) {
+        const secondsInBackground = Math.floor((Date.now() - backgroundedAt) / 1000);
+        backgroundedAt = null;
+
+        // Only adjust if the test is still active and has a running timer.
+        if (phaseRef.current === 'active' && secondsLeftRef.current !== null) {
+          const remaining = secondsLeftRef.current - secondsInBackground;
           if (remaining <= 0) {
             // Time ran out while in background — submit now.
             void handleSubmitRef.current(true);
           } else {
+            // Restart the countdown from the corrected remaining time.
             setSecondsLeft(remaining);
           }
         }
@@ -837,9 +834,6 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       setQuestions(qs);
       setAttemptId(payload.attempt_id);
 
-      // Store server reference for AppState foreground recalculation.
-      startedAtRef.current = payload.started_at;
-      timeLimitSecondsRef.current = hasTimeLimit ? payload.time_limit_minutes * 60 : null;
 
       // Try to restore local saved progress.
       const saved = await loadProgress(test.id);
