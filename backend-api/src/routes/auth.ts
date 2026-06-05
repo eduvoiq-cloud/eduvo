@@ -585,7 +585,7 @@ router.post('/staff/forgot-password', async (req: Request, res: Response) => {
 
     const { data: emailData, error: emailError } = await resend.emails.send({
       from: `Eduvo <${fromEmail}>`,
-      to: email,
+      to: email.toLowerCase(),
       subject: 'Reset your Eduvo password',
       html: `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#111;">
