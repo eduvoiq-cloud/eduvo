@@ -241,24 +241,28 @@ function HomeworkFormModal({
     setError('');
   }, [open, mode, initial, filterClass, filterSection, subjects]);
 
+  // Subjects for the selected class/section — filtered from the teacher's subjects
+  // by cross-referencing their assignments for that class/section.
   const sectionsForClass = [...new Set(
     assignments.filter((a) => a.class_name === form.class_name).map((a) => a.section)
   )].sort();
 
-  // Subjects assigned to this teacher for the selected class/section,
-  // enriched with IDs from the subjects API where available.
-  const subjectsForClassSection: (Subject & { missing?: boolean })[] = (() => {
+  const subjectsForClassSection: Subject[] = (() => {
     if (!form.class_name || !form.section) return [];
-    const assignedNames = [...new Set(
+
+    // Names assigned to teacher for this class/section
+    const assignedNames = new Set(
       assignments
         .filter((a) => a.class_name === form.class_name && a.section === form.section)
-        .map((a) => a.subject)
-    )].sort();
+        .map((a) => a.subject.toLowerCase())
+    );
 
-    return assignedNames.map((name) => {
-      const found = subjects.find((s) => s.name.toLowerCase() === name.toLowerCase());
-      return found ? found : { id: '', name, missing: true };
-    });
+    // Match against subjects fetched from the API (case-insensitive)
+    const matched = subjects.filter((s) => assignedNames.has(s.name.toLowerCase()));
+
+    // If no matches (assignments store names that differ from subjects table),
+    // show all teacher subjects so the teacher isn't blocked.
+    return matched.length > 0 ? matched : subjects;
   })();
 
   const useCustomSubject = form.subject_id === '__custom__';
@@ -278,10 +282,6 @@ function HomeworkFormModal({
       const found = subjects.find((s) => s.name.toLowerCase() === customName.toLowerCase());
       if (!found) { setError(`Subject "${customName}" is not in the school subjects list. Please ask your admin to add it first.`); return; }
       effectiveSubjectId = found.id;
-    } else {
-      // Check if it's a missing-ID subject (assigned but not in DB)
-      const sel = subjectsForClassSection.find((s) => s.id === effectiveSubjectId || (s.id === '' && s.name === effectiveSubjectId));
-      if (sel && !sel.id) { setError(`Subject "${sel.name}" is not yet in the school subjects list. Please ask your admin to add it.`); return; }
     }
 
     if (!effectiveSubjectId || !form.class_name || !form.section || !form.title || !form.due_date) {
@@ -366,9 +366,7 @@ function HomeworkFormModal({
             onChange={(e) => setForm((f) => ({ ...f, subject_id: e.target.value, custom_subject: '' }))}>
             <option value="">Select subject…</option>
             {subjectsForClassSection.map((s) => (
-              <option key={s.id || s.name} value={s.id || `__missing__${s.name}`} disabled={!s.id}>
-                {s.name}{!s.id ? ' (not in DB — contact admin)' : ''}
-              </option>
+              <option key={s.id} value={s.id}>{s.name}</option>
             ))}
             <option value="__custom__">✏️ Type a different subject…</option>
           </select>
@@ -376,7 +374,7 @@ function HomeworkFormModal({
             <input
               type="text"
               className={`${inputClass} mt-2`}
-              placeholder="Enter subject name…"
+              placeholder="Enter subject name exactly as it appears in the school list…"
               value={form.custom_subject}
               onChange={(e) => setForm((f) => ({ ...f, custom_subject: e.target.value }))}
               autoFocus
@@ -384,9 +382,6 @@ function HomeworkFormModal({
           )}
           {!form.section && (
             <p className="mt-1 text-xs text-gray-400">Select a section first</p>
-          )}
-          {form.section && subjectsForClassSection.length === 0 && (
-            <p className="mt-1 text-xs text-amber-600">No subjects assigned for this class/section. Use "Type a different subject" or ask your admin to set up assignments.</p>
           )}
         </FormField>
 
@@ -483,7 +478,7 @@ export default function TeacherHomeworkPage() {
 
     Promise.all([
       assignmentsApi.list(token, user.school_id),
-      fetch(`${BASE_URL}/api/subjects?school_id=${user.school_id}`, {
+      fetch(`${BASE_URL}/api/teacher/subjects?assigned=true`, {
         headers: { Authorization: `Bearer ${token}` },
       }).then((r) => r.json()),
     ])

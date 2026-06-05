@@ -70,6 +70,78 @@ const updateComplaintSchema = z.object({
   resolution_note: z.string().max(2000).optional(),
 });
 
+// ── GET /api/teacher/subjects ─────────────────────────────────────────────────
+/**
+ * Returns all subjects for the teacher's school.
+ * Optionally filtered to only subjects assigned to this teacher
+ * (via teacher_assignments) when ?assigned=true is passed.
+ */
+router.get('/subjects', async (req: Request, res: Response) => {
+  const teacherId = req.user!.id;
+  const schoolId = req.user!.school_id;
+
+  if (!schoolId) {
+    sendError(res, 'Your account is not linked to a school', 403);
+    return;
+  }
+
+  const assignedOnly = req.query.assigned === 'true';
+
+  if (assignedOnly) {
+    // Fetch subject IDs from this teacher's assignments
+    const { data: assignments, error: assignErr } = await supabaseAdmin
+      .from('teacher_assignments')
+      .select('subject_id')
+      .eq('teacher_id', teacherId)
+      .eq('school_id', schoolId)
+      .not('subject_id', 'is', null);
+
+    if (assignErr) {
+      sendError(res, assignErr.message, 500);
+      return;
+    }
+
+    const subjectIds = [...new Set(
+      (assignments ?? [])
+        .map((a: { subject_id: string | null }) => a.subject_id)
+        .filter(Boolean) as string[]
+    )];
+
+    if (subjectIds.length === 0) {
+      // No subject_ids on assignments — fall back to all school subjects
+      const { data, error } = await supabaseAdmin
+        .from('subjects')
+        .select('id, name')
+        .eq('school_id', schoolId)
+        .order('name');
+      if (error) { sendError(res, error.message, 500); return; }
+      sendSuccess(res, data ?? []);
+      return;
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('subjects')
+      .select('id, name')
+      .eq('school_id', schoolId)
+      .in('id', subjectIds)
+      .order('name');
+
+    if (error) { sendError(res, error.message, 500); return; }
+    sendSuccess(res, data ?? []);
+    return;
+  }
+
+  // Default: all subjects for this school
+  const { data, error } = await supabaseAdmin
+    .from('subjects')
+    .select('id, name')
+    .eq('school_id', schoolId)
+    .order('name');
+
+  if (error) { sendError(res, error.message, 500); return; }
+  sendSuccess(res, data ?? []);
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function logAudit(
