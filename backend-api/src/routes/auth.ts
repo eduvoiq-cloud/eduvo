@@ -497,7 +497,7 @@ const forgotPasswordSchema = z.object({
   email: z.string().email().max(254),
 });
 
-router.post('/staff/forgot-password', loginRateLimit, async (req: Request, res: Response) => {
+router.post('/staff/forgot-password', async (req: Request, res: Response) => {
   const parsed = forgotPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -506,24 +506,35 @@ router.post('/staff/forgot-password', loginRateLimit, async (req: Request, res: 
 
   const { email } = parsed.data;
 
+  console.log(`[auth] forgot-password request for: ${email}`);
+
   // Always return the same response regardless of whether email exists
   const genericOk = () =>
     sendSuccess(res, null, 'If an account with that email exists, a reset link has been sent.');
 
   try {
     // 1. Check if the email belongs to a staff account
-    const { data: userRecord } = await supabaseAdmin
+    const { data: userRecord, error: userError } = await supabaseAdmin
       .from('users')
       .select('id, name, email')
-      .eq('email', email.toLowerCase())
+      .ilike('email', email.trim())   // case-insensitive match
       .eq('is_deleted', false)
       .maybeSingle();
 
+    if (userError) {
+      console.error('[auth] DB error looking up user:', userError.message);
+      genericOk();
+      return;
+    }
+
     if (!userRecord) {
+      console.log(`[auth] forgot-password: no user found for email=${email}`);
       await logAudit(null, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: false });
       genericOk();
       return;
     }
+
+    console.log(`[auth] forgot-password: found user id=${userRecord.id}`);
 
     // 2. Generate a secure random token (32 bytes = 64 hex chars)
     const rawToken = crypto.randomBytes(32).toString('hex');
@@ -548,19 +559,31 @@ router.post('/staff/forgot-password', loginRateLimit, async (req: Request, res: 
       });
 
     if (insertError) {
-      console.error('[auth] Failed to store reset token:', insertError.message);
+      console.error('[auth] Failed to store reset token:', insertError.message, insertError.code);
       genericOk();
       return;
     }
+
+    console.log(`[auth] forgot-password: token stored, building email`);
 
     // 5. Build the reset URL
     const siteUrl = (process.env.SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
     const resetUrl = `${siteUrl}/reset-password?token=${rawToken}`;
     const fromEmail = process.env.FROM_EMAIL ?? 'onboarding@resend.dev';
 
+    console.log(`[auth] forgot-password: SITE_URL=${siteUrl}, FROM_EMAIL=${fromEmail}, to=${email}`);
+
     // 6. Send the email via Resend
-    const resend = getResend();
-    const { error: emailError } = await resend.emails.send({
+    let resend: Resend;
+    try {
+      resend = getResend();
+    } catch (keyErr) {
+      console.error('[auth] Resend init failed:', (keyErr as Error).message);
+      genericOk();
+      return;
+    }
+
+    const { data: emailData, error: emailError } = await resend.emails.send({
       from: `Eduvo <${fromEmail}>`,
       to: email,
       subject: 'Reset your Eduvo password',
@@ -598,7 +621,9 @@ router.post('/staff/forgot-password', loginRateLimit, async (req: Request, res: 
     });
 
     if (emailError) {
-      console.error('[auth] Resend failed to send reset email:', emailError);
+      console.error('[auth] Resend error:', JSON.stringify(emailError));
+    } else {
+      console.log(`[auth] Reset email sent OK — Resend id=${emailData?.id}, to=${email}`);
     }
 
     await logAudit(userRecord.id, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: true });
