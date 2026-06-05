@@ -53,7 +53,6 @@ interface DashboardData {
   todayAttendance: TodayAttendance;
   recentMarks: MarkRecord[];
   availableTests: TestRecord[];
-  feePaid: boolean;
 }
 
 type StudentNavProp = BottomTabNavigationProp<StudentTabParamList>;
@@ -180,13 +179,10 @@ export default function StudentDashboardScreen() {
       const recentMarks: MarkRecord[] =
         marksRes.status === 'fulfilled' ? (marksRes.value.data.data ?? []) : [];
 
-      // Tests — if fee not paid the API returns empty array with a message
+      // Tests — all tests are now visible regardless of fee status
       const testsPayload =
         testsRes.status === 'fulfilled' ? testsRes.value.data : null;
       const availableTests: TestRecord[] = testsPayload?.data ?? [];
-      // Fee is considered paid if we got tests back OR if the response has data
-      const feePaid = availableTests.length > 0 ||
-        (testsPayload?.success && !testsPayload?.message?.toLowerCase().includes('fee'));
 
       // Attendance history summary
       let attendance: AttendanceSummary | null = null;
@@ -216,7 +212,7 @@ export default function StudentDashboardScreen() {
         }
       }
 
-      setData({ attendance, todayAttendance, recentMarks, availableTests, feePaid });
+      setData({ attendance, todayAttendance, recentMarks, availableTests });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load dashboard';
       console.warn('[StudentDashboard] fetchAll error:', msg);
@@ -370,13 +366,11 @@ export default function StudentDashboardScreen() {
               <Skeleton w={60} h={36} style={{ marginVertical: 4 }} />
             ) : (
               <Text style={[styles.quickValue, { color: '#92400E' }]}>
-                {data?.feePaid ? data.availableTests.length : '🔒'}
+                {data?.availableTests.length ?? 0}
               </Text>
             )}
             <Text style={[styles.quickLabel, { color: '#78350F' }]}>Tests</Text>
-            <Text style={[styles.quickSub, { color: '#92400E' }]}>
-              {data?.feePaid ? 'Available' : 'Fee required'}
-            </Text>
+            <Text style={[styles.quickSub, { color: '#92400E' }]}>Available</Text>
             <Text style={[styles.quickArrow, { color: '#B45309' }]}>View Tests →</Text>
           </TouchableOpacity>
         </View>

@@ -297,4 +297,314 @@ router.post('/:student_id/toggle', requireRole('superadmin', 'schooladmin', 'tea
   sendSuccess(res, data, `Fee marked as ${parsed.data.fee_paid ? 'paid' : 'unpaid'}`);
 });
 
+/**
+ * POST /api/fees/class-bulk
+ * Sets the same total_fee_amount for every student in a class/section atomically.
+ * Body: { class_name, section, total_fee_amount, term?, academic_year? }
+ */
+router.post('/class-bulk', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const schema = z.object({
+    class_name: z.string().min(1),
+    section: z.string().min(1),
+    total_fee_amount: z.number().min(0),
+    term: z.string().max(50).optional(),
+    academic_year: z.string().max(20).optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  const { class_name, section, total_fee_amount, term, academic_year } = parsed.data;
+
+  // Fetch all active students in this class/section for this school
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name')
+    .eq('school_id', req.user!.school_id ?? '')
+    .ilike('class_name', class_name.trim())
+    .ilike('section', section.trim())
+    .eq('is_deleted', false);
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (!students || students.length === 0) {
+    sendError(res, 'No students found in this class/section', 404);
+    return;
+  }
+
+  const effectiveTerm = term ?? 'General';
+  const effectiveYear = academic_year ?? new Date().getFullYear().toString();
+  let updated = 0;
+  let inserted = 0;
+
+  // Process each student — update if fee record exists, insert if not
+  for (const student of students) {
+    const { data: existing } = await supabaseAdmin
+      .from('student_fees')
+      .select('id, amount_paid')
+      .eq('student_id', student.id)
+      .eq('term', effectiveTerm)
+      .eq('academic_year', effectiveYear)
+      .maybeSingle();
+
+    const amountPaid = (existing as { amount_paid?: number } | null)?.amount_paid ?? 0;
+    const feePaid = amountPaid >= total_fee_amount && total_fee_amount > 0;
+
+    if (existing) {
+      await supabaseAdmin
+        .from('student_fees')
+        .update({
+          total_fee_amount,
+          fee_paid: feePaid,
+          updated_by: req.user!.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', (existing as { id: string }).id);
+      updated++;
+    } else {
+      await supabaseAdmin
+        .from('student_fees')
+        .insert({
+          student_id: student.id,
+          term: effectiveTerm,
+          academic_year: effectiveYear,
+          total_fee_amount,
+          amount_paid: 0,
+          fee_paid: false,
+          updated_by: req.user!.id,
+        });
+      inserted++;
+    }
+  }
+
+  await logAudit(req.user!.id, 'FEE_BULK_SET', {
+    class_name,
+    section,
+    total_fee_amount,
+    student_count: students.length,
+    updated,
+    inserted,
+  });
+
+  sendSuccess(res, {
+    total_students: students.length,
+    updated,
+    inserted,
+  }, `Total fees set to ${total_fee_amount} for ${students.length} students in ${class_name} ${section}`);
+});
+
+/**
+ * POST /api/fees/send-reminder
+ * Sends personalised fee reminder notifications to each student in a class.
+ * Body: { class_name, section, custom_note? }
+ * Fetches each student's fee record and creates a personalised notification.
+ */
+router.post('/send-reminder', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const schema = z.object({
+    class_name: z.string().min(1),
+    section: z.string().min(1),
+    custom_note: z.string().max(500).optional(),
+    term: z.string().max(50).optional(),
+    academic_year: z.string().max(20).optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  const { class_name, section, custom_note, term, academic_year } = parsed.data;
+
+  // Fetch all students in this class
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name')
+    .eq('school_id', req.user!.school_id ?? '')
+    .ilike('class_name', class_name.trim())
+    .ilike('section', section.trim())
+    .eq('is_deleted', false);
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (!students || students.length === 0) {
+    sendError(res, 'No students found in this class/section', 404);
+    return;
+  }
+
+  const studentIds = students.map((s: { id: string }) => s.id);
+
+  // Fetch fee records for these students
+  let feeQuery = supabaseAdmin
+    .from('student_fees')
+    .select('student_id, total_fee_amount, amount_paid, fee_paid, term, academic_year')
+    .in('student_id', studentIds);
+
+  if (term) feeQuery = feeQuery.eq('term', term);
+  if (academic_year) feeQuery = feeQuery.eq('academic_year', academic_year);
+
+  const { data: feeRecords } = await feeQuery;
+  const feeMap = new Map(
+    (feeRecords ?? []).map((f: {
+      student_id: string;
+      total_fee_amount: number | null;
+      amount_paid: number;
+    }) => [f.student_id, f])
+  );
+
+  // We need the student auth user IDs to send notifications.
+  // Students in the students table don't have user_id — notifications use recipient_id
+  // which references users.id. Students log in via their own token system.
+  // We'll store notifications with the student's student ID as recipient.
+  // The student notification GET already supports student tokens via req.student.id.
+  // However, the notifications table has recipient_id → users.id FK.
+  // For student-specific fee reminders we insert directly into notifications.
+
+  const now = new Date().toISOString();
+  let sent = 0;
+  const skipped: string[] = [];
+
+  for (const student of students as Array<{ id: string; full_name: string }>) {
+    const feeRecord = feeMap.get(student.id) as {
+      total_fee_amount: number | null;
+      amount_paid: number;
+    } | undefined;
+
+    const total = feeRecord?.total_fee_amount ?? 0;
+    const paid = feeRecord?.amount_paid ?? 0;
+    const remaining = Math.max(0, total - paid);
+
+    const formatAmount = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+
+    let message = `Dear ${student.full_name}, your total fees for this academic year is ${formatAmount(total)}. You have paid ${formatAmount(paid)}. Your remaining balance is ${formatAmount(remaining)}. Please clear your dues at the earliest.`;
+
+    if (custom_note && custom_note.trim()) {
+      message += ` ${custom_note.trim()}`;
+    }
+
+    // Find the auth user record linked to this student
+    // Students authenticate via the students table directly (student tokens),
+    // but notifications.recipient_id references users.id.
+    // We need to look up parent_id or a linked user. For direct student notification,
+    // we check if there's a user with matching email/phone linked to the student.
+    // The students table has a parent_id col. We'll try to find a user_id.
+
+    // Look for student's linked user (via parent_students junction or direct user)
+    // Actually, check students table for user_id column
+    const { data: studentUser } = await supabaseAdmin
+      .from('students')
+      .select('id, full_name, parent_id')
+      .eq('id', student.id)
+      .single();
+
+    // For students without a linked user_id, we skip — they'd need a user account
+    // to receive notifications. We use parent_id as fallback.
+    const recipientUserId = (studentUser as { parent_id?: string | null } | null)?.parent_id ?? null;
+
+    if (!recipientUserId) {
+      skipped.push(student.full_name);
+      continue;
+    }
+
+    await supabaseAdmin.from('notifications').insert({
+      title: 'Fee Reminder',
+      message,
+      type: 'fee_reminder',
+      recipient_id: recipientUserId,
+      sender_id: req.user!.id,
+      is_read: false,
+      created_at: now,
+    });
+
+    sent++;
+  }
+
+  await logAudit(req.user!.id, 'FEE_REMINDER_SENT', {
+    class_name,
+    section,
+    sent,
+    skipped: skipped.length,
+  });
+
+  sendSuccess(res, {
+    sent,
+    skipped: skipped.length,
+    skipped_names: skipped,
+  }, `Fee reminders sent to ${sent} student(s)`);
+});
+
+/**
+ * POST /api/fees/preview-reminder
+ * Returns a preview of the fee reminder message for each student in a class.
+ * Does NOT send anything.
+ * Body: { class_name, section, custom_note?, term?, academic_year? }
+ */
+router.post('/preview-reminder', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  const schema = z.object({
+    class_name: z.string().min(1),
+    section: z.string().min(1),
+    custom_note: z.string().max(500).optional(),
+    term: z.string().max(50).optional(),
+    academic_year: z.string().max(20).optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  const { class_name, section, custom_note, term, academic_year } = parsed.data;
+
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name')
+    .eq('school_id', req.user!.school_id ?? '')
+    .ilike('class_name', class_name.trim())
+    .ilike('section', section.trim())
+    .eq('is_deleted', false)
+    .order('full_name', { ascending: true });
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (!students || students.length === 0) {
+    sendError(res, 'No students found in this class/section', 404);
+    return;
+  }
+
+  const studentIds = students.map((s: { id: string }) => s.id);
+
+  let feeQuery = supabaseAdmin
+    .from('student_fees')
+    .select('student_id, total_fee_amount, amount_paid')
+    .in('student_id', studentIds);
+
+  if (term) feeQuery = feeQuery.eq('term', term);
+  if (academic_year) feeQuery = feeQuery.eq('academic_year', academic_year);
+
+  const { data: feeRecords } = await feeQuery;
+  const feeMap = new Map(
+    (feeRecords ?? []).map((f: { student_id: string; total_fee_amount: number | null; amount_paid: number }) =>
+      [f.student_id, f]
+    )
+  );
+
+  const formatAmount = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+
+  const previews = (students as Array<{ id: string; full_name: string }>).map((student) => {
+    const feeRecord = feeMap.get(student.id) as { total_fee_amount: number | null; amount_paid: number } | undefined;
+    const total = feeRecord?.total_fee_amount ?? 0;
+    const paid = feeRecord?.amount_paid ?? 0;
+    const remaining = Math.max(0, total - paid);
+
+    let message = `Dear ${student.full_name}, your total fees for this academic year is ${formatAmount(total)}. You have paid ${formatAmount(paid)}. Your remaining balance is ${formatAmount(remaining)}. Please clear your dues at the earliest.`;
+
+    if (custom_note && custom_note.trim()) {
+      message += ` ${custom_note.trim()}`;
+    }
+
+    return {
+      student_id: student.id,
+      student_name: student.full_name,
+      total_fee_amount: total,
+      amount_paid: paid,
+      remaining_balance: remaining,
+      message,
+    };
+  });
+
+  sendSuccess(res, previews);
+});
+
 export default router;

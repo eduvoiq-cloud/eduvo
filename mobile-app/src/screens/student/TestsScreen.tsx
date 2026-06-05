@@ -8,7 +8,6 @@ import {
   RefreshControl,
   ActivityIndicator,
   StatusBar,
-  Linking,
   Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -29,12 +28,12 @@ interface TestRecord {
   question_count: number;
   /** Attempt status derived from test_attempts — may not be present in initial list */
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
+  /** True when the teacher has blocked this student from the test */
+  is_restricted?: boolean;
 }
 
 interface TestsResponse {
-  feePaid: boolean;
   tests: TestRecord[];
-  schoolContact?: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -98,163 +97,6 @@ const STATUS_CONFIG: Record<
   completed:    { label: 'Completed',   color: '#15803D', bg: '#DCFCE7' },
 };
 
-// ── Fee locked screen ─────────────────────────────────────────────────────────
-
-function FeeLockedScreen({ schoolContact }: { schoolContact?: string | null }) {
-  const handleContact = () => {
-    if (schoolContact) {
-      // Try to open as phone number or email
-      const isEmail = schoolContact.includes('@');
-      const url = isEmail ? `mailto:${schoolContact}` : `tel:${schoolContact}`;
-      Linking.openURL(url).catch(() => {
-        // Silently fail — contact info is still visible on screen
-      });
-    }
-  };
-
-  return (
-    <View style={lockedStyles.container}>
-      <View style={lockedStyles.iconWrapper}>
-        <Text style={lockedStyles.lockIcon}>🔒</Text>
-      </View>
-
-      <Text style={lockedStyles.title}>Tests Locked</Text>
-      <Text style={lockedStyles.subtitle}>
-        Please pay your fees to access tests and unlock all exam features.
-      </Text>
-
-      <View style={lockedStyles.infoCard}>
-        <Text style={lockedStyles.infoTitle}>What you're missing out on:</Text>
-        {[
-          'Access to all scheduled tests',
-          'Online exam submissions',
-          'Instant MCQ results',
-          'Performance tracking',
-        ].map((item) => (
-          <View key={item} style={lockedStyles.infoRow}>
-            <Text style={lockedStyles.infoDot}>•</Text>
-            <Text style={lockedStyles.infoText}>{item}</Text>
-          </View>
-        ))}
-      </View>
-
-      <View style={lockedStyles.contactCard}>
-        <Text style={lockedStyles.contactTitle}>Contact Your School</Text>
-        <Text style={lockedStyles.contactBody}>
-          Speak to your school administrator or accounts office to clear your fee balance.
-        </Text>
-        {schoolContact ? (
-          <TouchableOpacity
-            style={lockedStyles.contactButton}
-            onPress={handleContact}
-            accessibilityRole="button"
-            accessibilityLabel={`Contact school at ${schoolContact}`}
-          >
-            <Text style={lockedStyles.contactButtonText}>📞 {schoolContact}</Text>
-          </TouchableOpacity>
-        ) : (
-          <Text style={lockedStyles.contactFallback}>
-            Visit the school office for assistance.
-          </Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
-const lockedStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-    padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconWrapper: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#FEE2E2',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  lockIcon: { fontSize: 44 },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#111827',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#6B7280',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 28,
-    paddingHorizontal: 8,
-  },
-  infoCard: {
-    width: '100%',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  infoTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 10,
-  },
-  infoRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 6 },
-  infoDot: { fontSize: 14, color: '#EF4444', marginRight: 8, lineHeight: 20 },
-  infoText: { fontSize: 14, color: '#4B5563', flex: 1, lineHeight: 20 },
-  contactCard: {
-    width: '100%',
-    backgroundColor: '#EFF6FF',
-    borderRadius: 14,
-    padding: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#1D4ED8',
-  },
-  contactTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1E3A8A',
-    marginBottom: 6,
-  },
-  contactBody: {
-    fontSize: 13,
-    color: '#374151',
-    lineHeight: 19,
-    marginBottom: 12,
-  },
-  contactButton: {
-    backgroundColor: '#1D4ED8',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  contactButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  contactFallback: {
-    fontSize: 13,
-    color: '#6B7280',
-    fontStyle: 'italic',
-  },
-});
-
 // ── Test card ─────────────────────────────────────────────────────────────────
 
 function TestCard({
@@ -272,14 +114,20 @@ function TestCard({
   // A test is locked if it's a future date OR before the window opens
   const isLocked = (upcoming || windowState === 'before') && status === 'not_started';
   const isClosed = windowState === 'closed' && status === 'not_started';
+  const isFeeRestricted = test.is_restricted === true;
 
   return (
     <TouchableOpacity
-      style={[styles.card, upcoming && styles.cardUpcoming, isClosed && styles.cardClosed]}
+      style={[
+        styles.card,
+        upcoming && styles.cardUpcoming,
+        isClosed && styles.cardClosed,
+        isFeeRestricted && styles.cardRestricted,
+      ]}
       onPress={onPress}
       activeOpacity={0.8}
       accessibilityRole="button"
-      accessibilityLabel={`${test.title} test. Status: ${config.label}. Tap to open.`}
+      accessibilityLabel={`${test.title} test. Status: ${isFeeRestricted ? 'Fee required' : config.label}. Tap to open.`}
     >
       {/* Header row */}
       <View style={styles.cardHeader}>
@@ -287,19 +135,34 @@ function TestCard({
           <Text style={styles.testTitle} numberOfLines={2}>
             {test.title}
           </Text>
-          {upcoming && (
+          {isFeeRestricted ? (
+            <View style={[styles.upcomingBadge, { backgroundColor: '#FEE2E2' }]}>
+              <Text style={[styles.upcomingText, { color: '#DC2626' }]}>🔒 Fee Required</Text>
+            </View>
+          ) : upcoming ? (
             <View style={styles.upcomingBadge}>
               <Text style={styles.upcomingText}>Upcoming</Text>
             </View>
-          )}
+          ) : null}
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: config.bg }]}>
-          <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+        <View style={[styles.statusBadge, { backgroundColor: isFeeRestricted ? '#FEE2E2' : config.bg }]}>
+          <Text style={[styles.statusText, { color: isFeeRestricted ? '#DC2626' : config.color }]}>
+            {isFeeRestricted ? 'Locked' : config.label}
+          </Text>
         </View>
       </View>
 
+      {/* Fee restriction banner */}
+      {isFeeRestricted && (
+        <View style={[styles.windowBanner, styles.windowBannerClosed]}>
+          <Text style={[styles.windowBannerText, styles.windowBannerTextClosed]}>
+            🔒 Pay your fees to unlock this test · Contact your teacher
+          </Text>
+        </View>
+      )}
+
       {/* Time window banner — show on test date; also show on upcoming dates */}
-      {upcoming && status === 'not_started' && (
+      {!isFeeRestricted && upcoming && status === 'not_started' && (
         <View style={[styles.windowBanner, styles.windowBannerBefore]}>
           <Text style={[styles.windowBannerText, styles.windowBannerTextBefore]}>
             🔒 Available on {formatDate(test.date)}
@@ -307,7 +170,7 @@ function TestCard({
           </Text>
         </View>
       )}
-      {!upcoming && hasWindow && status !== 'completed' && (
+      {!isFeeRestricted && !upcoming && hasWindow && status !== 'completed' && (
         <View style={[
           styles.windowBanner,
           windowState === 'open' && styles.windowBannerOpen,
@@ -355,9 +218,12 @@ function TestCard({
         <Text style={[
           styles.ctaText,
           status === 'completed' && styles.ctaTextCompleted,
-          (isLocked || isClosed) && styles.ctaTextLocked,
+          (isLocked || isClosed) && !isFeeRestricted && styles.ctaTextLocked,
+          isFeeRestricted && styles.ctaTextRestricted,
         ]}>
-          {status === 'completed'
+          {isFeeRestricted
+            ? '🔒 Pay fees to unlock'
+            : status === 'completed'
             ? 'View Results →'
             : status === 'in_progress'
             ? 'Continue Test →'
@@ -388,23 +254,9 @@ export default function StudentTestsScreen() {
       const response = await apiClient.get('/api/tests/student');
       const payload = response.data;
 
-      // The backend returns an empty array with a fee message when fee is unpaid
       const tests: TestRecord[] = payload.data ?? [];
-      const message: string = payload.message ?? '';
-      const feePaid = tests.length > 0 || !message.toLowerCase().includes('fee');
 
-      // Fetch school contact info gracefully
-      let schoolContact: string | null = null;
-      try {
-        const settingsRes = await apiClient.get('/api/settings');
-        schoolContact = settingsRes.data.data?.contact_phone
-          ?? settingsRes.data.data?.contact_email
-          ?? null;
-      } catch {
-        // Settings endpoint may not exist — that's fine
-      }
-
-      setTestsData({ feePaid, tests, schoolContact });
+      setTestsData({ tests });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load tests';
       console.warn('[StudentTests] fetchTests error:', msg);
@@ -426,6 +278,16 @@ export default function StudentTestsScreen() {
     const windowState = getWindowState(test.date, test.available_from, test.available_until);
     const status = test.attempt_status ?? 'not_started';
     const upcoming = isUpcoming(test.date);
+
+    // Fee-restricted — show message, do not allow access
+    if (test.is_restricted) {
+      Alert.alert(
+        'Test Locked',
+        'Pay your fees to unlock this test. Please contact your teacher or school office.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
 
     // Test date is in the future — block entirely regardless of window
     if (upcoming && status === 'not_started') {
@@ -479,16 +341,6 @@ export default function StudentTestsScreen() {
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#1D4ED8" />
       </View>
-    );
-  }
-
-  // ── Fee locked ──────────────────────────────────────────────────────────────
-  if (testsData && !testsData.feePaid) {
-    return (
-      <>
-        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
-        <FeeLockedScreen schoolContact={testsData.schoolContact} />
-      </>
     );
   }
 
@@ -625,6 +477,11 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#DC2626',
   },
+  cardRestricted: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#DC2626',
+    opacity: 0.9,
+  },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -679,6 +536,7 @@ const styles = StyleSheet.create({
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
   ctaTextCompleted: { color: '#15803D' },
   ctaTextLocked: { color: '#9CA3AF' },
+  ctaTextRestricted: { color: '#DC2626' },
 
   // Window banner
   windowBanner: {

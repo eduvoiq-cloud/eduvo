@@ -251,8 +251,10 @@ router.get('/my-tests', authenticate, requireRole('teacher', 'schooladmin', 'sup
 
 // ── GET /api/tests/student ────────────────────────────────────────────────────
 /**
- * Student gets available tests for their class/section.
- * Only if fee_paid = true. correct_option is NEVER included.
+ * Student gets all tests for their class/section.
+ * Tests are visible to ALL students by default.
+ * Blocked students (via test_restrictions) see the test with is_restricted=true.
+ * correct_option is NEVER included.
  */
 router.get('/student', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
   // authenticateStudent already resolved and verified the student — use it directly
@@ -265,20 +267,6 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
 
   if (!studentRecord.class_name || !studentRecord.section) {
     sendError(res, 'Student class/section not set. Contact your administrator.', 403);
-    return;
-  }
-
-  // Gate on fee payment
-  const { data: feeRecord } = await supabaseAdmin
-    .from('student_fees')
-    .select('fee_paid')
-    .eq('student_id', studentRecord.id)
-    .eq('fee_paid', true)
-    .limit(1)
-    .single();
-
-  if (!feeRecord) {
-    sendSuccess(res, [], 'Tests are only available to students with paid fees');
     return;
   }
 
@@ -298,7 +286,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   if (tErr) { sendError(res, tErr.message, 500); return; }
 
   const result = (tests ?? []).map((t: Record<string, unknown>) => ({
-    id: t.id,
+    id: t.id as string,
     title: t.title,
     subject_id: t.subject_id,
     date: t.date,
@@ -310,22 +298,41 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       : 0,
   }));
 
-  // Enrich with attempt status for each test
+  if (result.length === 0) {
+    sendSuccess(res, []);
+    return;
+  }
+
   const studentId = studentRecord.id;
-  const { data: attempts } = await supabaseAdmin
-    .from('test_attempts')
-    .select('test_id, is_submitted')
-    .eq('student_id', studentId)
-    .in('test_id', result.map((t) => t.id));
+  const testIds = result.map((t) => t.id);
+
+  // Fetch attempt status and restrictions in parallel
+  const [attemptsResult, restrictionsResult] = await Promise.all([
+    supabaseAdmin
+      .from('test_attempts')
+      .select('test_id, is_submitted')
+      .eq('student_id', studentId)
+      .in('test_id', testIds),
+    supabaseAdmin
+      .from('test_restrictions')
+      .select('test_id')
+      .eq('student_id', studentId)
+      .in('test_id', testIds),
+  ]);
 
   const attemptMap = new Map<string, 'in_progress' | 'completed'>();
-  for (const a of (attempts ?? [])) {
+  for (const a of (attemptsResult.data ?? [])) {
     attemptMap.set(a.test_id, a.is_submitted ? 'completed' : 'in_progress');
   }
 
+  const restrictedTestIds = new Set<string>(
+    (restrictionsResult.data ?? []).map((r: { test_id: string }) => r.test_id)
+  );
+
   const enriched = result.map((t) => ({
     ...t,
-    attempt_status: attemptMap.get(t.id as string) ?? 'not_started',
+    attempt_status: attemptMap.get(t.id) ?? 'not_started',
+    is_restricted: restrictedTestIds.has(t.id),
   }));
 
   sendSuccess(res, enriched);
@@ -354,16 +361,18 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     return;
   }
 
-  // Verify fee paid
-  const { data: feeRecord } = await supabaseAdmin
-    .from('student_fees')
-    .select('fee_paid')
+  // Check if this student is restricted from this test
+  const { data: restriction } = await supabaseAdmin
+    .from('test_restrictions')
+    .select('id')
+    .eq('test_id', test_id)
     .eq('student_id', studentRecord.id)
-    .eq('fee_paid', true)
-    .limit(1)
-    .single();
+    .maybeSingle();
 
-  if (!feeRecord) { sendError(res, 'Fee not paid. Cannot start test.', 403); return; }
+  if (restriction) {
+    sendError(res, 'You are not allowed to take this test. Please pay your fees to unlock it.', 403);
+    return;
+  }
 
   // Fetch test config
   const { data: test, error: tErr } = await supabaseAdmin
@@ -1156,7 +1165,131 @@ router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'te
   sendSuccess(res, null, 'Test deleted');
 });
 
-// ── GET /api/tests/:test_id/attempts ──────────────────────────────────────────
+// ── GET /api/tests/:test_id/restrictions ─────────────────────────────────────
+/**
+ * Teacher gets the list of students blocked from a specific test.
+ * Returns: all students in the class with a flag indicating if they are restricted.
+ */
+router.get('/:test_id/restrictions', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const { test_id } = req.params;
+
+  // Verify test exists and teacher has access
+  const { data: test, error: tErr } = await supabaseAdmin
+    .from('tests')
+    .select('id, class, section, school_id')
+    .eq('id', test_id)
+    .eq('school_id', req.user!.school_id ?? '')
+    .single();
+
+  if (tErr || !test) { sendError(res, 'Test not found', 404); return; }
+
+  if (req.user!.role === 'teacher') {
+    const allowed = await teacherOwnsClass(
+      req.user!.id,
+      req.user!.school_id ?? '',
+      (test as Record<string, unknown>)['class'] as string,
+      test.section
+    );
+    if (!allowed) { sendError(res, 'You are not assigned to this class/section', 403); return; }
+  }
+
+  // Fetch all students in this class/section
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, roll_number')
+    .eq('school_id', req.user!.school_id ?? '')
+    .ilike('class_name', (test as Record<string, unknown>)['class'] as string)
+    .ilike('section', test.section)
+    .eq('is_deleted', false)
+    .order('roll_number', { ascending: true });
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+
+  // Fetch current restrictions for this test
+  const { data: restrictions } = await supabaseAdmin
+    .from('test_restrictions')
+    .select('student_id')
+    .eq('test_id', test_id);
+
+  const restrictedIds = new Set((restrictions ?? []).map((r: { student_id: string }) => r.student_id));
+
+  const result = (students ?? []).map((s: { id: string; full_name: string; roll_number: string }) => ({
+    student_id: s.id,
+    full_name: s.full_name,
+    roll_number: s.roll_number,
+    is_restricted: restrictedIds.has(s.id),
+  }));
+
+  sendSuccess(res, result);
+});
+
+// ── PUT /api/tests/:test_id/restrictions ──────────────────────────────────────
+/**
+ * Teacher sets the complete list of restricted students for a test.
+ * Body: { blocked_student_ids: string[] }
+ * This replaces the entire restriction list atomically.
+ * Pass an empty array to remove all restrictions.
+ */
+router.put('/:test_id/restrictions', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const { test_id } = req.params;
+  const { blocked_student_ids } = req.body as { blocked_student_ids?: string[] };
+
+  if (!Array.isArray(blocked_student_ids)) {
+    sendError(res, 'blocked_student_ids must be an array', 400);
+    return;
+  }
+
+  // Verify test exists and teacher has access
+  const { data: test, error: tErr } = await supabaseAdmin
+    .from('tests')
+    .select('id, class, section, school_id')
+    .eq('id', test_id)
+    .eq('school_id', req.user!.school_id ?? '')
+    .single();
+
+  if (tErr || !test) { sendError(res, 'Test not found', 404); return; }
+
+  if (req.user!.role === 'teacher') {
+    const allowed = await teacherOwnsClass(
+      req.user!.id,
+      req.user!.school_id ?? '',
+      (test as Record<string, unknown>)['class'] as string,
+      test.section
+    );
+    if (!allowed) { sendError(res, 'You are not assigned to this class/section', 403); return; }
+  }
+
+  // Delete all existing restrictions for this test
+  await supabaseAdmin
+    .from('test_restrictions')
+    .delete()
+    .eq('test_id', test_id);
+
+  // Insert new restrictions (if any)
+  if (blocked_student_ids.length > 0) {
+    const rows = blocked_student_ids.map((student_id) => ({
+      test_id,
+      student_id,
+      created_by: req.user!.id,
+    }));
+
+    const { error: insErr } = await supabaseAdmin
+      .from('test_restrictions')
+      .insert(rows);
+
+    if (insErr) {
+      sendError(res, `Failed to save restrictions: ${insErr.message}`, 500);
+      return;
+    }
+  }
+
+  await logAudit(req.user!.id, 'TEST_RESTRICTIONS_UPDATED', {
+    test_id,
+    blocked_count: blocked_student_ids.length,
+  });
+
+  sendSuccess(res, { blocked_count: blocked_student_ids.length }, 'Test restrictions updated');
+});
 /**
  * Teacher lists all student attempts (submissions) for a test.
  * Returns: student name, mcq_score, total_score, submitted_at, whether theory marking is pending.

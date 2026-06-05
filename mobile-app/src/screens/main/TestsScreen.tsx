@@ -8,7 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   StatusBar,
-  Linking,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -27,12 +27,12 @@ interface TestRecord {
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
   available_from?: string | null;
   available_until?: string | null;
+  /** True when the teacher has blocked this student from the test */
+  is_restricted?: boolean;
 }
 
 interface TestsResponse {
-  feePaid: boolean;
   tests: TestRecord[];
-  schoolContact?: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -59,116 +59,54 @@ const STATUS_CONFIG: Record<
   completed:    { label: 'Completed',   color: '#15803D', bg: '#DCFCE7' },
 };
 
-// ── Fee locked screen ─────────────────────────────────────────────────────────
-
-function FeeLockedScreen({ schoolContact }: { schoolContact?: string | null }) {
-  const handleContact = () => {
-    if (!schoolContact) return;
-    const url = schoolContact.includes('@')
-      ? `mailto:${schoolContact}`
-      : `tel:${schoolContact}`;
-    Linking.openURL(url).catch(() => {});
-  };
-
-  return (
-    <View style={lockedStyles.container}>
-      <View style={lockedStyles.iconWrapper}>
-        <Text style={lockedStyles.lockIcon}>🔒</Text>
-      </View>
-      <Text style={lockedStyles.title}>Tests Locked</Text>
-      <Text style={lockedStyles.subtitle}>
-        Please pay your fees to access tests and unlock all exam features.
-      </Text>
-      <View style={lockedStyles.contactCard}>
-        <Text style={lockedStyles.contactTitle}>Contact Your School</Text>
-        <Text style={lockedStyles.contactBody}>
-          Speak to your school administrator or accounts office to clear your fee balance.
-        </Text>
-        {schoolContact ? (
-          <TouchableOpacity
-            style={lockedStyles.contactButton}
-            onPress={handleContact}
-            accessibilityRole="button"
-          >
-            <Text style={lockedStyles.contactButtonText}>📞 {schoolContact}</Text>
-          </TouchableOpacity>
-        ) : (
-          <Text style={lockedStyles.contactFallback}>Visit the school office for assistance.</Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
-const lockedStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-    padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconWrapper: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#FEE2E2',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  lockIcon: { fontSize: 44 },
-  title: { fontSize: 26, fontWeight: '800', color: '#111827', marginBottom: 10, textAlign: 'center' },
-  subtitle: { fontSize: 15, color: '#6B7280', textAlign: 'center', lineHeight: 22, marginBottom: 28 },
-  contactCard: {
-    width: '100%',
-    backgroundColor: '#EFF6FF',
-    borderRadius: 14,
-    padding: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#1D4ED8',
-  },
-  contactTitle: { fontSize: 14, fontWeight: '700', color: '#1E3A8A', marginBottom: 6 },
-  contactBody: { fontSize: 13, color: '#374151', lineHeight: 19, marginBottom: 12 },
-  contactButton: {
-    backgroundColor: '#1D4ED8',
-    borderRadius: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    alignItems: 'center',
-  },
-  contactButtonText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
-  contactFallback: { fontSize: 13, color: '#6B7280', fontStyle: 'italic' },
-});
-
 // ── Test card ─────────────────────────────────────────────────────────────────
 
 function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) {
   const status = test.attempt_status ?? 'not_started';
   const config = STATUS_CONFIG[status];
   const upcoming = isUpcoming(test.date);
+  const isFeeRestricted = test.is_restricted === true;
 
   return (
     <TouchableOpacity
-      style={[styles.card, upcoming && styles.cardUpcoming]}
+      style={[
+        styles.card,
+        upcoming && !isFeeRestricted && styles.cardUpcoming,
+        isFeeRestricted && styles.cardRestricted,
+      ]}
       onPress={onPress}
       activeOpacity={0.8}
       accessibilityRole="button"
-      accessibilityLabel={`${test.title}. Status: ${config.label}.`}
+      accessibilityLabel={`${test.title}. Status: ${isFeeRestricted ? 'Fee required' : config.label}.`}
     >
       <View style={styles.cardHeader}>
         <View style={styles.cardLeft}>
           <Text style={styles.testTitle} numberOfLines={2}>{test.title}</Text>
-          {upcoming && (
+          {isFeeRestricted ? (
+            <View style={[styles.upcomingBadge, { backgroundColor: '#FEE2E2' }]}>
+              <Text style={[styles.upcomingText, { color: '#DC2626' }]}>🔒 Fee Required</Text>
+            </View>
+          ) : upcoming ? (
             <View style={styles.upcomingBadge}>
               <Text style={styles.upcomingText}>Upcoming</Text>
             </View>
-          )}
+          ) : null}
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: config.bg }]}>
-          <Text style={[styles.statusText, { color: config.color }]}>{config.label}</Text>
+        <View style={[styles.statusBadge, { backgroundColor: isFeeRestricted ? '#FEE2E2' : config.bg }]}>
+          <Text style={[styles.statusText, { color: isFeeRestricted ? '#DC2626' : config.color }]}>
+            {isFeeRestricted ? 'Locked' : config.label}
+          </Text>
         </View>
       </View>
+
+      {isFeeRestricted && (
+        <View style={styles.restrictedBanner}>
+          <Text style={styles.restrictedBannerText}>
+            🔒 Pay your fees to unlock this test · Contact your teacher
+          </Text>
+        </View>
+      )}
+
       <View style={styles.metaRow}>
         <View style={styles.metaItem}>
           <Text style={styles.metaLabel}>DATE</Text>
@@ -185,20 +123,30 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
           <Text style={styles.metaValue}>{test.time_limit_minutes} min</Text>
         </View>
       </View>
-      {(test.available_from || test.available_until) && (
+
+      {!isFeeRestricted && (test.available_from || test.available_until) && (
         <View style={styles.windowRow}>
           <Text style={styles.windowText}>
             🕐 {test.available_from ?? '—'} – {test.available_until ?? '—'}
           </Text>
         </View>
       )}
-      {status !== 'completed' && (
-        <View style={styles.ctaRow}>
-          <Text style={styles.ctaText}>
-            {status === 'in_progress' ? 'Continue Test →' : 'Start Test →'}
-          </Text>
-        </View>
-      )}
+
+      <View style={styles.ctaRow}>
+        <Text style={[
+          styles.ctaText,
+          status === 'completed' && { color: '#15803D' },
+          isFeeRestricted && { color: '#DC2626' },
+        ]}>
+          {isFeeRestricted
+            ? '🔒 Pay fees to unlock'
+            : status === 'completed'
+            ? 'View Results →'
+            : status === 'in_progress'
+            ? 'Continue Test →'
+            : 'Start Test →'}
+        </Text>
+      </View>
     </TouchableOpacity>
   );
 }
@@ -217,21 +165,8 @@ export default function TestsScreen() {
     setError(null);
     try {
       const response = await apiClient.get('/api/tests/student');
-      const payload = response.data;
-      const tests: TestRecord[] = payload.data ?? [];
-      const message: string = payload.message ?? '';
-      const feePaid = tests.length > 0 || !message.toLowerCase().includes('fee');
-
-      let schoolContact: string | null = null;
-      try {
-        const settingsRes = await apiClient.get('/api/settings');
-        schoolContact =
-          settingsRes.data.data?.contact_phone ??
-          settingsRes.data.data?.contact_email ??
-          null;
-      } catch { /* settings endpoint optional */ }
-
-      setTestsData({ feePaid, tests, schoolContact });
+      const tests: TestRecord[] = response.data?.data ?? [];
+      setTestsData({ tests });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load tests');
     } finally {
@@ -247,20 +182,31 @@ export default function TestsScreen() {
     fetchTests();
   }, [fetchTests]);
 
+  const handleTestPress = (test: TestRecord) => {
+    if (test.is_restricted) {
+      Alert.alert(
+        'Test Locked',
+        'Pay your fees to unlock this test. Please contact your teacher or school office.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    navigation.navigate('TestAttempt', {
+      test: {
+        id: test.id,
+        title: test.title,
+        time_limit_minutes: test.time_limit_minutes ?? 0,
+        question_count: test.question_count,
+        attempt_status: test.attempt_status,
+      },
+    });
+  };
+
   if (loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#1D4ED8" />
       </View>
-    );
-  }
-
-  if (testsData && !testsData.feePaid) {
-    return (
-      <>
-        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
-        <FeeLockedScreen schoolContact={testsData.schoolContact} />
-      </>
     );
   }
 
@@ -284,24 +230,9 @@ export default function TestsScreen() {
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1D4ED8" />
         }
-        ListHeaderComponent={
-          <Text style={styles.title}>Tests</Text>
-        }
+        ListHeaderComponent={<Text style={styles.title}>Tests</Text>}
         renderItem={({ item }) => (
-          <TestCard
-            test={item}
-            onPress={() =>
-              navigation.navigate('TestAttempt', {
-                test: {
-                  id: item.id,
-                  title: item.title,
-                  time_limit_minutes: item.time_limit_minutes ?? 0,
-                  question_count: item.question_count,
-                  attempt_status: item.attempt_status,
-                },
-              })
-            }
-          />
+          <TestCard test={item} onPress={() => handleTestPress(item)} />
         )}
         ListEmptyComponent={
           error ? (
@@ -334,6 +265,7 @@ const styles = StyleSheet.create({
   content: { padding: 20, paddingBottom: 48 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' },
   title: { fontSize: 22, fontWeight: '700', color: '#111827', marginBottom: 16 },
+
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
@@ -346,6 +278,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardUpcoming: { borderLeftWidth: 4, borderLeftColor: '#1D4ED8' },
+  cardRestricted: { borderLeftWidth: 4, borderLeftColor: '#DC2626', opacity: 0.9 },
+
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -366,6 +300,17 @@ const styles = StyleSheet.create({
   upcomingText: { fontSize: 11, fontWeight: '600', color: '#1D4ED8' },
   statusBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start' },
   statusText: { fontSize: 12, fontWeight: '600' },
+
+  restrictedBanner: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: '#FEE2E2',
+  },
+  restrictedBannerText: { fontSize: 12, fontWeight: '600', color: '#DC2626' },
+
   metaRow: {
     flexDirection: 'row',
     borderTopWidth: 1,
@@ -374,9 +319,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   metaItem: { flex: 1 },
-  metaLabel: { fontSize: 10, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 },
+  metaLabel: {
+    fontSize: 10,
+    color: '#9CA3AF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 3,
+  },
   metaValue: { fontSize: 13, fontWeight: '600', color: '#374151' },
   metaDivider: { width: 1, backgroundColor: '#F3F4F6', marginVertical: 2, marginHorizontal: 8 },
+
   ctaRow: {
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
@@ -385,6 +337,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
+
   windowRow: {
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
@@ -392,6 +345,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   windowText: { fontSize: 12, color: '#6B7280' },
+
   emptyState: { alignItems: 'center', marginTop: 60 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { fontSize: 15, color: '#9CA3AF', textAlign: 'center' },

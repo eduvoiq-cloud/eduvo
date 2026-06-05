@@ -11,6 +11,8 @@ import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import FormField, { inputClass } from '@/components/FormField';
 
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface TestDetails {
@@ -44,10 +46,17 @@ interface TheoryDraft {
 
 type QuestionDraft = MCQDraft | TheoryDraft;
 
+interface StudentOption {
+  id: string;
+  full_name: string;
+  roll_number?: string;
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const TERMS = ['term_1', 'term_2', 'term_3'] as const;
 const TERM_LABELS: Record<string, string> = { term_1: 'Term 1', term_2: 'Term 2', term_3: 'Term 3' };
+
 
 const EXAM_TYPES = ['class_test', 'unit_test', 'mid_term', 'final', 'quiz', 'midterm', 'assignment', 'project'] as const;
 type ExamTypeValue = typeof EXAM_TYPES[number];
@@ -369,7 +378,11 @@ export default function CreateTestPage() {
   const [questionError, setQuestionError] = useState('');
   const [questionsError, setQuestionsError] = useState('');
 
-  // Step 3 — publish
+  // Step 3 — restrictions and publish
+  const [blockRestrictions, setBlockRestrictions] = useState(false);
+  const [classStudents, setClassStudents] = useState<StudentOption[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [blockedStudentIds, setBlockedStudentIds] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [publishError, setPublishError] = useState('');
 
@@ -391,6 +404,41 @@ export default function CreateTestPage() {
   }, [user]);
 
   useEffect(() => { fetchAssignments(); }, [fetchAssignments]);
+
+  // ── Fetch students for restriction selection ────────────────────────────────
+
+  const fetchClassStudents = useCallback(async () => {
+    if (!details.class_name || !details.section) return;
+    const token = getToken();
+    if (!token) return;
+    setLoadingStudents(true);
+    try {
+      const qs = new URLSearchParams({
+        class_name: details.class_name,
+        section: details.section,
+        limit: '0',
+      });
+      const res = await fetch(`${BASE_URL}/api/students?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      const students = Array.isArray(json.data) ? json.data : (json.data?.data ?? []);
+      setClassStudents(students.map((s: { id: string; full_name: string; roll_number?: string }) => ({
+        id: s.id,
+        full_name: s.full_name,
+        roll_number: s.roll_number,
+      })));
+    } catch {
+      // silent
+    } finally {
+      setLoadingStudents(false);
+    }
+  }, [details.class_name, details.section]);
+
+  // Load students when entering step 3
+  useEffect(() => {
+    if (step === 3) fetchClassStudents();
+  }, [step, fetchClassStudents]);
 
   // ── Derived dropdown options ────────────────────────────────────────────────
 
@@ -521,7 +569,7 @@ export default function CreateTestPage() {
         }
       });
 
-      await testsApi.create(token, {
+      const created = await testsApi.create(token, {
         title: details.title.trim(),
         subject: details.subject,
         class_name: details.class_name,
@@ -536,6 +584,15 @@ export default function CreateTestPage() {
         shuffle_options: details.shuffle_options,
         questions: builtQuestions,
       });
+
+      // Save restrictions if any students are blocked
+      if (blockRestrictions && blockedStudentIds.size > 0 && created.data?.id) {
+        await fetch(`${BASE_URL}/api/tests/${created.data.id}/restrictions`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ blocked_student_ids: Array.from(blockedStudentIds) }),
+        });
+      }
 
       router.push('/teacher/tests');
     } catch (e: unknown) {
@@ -937,6 +994,110 @@ export default function CreateTestPage() {
               {publishError}
             </div>
           )}
+
+          {/* ── Restrict Test Access ─────────────────────────────────── */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Restrict Test Access</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Block specific students from taking this test. They will see a lock icon with a "Pay your fees to unlock" message.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={blockRestrictions}
+                  onClick={() => setBlockRestrictions((v) => !v)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                    blockRestrictions ? 'bg-red-500' : 'bg-gray-300'
+                  }`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                    blockRestrictions ? 'translate-x-6' : 'translate-x-1'
+                  }`} />
+                </button>
+              </div>
+            </div>
+
+            {blockRestrictions && (
+              <div className="px-6 py-4">
+                {loadingStudents ? (
+                  <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    Loading students…
+                  </div>
+                ) : classStudents.length === 0 ? (
+                  <p className="text-sm text-gray-400 py-2">No students found in this class/section.</p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs text-gray-500">
+                        Select students to block. Blocked students see a 🔒 lock icon on this test.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setBlockedStudentIds(new Set(classStudents.map((s) => s.id)))}
+                          className="text-xs text-red-600 hover:text-red-700 font-medium"
+                        >
+                          Block all
+                        </button>
+                        <span className="text-gray-300">·</span>
+                        <button
+                          type="button"
+                          onClick={() => setBlockedStudentIds(new Set())}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                    </div>
+
+                    {blockedStudentIds.size > 0 && (
+                      <div className="mb-3 px-3 py-2 bg-red-50 border border-red-100 rounded-lg text-xs text-red-700">
+                        🔒 {blockedStudentIds.size} student{blockedStudentIds.size !== 1 ? 's' : ''} will be blocked from this test
+                      </div>
+                    )}
+
+                    <div className="max-h-64 overflow-y-auto space-y-1.5 border border-gray-100 rounded-lg p-2">
+                      {classStudents.map((student) => {
+                        const blocked = blockedStudentIds.has(student.id);
+                        return (
+                          <label
+                            key={student.id}
+                            className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                              blocked ? 'bg-red-50 border border-red-100' : 'hover:bg-gray-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={blocked}
+                              onChange={(e) => {
+                                const next = new Set(blockedStudentIds);
+                                if (e.target.checked) next.add(student.id);
+                                else next.delete(student.id);
+                                setBlockedStudentIds(next);
+                              }}
+                              className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <span className="text-sm font-medium text-gray-800">{student.full_name}</span>
+                              {student.roll_number && (
+                                <span className="text-xs text-gray-400 ml-2">#{student.roll_number}</span>
+                              )}
+                            </div>
+                            {blocked && <span className="text-xs text-red-500 font-medium">🔒 Blocked</span>}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Navigation */}
           <div className="flex items-center justify-between">

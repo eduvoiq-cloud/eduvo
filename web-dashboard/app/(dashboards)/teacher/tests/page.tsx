@@ -98,6 +98,17 @@ export default function TestsPage() {
   const [markingSubmitting, setMarkingSubmitting] = useState(false);
   const [markingError, setMarkingError] = useState('');
 
+  // Restrictions management
+  const [restrictionsTest, setRestrictionsTest] = useState<Test | null>(null);
+  const [restrictionsData, setRestrictionsData] = useState<Array<{
+    student_id: string; full_name: string; roll_number: string; is_restricted: boolean;
+  }>>([]);
+  const [restrictionsLoading, setRestrictionsLoading] = useState(false);
+  const [restrictionsError, setRestrictionsError] = useState('');
+  const [restrictionsSaving, setRestrictionsSaving] = useState(false);
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+  const [restrictionsSuccess, setRestrictionsSuccess] = useState('');
+
   // ── Fetch ─────────────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async () => {
@@ -339,6 +350,44 @@ export default function TestsPage() {
     }
   }
 
+  // ── Restrictions handlers ─────────────────────────────────────────────────
+
+  async function openRestrictions(test: Test) {
+    setRestrictionsTest(test);
+    setRestrictionsData([]);
+    setRestrictionsError('');
+    setRestrictionsSuccess('');
+    setRestrictionsLoading(true);
+    try {
+      const token = getToken();
+      if (!token) return;
+      const res = await testsApi.getRestrictions(token, test.id);
+      setRestrictionsData(res.data);
+      setBlockedIds(new Set(res.data.filter((s) => s.is_restricted).map((s) => s.student_id)));
+    } catch (e: unknown) {
+      setRestrictionsError(e instanceof Error ? e.message : 'Failed to load students');
+    } finally {
+      setRestrictionsLoading(false);
+    }
+  }
+
+  async function saveRestrictions() {
+    if (!restrictionsTest) return;
+    const token = getToken();
+    if (!token) return;
+    setRestrictionsSaving(true);
+    setRestrictionsError('');
+    setRestrictionsSuccess('');
+    try {
+      await testsApi.setRestrictions(token, restrictionsTest.id, Array.from(blockedIds));
+      setRestrictionsSuccess(`Restrictions saved. ${blockedIds.size} student${blockedIds.size !== 1 ? 's' : ''} blocked.`);
+    } catch (e: unknown) {
+      setRestrictionsError(e instanceof Error ? e.message : 'Failed to save restrictions');
+    } finally {
+      setRestrictionsSaving(false);
+    }
+  }
+
   // ── Derived ───────────────────────────────────────────────────────────────
 
   const myClasses = [...new Set(assignments.map((a) => a.class_name))];
@@ -433,6 +482,11 @@ export default function TestsPage() {
                         <button onClick={() => openSubmissions(t)}
                           className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors">
                           Submissions
+                        </button>
+                        <button onClick={() => openRestrictions(t)}
+                          className="px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md transition-colors"
+                          title="Block specific students from this test">
+                          🔒 Restrict
                         </button>
                         <button onClick={() => setDeleteTarget(t)}
                           className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors">
@@ -955,6 +1009,118 @@ export default function TestsPage() {
             )}
           </div>
         ) : null}
+      </Modal>
+      {/* ── Restrictions Modal ──────────────────────────────────────────── */}
+      <Modal
+        open={!!restrictionsTest}
+        onClose={() => { setRestrictionsTest(null); setRestrictionsSuccess(''); }}
+        title={`Restrict Access — ${restrictionsTest?.title ?? ''}`}
+        size="md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Select students to <strong>block</strong> from this test. Blocked students will see the test
+            with a 🔒 lock icon and the message{' '}
+            <span className="italic">"Pay your fees to unlock this test"</span>.
+          </p>
+
+          {restrictionsError && (
+            <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              {restrictionsError}
+            </div>
+          )}
+          {restrictionsSuccess && (
+            <div className="px-3 py-2.5 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+              ✓ {restrictionsSuccess}
+            </div>
+          )}
+
+          {restrictionsLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : restrictionsData.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">No students found in this class.</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-gray-500">{restrictionsData.length} students in class</span>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setBlockedIds(new Set(restrictionsData.map((s) => s.student_id)))}
+                    className="text-xs text-red-600 hover:text-red-700 font-medium"
+                  >
+                    Block all
+                  </button>
+                  <span className="text-gray-300">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setBlockedIds(new Set())}
+                    className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Clear all
+                  </button>
+                </div>
+              </div>
+
+              {blockedIds.size > 0 && (
+                <div className="px-3 py-2 bg-red-50 border border-red-100 rounded-lg text-xs text-red-700">
+                  🔒 {blockedIds.size} student{blockedIds.size !== 1 ? 's' : ''} will be blocked
+                </div>
+              )}
+
+              <div className="max-h-72 overflow-y-auto space-y-1 border border-gray-100 rounded-lg p-2">
+                {restrictionsData.map((student) => {
+                  const blocked = blockedIds.has(student.student_id);
+                  return (
+                    <label
+                      key={student.student_id}
+                      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                        blocked ? 'bg-red-50 border border-red-100' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={blocked}
+                        onChange={(e) => {
+                          const next = new Set(blockedIds);
+                          if (e.target.checked) next.add(student.student_id);
+                          else next.delete(student.student_id);
+                          setBlockedIds(next);
+                        }}
+                        className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                      />
+                      <span className="flex-1 text-sm text-gray-800">{student.full_name}</span>
+                      {student.roll_number && (
+                        <span className="text-xs text-gray-400">#{student.roll_number}</span>
+                      )}
+                      {blocked && <span className="text-xs text-red-500 font-medium">🔒</span>}
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setRestrictionsTest(null); setRestrictionsSuccess(''); }}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={saveRestrictions}
+                  disabled={restrictionsSaving}
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-lg transition-colors"
+                >
+                  {restrictionsSaving ? 'Saving…' : 'Save Restrictions'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </Modal>
     </>
   );

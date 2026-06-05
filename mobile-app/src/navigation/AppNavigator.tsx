@@ -209,6 +209,12 @@ function MainTabNavigator() {
           title: 'More',
           tabBarIcon: ({ focused }) => <TabIcon label="☰" focused={focused} />,
         }}
+        listeners={({ navigation }) => ({
+          tabPress: () => {
+            // Always reset the More stack to MoreHome when the tab is tapped
+            navigation.navigate('More', { screen: 'MoreHome' });
+          },
+        })}
       />
     </MainTab.Navigator>
   );

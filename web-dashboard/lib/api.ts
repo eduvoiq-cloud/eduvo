@@ -752,6 +752,40 @@ export const feesApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     }, token),
+
+  setBulkClassFee: (
+    token: string,
+    payload: { class_name: string; section: string; total_fee_amount: number; term?: string; academic_year?: string }
+  ) =>
+    request<{ total_students: number; updated: number; inserted: number }>('/api/fees/class-bulk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  previewReminder: (
+    token: string,
+    payload: { class_name: string; section: string; custom_note?: string; term?: string; academic_year?: string }
+  ) =>
+    request<Array<{
+      student_id: string;
+      student_name: string;
+      total_fee_amount: number;
+      amount_paid: number;
+      remaining_balance: number;
+      message: string;
+    }>>('/api/fees/preview-reminder', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  sendReminder: (
+    token: string,
+    payload: { class_name: string; section: string; custom_note?: string; term?: string; academic_year?: string }
+  ) =>
+    request<{ sent: number; skipped: number; skipped_names: string[] }>('/api/fees/send-reminder', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
 };
 
 // ── Tests endpoints ───────────────────────────────────────────────────────────
@@ -806,6 +840,19 @@ export const testsApi = {
 
   getResultsSummary: (token: string, testId: string) =>
     request<TestResultsSummary>(`/api/tests/${testId}/results-summary`, { method: 'GET' }, token),
+
+  getRestrictions: (token: string, testId: string) =>
+    request<Array<{ student_id: string; full_name: string; roll_number: string; is_restricted: boolean }>>(
+      `/api/tests/${testId}/restrictions`,
+      { method: 'GET' },
+      token
+    ),
+
+  setRestrictions: (token: string, testId: string, blockedStudentIds: string[]) =>
+    request<{ blocked_count: number }>(`/api/tests/${testId}/restrictions`, {
+      method: 'PUT',
+      body: JSON.stringify({ blocked_student_ids: blockedStudentIds }),
+    }, token),
 };
 
 // ── Onboarding endpoints ──────────────────────────────────────────────────────
