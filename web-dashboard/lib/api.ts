@@ -353,6 +353,13 @@ export const authApi = {
       body: JSON.stringify({ email }),
     }),
 
+  /** Verify a reset token and set a new password (used on the reset-password page) */
+  resetPassword: (token: string, password: string) =>
+    request<null>('/api/auth/staff/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    }),
+
   /** Authenticated staff member sets a new password (clears must_reset_password) */
   changePassword: (token: string, newPassword: string) =>
     request<null>('/api/auth/staff/change-password', {

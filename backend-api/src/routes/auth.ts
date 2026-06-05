@@ -13,7 +13,8 @@
  *   POST /api/auth/login/staff              — staff login (returns must_reset_password flag)
  *   POST /api/auth/login/student            — student (+ parent) login
  *   POST /api/auth/staff/change-password    — staff sets new password (clears must_reset_password)
- *   POST /api/auth/staff/forgot-password    — send Supabase password-reset email
+ *   POST /api/auth/staff/forgot-password    — send password-reset email via Resend
+ *   POST /api/auth/staff/reset-password     — verify token and set new password
  *   POST /api/auth/student/change-password  — student changes own password
  *   POST /api/auth/student/reset-password   — school_admin resets a student's password
  *   GET  /api/auth/me                       — restore any session
@@ -24,6 +25,8 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import { Resend } from 'resend';
 import { supabase, supabaseAdmin } from '../config/supabase';
 import { loginRateLimit, studentLoginRateLimit } from '../middleware/rateLimit';
 import {
@@ -38,6 +41,24 @@ const router = Router();
 
 const BCRYPT_ROUNDS = 10;
 const STUDENT_TOKEN_TTL = '7d'; // students stay logged in for 7 days
+
+// ── Resend email client ───────────────────────────────────────────────────────
+// Lazy-initialised so the server still starts even if RESEND_API_KEY is missing
+// (it will just fail gracefully at send time with a clear error).
+let _resend: Resend | null = null;
+function getResend(): Resend {
+  if (!_resend) {
+    const key = process.env.RESEND_API_KEY;
+    if (!key || key.startsWith('re_xxx')) {
+      throw new Error('RESEND_API_KEY is not configured. Add it to .env');
+    }
+    _resend = new Resend(key);
+  }
+  return _resend;
+}
+
+// Token TTL: 1 hour
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -462,9 +483,13 @@ router.post('/staff/change-password', authenticate, async (req: Request, res: Re
 // ── POST /api/auth/staff/forgot-password ──────────────────────────────────────
 
 /**
- * Triggers a Supabase password-reset email for the given staff email address.
- * The email contains a secure, time-limited link that redirects the user to
- * the NEXT_PUBLIC_SITE_URL/reset-password page (configured in Supabase dashboard).
+ * Sends a password-reset email via Resend.
+ *
+ * - Generates a cryptographically-secure token, hashes it, and stores it in
+ *   the `password_reset_tokens` table with a 1-hour expiry.
+ * - Sends an email with a link to /reset-password?token=<raw_token>
+ * - Always returns 200 regardless of whether the email exists (prevents
+ *   user-enumeration attacks).
  *
  * Public route — no auth required. Rate-limited to prevent email spam.
  */
@@ -481,14 +506,188 @@ router.post('/staff/forgot-password', loginRateLimit, async (req: Request, res: 
 
   const { email } = parsed.data;
 
-  // Always return 200 regardless of whether the email exists — prevents
-  // user enumeration attacks.
-  await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.SITE_URL ?? ''}/reset-password`,
+  // Always return the same response regardless of whether email exists
+  const genericOk = () =>
+    sendSuccess(res, null, 'If an account with that email exists, a reset link has been sent.');
+
+  try {
+    // 1. Check if the email belongs to a staff account
+    const { data: userRecord } = await supabaseAdmin
+      .from('users')
+      .select('id, name, email')
+      .eq('email', email.toLowerCase())
+      .eq('is_deleted', false)
+      .maybeSingle();
+
+    if (!userRecord) {
+      await logAudit(null, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: false });
+      genericOk();
+      return;
+    }
+
+    // 2. Generate a secure random token (32 bytes = 64 hex chars)
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
+
+    // 3. Invalidate any existing unused tokens for this user
+    await supabaseAdmin
+      .from('password_reset_tokens')
+      .update({ used: true })
+      .eq('user_id', userRecord.id)
+      .eq('used', false);
+
+    // 4. Store the hashed token
+    const { error: insertError } = await supabaseAdmin
+      .from('password_reset_tokens')
+      .insert({
+        user_id: userRecord.id,
+        token_hash: tokenHash,
+        expires_at: expiresAt,
+        used: false,
+      });
+
+    if (insertError) {
+      console.error('[auth] Failed to store reset token:', insertError.message);
+      genericOk();
+      return;
+    }
+
+    // 5. Build the reset URL
+    const siteUrl = (process.env.SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const resetUrl = `${siteUrl}/reset-password?token=${rawToken}`;
+    const fromEmail = process.env.FROM_EMAIL ?? 'onboarding@resend.dev';
+
+    // 6. Send the email via Resend
+    const resend = getResend();
+    const { error: emailError } = await resend.emails.send({
+      from: `Eduvo <${fromEmail}>`,
+      to: email,
+      subject: 'Reset your Eduvo password',
+      html: `
+        <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#111;">
+          <div style="margin-bottom:32px;">
+            <div style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;background:#2563eb;border-radius:10px;vertical-align:middle;margin-right:10px;">
+              <span style="color:#fff;font-weight:700;font-size:16px;line-height:1;">E</span>
+            </div>
+            <span style="font-size:20px;font-weight:600;vertical-align:middle;">eduvo</span>
+          </div>
+
+          <h2 style="font-size:20px;font-weight:600;margin:0 0 8px;">Reset your password</h2>
+          <p style="color:#555;font-size:14px;line-height:1.6;margin:0 0 24px;">
+            Hi ${userRecord.name ?? 'there'},<br/>
+            We received a request to reset your Eduvo password. Click the button below to choose a new one.
+          </p>
+
+          <a href="${resetUrl}"
+             style="display:inline-block;background:#2563eb;color:#fff;font-size:14px;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">
+            Reset password
+          </a>
+
+          <p style="color:#888;font-size:12px;margin:24px 0 0;line-height:1.6;">
+            This link expires in <strong>1 hour</strong>. If you didn't request a password reset, you can safely ignore this email — your password won't change.
+          </p>
+
+          <hr style="border:none;border-top:1px solid #eee;margin:24px 0;"/>
+          <p style="color:#aaa;font-size:11px;margin:0;">
+            If the button doesn't work, copy and paste this link into your browser:<br/>
+            <a href="${resetUrl}" style="color:#2563eb;word-break:break-all;">${resetUrl}</a>
+          </p>
+        </div>
+      `,
+    });
+
+    if (emailError) {
+      console.error('[auth] Resend failed to send reset email:', emailError);
+    }
+
+    await logAudit(userRecord.id, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: true });
+  } catch (err) {
+    console.error('[auth] forgot-password unexpected error:', err);
+  }
+
+  genericOk();
+});
+
+// ── POST /api/auth/staff/reset-password ───────────────────────────────────────
+
+/**
+ * Verifies the password-reset token and sets the new password.
+ *
+ * - Looks up the hashed token in `password_reset_tokens`
+ * - Checks it isn't expired or already used
+ * - Updates the Supabase Auth password via the admin API
+ * - Marks the token as used
+ *
+ * Public route — no auth required.
+ */
+const staffResetPasswordSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(8).max(128),
+});
+
+router.post('/staff/reset-password', async (req: Request, res: Response) => {
+  const parsed = staffResetPasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { token, password } = parsed.data;
+
+  // 1. Hash the incoming token to compare against the stored hash
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  const { data: tokenRecord, error: tokenError } = await supabaseAdmin
+    .from('password_reset_tokens')
+    .select('id, user_id, expires_at, used')
+    .eq('token_hash', tokenHash)
+    .maybeSingle();
+
+  if (tokenError || !tokenRecord) {
+    sendError(res, 'Invalid or expired reset link. Please request a new one.', 400);
+    return;
+  }
+
+  if (tokenRecord.used) {
+    sendError(res, 'This reset link has already been used. Please request a new one.', 400);
+    return;
+  }
+
+  if (new Date(tokenRecord.expires_at) < new Date()) {
+    sendError(res, 'This reset link has expired. Please request a new one.', 400);
+    return;
+  }
+
+  // 2. Update the Supabase Auth password via admin API (no session required)
+  const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(
+    tokenRecord.user_id,
+    { password }
+  );
+
+  if (authErr) {
+    console.error('[auth] Failed to update password via Supabase admin:', authErr.message);
+    sendError(res, 'Failed to reset password. Please try again.', 500);
+    return;
+  }
+
+  // 3. Clear must_reset_password flag if set
+  await supabaseAdmin
+    .from('users')
+    .update({ must_reset_password: false })
+    .eq('id', tokenRecord.user_id);
+
+  // 4. Mark the token as used
+  await supabaseAdmin
+    .from('password_reset_tokens')
+    .update({ used: true })
+    .eq('id', tokenRecord.id);
+
+  await logAudit(tokenRecord.user_id, 'STAFF_PASSWORD_RESET_COMPLETED', {
+    user_id: tokenRecord.user_id,
   });
 
-  await logAudit(null, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email });
-  sendSuccess(res, null, 'If an account with that email exists, a reset link has been sent.');
+  sendSuccess(res, null, 'Password reset successfully. You can now sign in.');
 });
 
 // ── GET /api/auth/me ──────────────────────────────────────────────────────────

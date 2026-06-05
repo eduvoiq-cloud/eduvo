@@ -488,3 +488,24 @@ ALTER TABLE public.users ADD COLUMN IF NOT EXISTS must_reset_password boolean NO
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone text;
 
 NOTIFY pgrst, 'reload schema';
+
+-- ── password_reset_tokens ─────────────────────────────────────────────────────
+-- Stores hashed one-time tokens for the custom Resend-based forgot-password flow.
+-- Raw tokens are never stored — only SHA-256 hashes.
+CREATE TABLE IF NOT EXISTS public.password_reset_tokens (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  token_hash  text NOT NULL UNIQUE,
+  expires_at  timestamptz NOT NULL,
+  used        boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Index for fast token lookups
+CREATE INDEX IF NOT EXISTS idx_prt_token_hash ON public.password_reset_tokens(token_hash);
+-- Index for cleanup queries (purge old/used tokens)
+CREATE INDEX IF NOT EXISTS idx_prt_user_id ON public.password_reset_tokens(user_id);
+
+-- RLS: only the service role should access this table
+ALTER TABLE public.password_reset_tokens ENABLE ROW LEVEL SECURITY;
+-- No public policies — only the backend (service role key) can read/write

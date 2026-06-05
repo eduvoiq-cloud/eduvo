@@ -3,10 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-
-// Supabase client (anon key only — used here to complete the token exchange)
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+import { authApi } from '@/lib/api';
 
 // ── Password visibility toggle ────────────────────────────────────────────────
 
@@ -36,6 +33,7 @@ function ResetPasswordInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const [token, setToken] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -44,24 +42,10 @@ function ResetPasswordInner() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-  // The Supabase reset link sends the token via URL fragment (#access_token=...).
-  // We extract it from the hash on mount.
-  const [accessToken, setAccessToken] = useState('');
-
   useEffect(() => {
-    // Supabase uses URL fragments: #access_token=...&type=recovery
-    const hash = window.location.hash.substring(1);
-    const params = new URLSearchParams(hash);
-    const token = params.get('access_token');
-    const type = params.get('type');
-
-    if (token && type === 'recovery') {
-      setAccessToken(token);
-    } else {
-      // Also check query params (some configs use ?token=...)
-      const queryToken = searchParams.get('access_token');
-      if (queryToken) setAccessToken(queryToken);
-    }
+    // Token comes in as a query param: /reset-password?token=<hex>
+    const t = searchParams.get('token');
+    if (t) setToken(t);
   }, [searchParams]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -76,31 +60,15 @@ function ResetPasswordInner() {
       setError('Passwords do not match.');
       return;
     }
-    if (!accessToken) {
+    if (!token) {
       setError('Invalid or expired reset link. Please request a new one.');
       return;
     }
 
     setSubmitting(true);
     try {
-      // Use Supabase REST API directly to update the password with the recovery token
-      const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ password }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.msg ?? json.message ?? 'Failed to reset password');
-      }
-
+      await authApi.resetPassword(token, password);
       setSuccess(true);
-      // Redirect to login after 3 seconds
       setTimeout(() => router.push('/login?reset=success'), 3000);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to reset password. The link may have expired.');
@@ -154,7 +122,7 @@ function ResetPasswordInner() {
               </div>
             )}
 
-            {!accessToken && !error && (
+            {!token && !error && (
               <div className="mb-4 px-3 py-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-700">
                 No reset token found. Please use the link from your email.{' '}
                 <Link href="/forgot-password" className="underline font-medium">Request a new link</Link>
@@ -217,7 +185,7 @@ function ResetPasswordInner() {
 
               <button
                 type="submit"
-                disabled={submitting || !accessToken}
+                disabled={submitting || !token}
                 className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
               >
                 {submitting ? (

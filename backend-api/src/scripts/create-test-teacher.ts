@@ -12,9 +12,9 @@
 import 'dotenv/config';
 import { supabaseAdmin } from '../config/supabase';
 
-const EMAIL    = 'bittusinghq049@gmail.com';
+const EMAIL    = 'eduvoiq@gmail.com';
 const PASSWORD = 'Test@1234';
-const NAME     = 'Bittu Singh (Test Teacher)';
+const NAME     = 'Eduvo Test Teacher';
 
 async function main() {
   console.log('\n── Create Test Teacher ───────────────────────────────────────');
