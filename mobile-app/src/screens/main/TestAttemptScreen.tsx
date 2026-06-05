@@ -936,6 +936,13 @@ const resStyles = StyleSheet.create({
 export default function TestAttemptScreen({ route, navigation }: TestAttemptScreenProps) {
   const { test } = route.params;
 
+  // ── DEBUG overlay ───────────────────────────────────────────────────────────
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const addLog = useCallback((msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    setDebugLog((prev) => [`[${time}] ${msg}`, ...prev].slice(0, 20));
+  }, []);
+
   // ── Phase & core state ──────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('pre');
   const [starting, setStarting] = useState(false);
@@ -951,9 +958,9 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const hasTimeLimit = test.time_limit_minutes > 0;
   const initialSeconds = hasTimeLimit ? test.time_limit_minutes * 60 : null;
   const { secondsLeft, setSecondsLeft } = useCountdown(
-    null, // start as null; set when test begins
+    null,
     () => {
-      // Auto-submit when timer hits 0 — use phaseRef to avoid stale closure
+      addLog(`⏰ onExpire fired! phase=${phaseRef.current} secondsLeft=${secondsLeftRef.current}`);
       if (phaseRef.current === 'active') {
         handleSubmit(true);
       }
@@ -981,6 +988,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   useEffect(() => {
     let hasGoneToBackground = false;
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      addLog(`AppState:${state} bg=${hasGoneToBackground} phase=${phaseRef.current} sLeft=${secondsLeftRef.current}`);
       if (state === 'background' || state === 'inactive') {
         hasGoneToBackground = true;
         const aid = attemptIdRef.current;
@@ -998,12 +1006,13 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         if (phaseRef.current === 'active' && startedAtRef.current && timeLimitSecondsRef.current !== null) {
           const elapsed = Math.floor((Date.now() - new Date(startedAtRef.current).getTime()) / 1000);
           const remaining = Math.max(0, timeLimitSecondsRef.current - elapsed);
+          addLog(`FG recalc: elapsed=${elapsed} remaining=${remaining} startedAt=${startedAtRef.current?.slice(11,19)}`);
           setSecondsLeft(remaining > 0 ? remaining : 1);
         }
       }
     });
     return () => sub.remove();
-  }, [test.id, setSecondsLeft]);
+  }, [test.id, setSecondsLeft, addLog]);
 
   // ── Start / resume test ─────────────────────────────────────────────────────
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
@@ -1019,6 +1028,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   const handleStart = useCallback(async () => {
     setStarting(true);
+    addLog(`handleStart: timeLimitMin=${test.time_limit_minutes} hasTimeLimit=${hasTimeLimit}`);
     try {
       const res = await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
       const payload = res.data.data as {
@@ -1033,37 +1043,27 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       setQuestions(qs);
       setAttemptId(payload.attempt_id);
 
-      // Store started_at and time limit in refs so the AppState foreground handler
-      // can recompute remaining time whenever the student returns to the app.
       startedAtRef.current = payload.started_at;
       timeLimitSecondsRef.current = hasTimeLimit ? payload.time_limit_minutes * 60 : null;
 
-      // Initialise answer slots (one per question, empty)
       setAnswers(qs.map((q) => ({ question_id: q.id })));
 
-      // Restore saved progress if resuming (app backgrounded or server-side active attempt)
       const saved = await loadProgress(test.id);
       if (saved && saved.attempt_id === payload.attempt_id) {
         setAnswers(saved.answers);
         setCurrentIndex(saved.currentIndex);
       }
 
-      // Timer is ALWAYS computed from started_at — never trust saved secondsLeft.
-      // This means time spent in the background or outside the app is always deducted.
       if (hasTimeLimit) {
         const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
         const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
-
-        // The backend now resets any expired attempt and gives a fresh started_at,
-        // so remaining should always be positive here. If extreme clock skew causes
-        // it to round down to 0, use 1 so the student isn't blocked from starting.
+        addLog(`Timer: elapsed=${elapsed}s remaining=${remaining}s started=${payload.started_at.slice(11,19)} timeLimitMin=${payload.time_limit_minutes}`);
         setSecondsLeft(remaining > 0 ? remaining : 1);
       }
 
-      // Sync phaseRef immediately before setPhase so onExpire never fires while
-      // still in 'pre' state due to React batching
       phaseRef.current = 'active';
       setPhase('active');
+      addLog(`Phase→active questions=${qs.length}`);
     } catch (err: unknown) {
       const attemptIdFromErr =
         (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
@@ -1190,6 +1190,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       <View style={activeStyles.centered}>
         <ActivityIndicator size="large" color="#1D4ED8" />
         <Text style={activeStyles.submittingText}>Submitting your test…</Text>
+        {/* DEBUG */}
+        <ScrollView style={{ position: 'absolute', top: 60, left: 10, right: 10, maxHeight: 300, backgroundColor: 'rgba(0,0,0,0.85)', borderRadius: 8, padding: 8 }}>
+          {debugLog.map((l, i) => <Text key={i} style={{ color: '#00FF00', fontSize: 10, fontFamily: 'monospace' }}>{l}</Text>)}
+        </ScrollView>
       </View>
     );
   }
@@ -1309,6 +1313,11 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
           </TouchableOpacity>
         )}
       </View>
+
+      {/* ── DEBUG overlay ── */}
+      <ScrollView style={{ position: 'absolute', bottom: 80, left: 0, right: 0, maxHeight: 160, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 999 }} pointerEvents="none">
+        {debugLog.map((l, i) => <Text key={i} style={{ color: '#00FF00', fontSize: 9, fontFamily: 'monospace', paddingHorizontal: 6 }}>{l}</Text>)}
+      </ScrollView>
 
       {/* ── Submit confirmation modal ── */}
       <SubmitModal
