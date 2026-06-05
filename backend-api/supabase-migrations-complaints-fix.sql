@@ -16,9 +16,4 @@ ALTER TABLE public.complaints
 -- leaves the optional subject field blank.
 ALTER TABLE public.complaints ALTER COLUMN subject DROP NOT NULL;
 
--- Fix 3: Make the body column nullable.
--- The legacy 'body' column (used by the old parent complaint flow) is NOT NULL
--- in the schema, but the new student complaint flow does not populate it.
-ALTER TABLE public.complaints ALTER COLUMN body DROP NOT NULL;
-
 NOTIFY pgrst, 'reload schema';
