@@ -509,3 +509,5 @@ CREATE INDEX IF NOT EXISTS idx_prt_user_id ON public.password_reset_tokens(user_
 -- RLS: only the service role should access this table
 ALTER TABLE public.password_reset_tokens ENABLE ROW LEVEL SECURITY;
 -- No public policies — only the backend (service role key) can read/write
+
+NOTIFY pgrst, 'reload schema';
