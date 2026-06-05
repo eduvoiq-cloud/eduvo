@@ -182,7 +182,7 @@ function UploadTimetableModal({ open, onClose, selectedClass, selectedSection }:
             <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            Timetable uploaded successfully. Your admin will review it.
+            Timetable uploaded successfully.
           </div>
         )}
 

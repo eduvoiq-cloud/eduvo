@@ -774,6 +774,51 @@ router.post(
       public_url: urlData?.publicUrl ?? null,
     });
 
+    // ── Notify students in the class/section ──────────────────────────────────
+    let notifiedCount = 0;
+    if (className && section) {
+      try {
+        // Fetch all active students in this class+section
+        const { data: students } = await supabaseAdmin
+          .from('students')
+          .select('id')
+          .eq('school_id', school_id)
+          .eq('class_name', className)
+          .eq('section', section)
+          .eq('is_deleted', false);
+
+        if (students && students.length > 0) {
+          const publicUrl = urlData?.publicUrl ?? null;
+          const notifTitle = 'Timetable Updated';
+          const notifBody = publicUrl
+            ? `Your class timetable for ${className}-${section} has been updated. View: ${publicUrl}`
+            : `Your class timetable for ${className}-${section} has been updated.`;
+
+          const notifRows = students.map((s: { id: string }) => ({
+            title: notifTitle,
+            message: notifBody,
+            type: 'announcement',
+            recipient_id: s.id,
+            sender_id: userId,
+            is_read: false,
+            created_at: new Date().toISOString(),
+          }));
+
+          const { error: notifError } = await supabaseAdmin
+            .from('notifications')
+            .insert(notifRows);
+
+          if (!notifError) {
+            notifiedCount = students.length;
+          } else {
+            console.error('[timetable/upload] Failed to send notifications:', notifError.message);
+          }
+        }
+      } catch (notifErr) {
+        console.error('[timetable/upload] Notification error:', notifErr);
+      }
+    }
+
     sendSuccess(
       res,
       {
@@ -781,8 +826,9 @@ router.post(
         public_url: urlData?.publicUrl ?? null,
         file_name: req.file.originalname,
         file_size: req.file.size,
+        students_notified: notifiedCount,
       },
-      'Timetable uploaded successfully. Your admin will review it.',
+      'Timetable uploaded successfully.',
       201
     );
   }
