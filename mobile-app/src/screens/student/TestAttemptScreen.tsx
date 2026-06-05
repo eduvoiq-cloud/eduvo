@@ -1117,30 +1117,47 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const attemptIdRef = useRef<string | null>(null);
   const currentIndexRef = useRef(0);
   const secondsLeftRef = useRef<number | null>(null);
+  // Store the server-side started_at timestamp and time limit so the AppState
+  // handler can recompute remaining time when the app returns to foreground.
+  const startedAtRef = useRef<string | null>(null);
+  const timeLimitSecondsRef = useRef<number | null>(null);
+  const phaseRef = useRef<Phase>('pre');
 
   useEffect(() => { answersRef.current = answers; }, [answers]);
   useEffect(() => { attemptIdRef.current = attemptId; }, [attemptId]);
   useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
   useEffect(() => { secondsLeftRef.current = secondsLeft; }, [secondsLeft]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  // ── AppState: save progress when app goes to background ────────────────────
+  // ── AppState: correct timer on foreground; save progress on background ──────
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background' || state === 'inactive') {
+        // Save progress when leaving — timer is NOT saved, it will be recomputed on return
         const aid = attemptIdRef.current;
-        if (aid && phase === 'active') {
+        if (aid && phaseRef.current === 'active') {
           saveProgress(
             test.id,
             aid,
             answersRef.current,
             currentIndexRef.current,
-            secondsLeftRef.current
+            null  // never persist secondsLeft — always recompute from server timestamp
           ).catch(() => {/* silent */});
+        }
+      } else if (state === 'active') {
+        // App came back to foreground — recalculate remaining time from server started_at.
+        // This corrects any time the student spent outside the app.
+        if (phaseRef.current === 'active' && startedAtRef.current && timeLimitSecondsRef.current !== null) {
+          const elapsed = Math.floor((Date.now() - new Date(startedAtRef.current).getTime()) / 1000);
+          const remaining = Math.max(0, timeLimitSecondsRef.current - elapsed);
+          setSecondsLeft(remaining);
+          // If time has already expired while in background, the countdown hook will
+          // fire onExpire (→ handleSubmit) as soon as secondsLeft reaches 0.
         }
       }
     });
     return () => sub.remove();
-  }, [phase, test.id]);
+  }, [test.id, setSecondsLeft]);
 
   // ── Start / resume test ─────────────────────────────────────────────────────
   const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
@@ -1213,6 +1230,11 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         setAnswers(saved.answers);
         setCurrentIndex(saved.currentIndex);
       }
+
+      // Store started_at and time limit in refs so the AppState foreground handler
+      // can recompute remaining time whenever the student returns to the app.
+      startedAtRef.current = payload.started_at;
+      timeLimitSecondsRef.current = hasTimeLimit ? payload.time_limit_minutes * 60 : null;
 
       // Timer is ALWAYS computed from started_at so it keeps running
       // even when the app is backgrounded or killed and relaunched.

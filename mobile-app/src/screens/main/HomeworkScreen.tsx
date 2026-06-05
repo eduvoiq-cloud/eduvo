@@ -11,13 +11,15 @@ import {
   Alert,
 } from 'react-native';
 import apiClient from '../../api/client';
+import { useAuthStore } from '../../store/authStore';
+import { useChildStore } from '../../store/childStore';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface HomeworkItem {
   id: string;
   title: string;
-  description: string;
+  description: string | null;
   subject: string;
   due_date: string;
   is_acknowledged: boolean;
@@ -166,23 +168,50 @@ const cardStyles = StyleSheet.create({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function HomeworkScreen() {
+  const student = useAuthStore((s) => s.student);
+  const { linkedChildren, activeChildIndex } = useChildStore();
   const [homework, setHomework] = useState<HomeworkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabFilter>('Pending');
   const [acknowledging, setAcknowledging] = useState<string | null>(null);
 
+  // Use the active linked child's class/section if available, otherwise fall back to logged-in student
+  const activeStudent = linkedChildren.length > 0 ? linkedChildren[activeChildIndex] : student;
+  const studentClass = activeStudent?.class ?? null;
+  const studentSection = activeStudent?.section ?? null;
+
   const fetchHomework = useCallback(async () => {
+    if (!studentClass || !studentSection) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
-      const response = await apiClient.get('/api/homework');
-      setHomework(response.data.data ?? []);
+      // Use /api/homework/class which returns homework for a specific class/section
+      // The API also checks the student token and marks acknowledged status
+      const response = await apiClient.get('/api/homework/class', {
+        params: { class: studentClass, section: studentSection },
+      });
+      // API returns { subject_name, acknowledged } — normalise to our internal shape
+      const raw: any[] = response.data.data ?? [];
+      const normalised: HomeworkItem[] = raw.map((h) => ({
+        id: h.id,
+        title: h.title,
+        description: h.description ?? null,
+        subject: h.subject_name ?? h.subject ?? '',
+        due_date: h.due_date,
+        is_acknowledged: h.acknowledged ?? false,
+        created_at: h.created_at,
+      }));
+      setHomework(normalised);
     } catch (err) {
       console.warn('[Homework] fetch error:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [studentClass, studentSection]);
 
   useEffect(() => { fetchHomework(); }, [fetchHomework]);
 

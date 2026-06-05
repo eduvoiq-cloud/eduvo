@@ -10,7 +10,7 @@ import {
   Modal,
   ActivityIndicator,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, CommonActions } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuthStore } from '../../store/authStore';
 import { useChildStore } from '../../store/childStore';
@@ -257,6 +257,39 @@ export default function DashboardScreen() {
   const activeStudent =
     linkedChildren.length > 0 ? linkedChildren[activeChildIndex] : student;
 
+  /**
+   * Navigate into a screen inside the More stack while always resetting
+   * the stack history to [MoreHome → target]. This prevents the back
+   * button from landing on a stale screen (e.g. Timetable) when the
+   * user previously visited a different More screen.
+   */
+  const navigateToMore = useCallback((screen: string) => {
+    // Dispatch a reset on the root navigator, keeping all tabs intact but
+    // replacing the More tab's nested stack state with a clean [MoreHome, target].
+    navigation.dispatch((state) => {
+      const moreRouteIndex = state.routes.findIndex((r) => r.name === 'More');
+      if (moreRouteIndex === -1) {
+        // Fallback: just navigate normally
+        return CommonActions.navigate('More', { screen, initial: false } as any);
+      }
+      const newRoutes = state.routes.map((route, idx) => {
+        if (idx !== moreRouteIndex) return route;
+        return {
+          ...route,
+          state: {
+            index: 1,
+            routes: [{ name: 'MoreHome' }, { name: screen }],
+          },
+        };
+      });
+      return CommonActions.reset({
+        ...state,
+        index: moreRouteIndex,
+        routes: newRoutes,
+      });
+    });
+  }, [navigation]);
+
   const fetchAll = useCallback(async () => {
     try {
       const today = todayISO();
@@ -424,7 +457,7 @@ export default function DashboardScreen() {
           </View>
           <TouchableOpacity
             style={styles.bellWrapper}
-            onPress={() => navigation.navigate('More', { screen: 'Notifications' } as any)}
+        onPress={() => navigateToMore('Notifications')}
             accessibilityRole="button"
             accessibilityLabel={`Notifications${notifCount > 0 ? `, ${notifCount} unread` : ''}`}
           >
@@ -464,7 +497,7 @@ export default function DashboardScreen() {
                 value={hwValue}
                 sub={hwSub}
                 color="#F59E0B"
-                onPress={() => navigation.navigate('More', { screen: 'Homework' } as any)}
+                onPress={() => navigateToMore('Homework')}
               />
             </View>
             <View style={[styles.cardsRow, { marginTop: 12 }]}>
@@ -474,7 +507,7 @@ export default function DashboardScreen() {
                 value={nextValue}
                 sub={nextSub}
                 color="#8B5CF6"
-                onPress={() => navigation.navigate('More', { screen: 'Timetable' } as any)}
+                onPress={() => navigateToMore('Timetable')}
               />
               <DashCard
                 icon="📊"
@@ -500,7 +533,7 @@ export default function DashboardScreen() {
                 value="View"
                 sub="Weekly class schedule"
                 color="#1D4ED8"
-                onPress={() => navigation.navigate('More', { screen: 'Timetable' } as any)}
+                onPress={() => navigateToMore('Timetable')}
               />
             </View>
           </>
