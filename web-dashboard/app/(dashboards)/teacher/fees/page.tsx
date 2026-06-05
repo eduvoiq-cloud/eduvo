@@ -63,9 +63,13 @@ function UpdatePaymentModal({ record, term, academicYear, onClose, onSaved }: Up
     setSaving(true);
     setError('');
     try {
+      // Prefer the term/year from the existing fee record to ensure we update
+      // the correct row and don't collide with the unique constraint.
+      const effectiveTerm = record.fee_record?.term ?? term;
+      const effectiveYear = record.fee_record?.academic_year ?? academicYear;
       await feesApi.updatePayment(token, record.student_id, {
-        ...(term ? { term } : {}),
-        ...(academicYear ? { academic_year: academicYear } : {}),
+        ...(effectiveTerm ? { term: effectiveTerm } : {}),
+        ...(effectiveYear ? { academic_year: effectiveYear } : {}),
         total_fee_amount: total,
         amount_paid: paid,
       });

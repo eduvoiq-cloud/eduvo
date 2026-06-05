@@ -422,18 +422,50 @@ router.post(
       return;
     }
 
-    // Teachers must be assigned to this class AND subject
+    // Teachers must be assigned to this class AND subject.
+    // teacher_assignments stores subject as a name (text), not a UUID.
+    // Resolve the subject name first, then check the assignment.
     if (userRole === 'teacher') {
-      const { data: assignment } = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('id')
-        .eq('teacher_id', userId)
-        .ilike('class_name', className.trim())
-        .ilike('section', section.trim())
-        .eq('subject_id', subject_id)
+      const { data: subjectForCheck } = await supabaseAdmin
+        .from('subjects')
+        .select('name')
+        .eq('id', subject_id)
+        .eq('school_id', schoolId)
         .maybeSingle();
 
-      if (!assignment) {
+      let assigned = false;
+
+      if (subjectForCheck) {
+        // Try class_name column first (current schema)
+        const { data: byClassName } = await supabaseAdmin
+          .from('teacher_assignments')
+          .select('id')
+          .eq('teacher_id', userId)
+          .eq('school_id', schoolId)
+          .ilike('class_name', className.trim())
+          .ilike('section', section.trim())
+          .ilike('subject', subjectForCheck.name.trim())
+          .maybeSingle();
+
+        if (byClassName) {
+          assigned = true;
+        } else {
+          // Fallback: legacy `class` column
+          const { data: byClass } = await supabaseAdmin
+            .from('teacher_assignments')
+            .select('id')
+            .eq('teacher_id', userId)
+            .eq('school_id', schoolId)
+            .ilike('class', className.trim())
+            .ilike('section', section.trim())
+            .ilike('subject', subjectForCheck.name.trim())
+            .maybeSingle();
+
+          if (byClass) assigned = true;
+        }
+      }
+
+      if (!assigned) {
         sendError(res, 'You are not assigned to this class and subject', 403);
         return;
       }

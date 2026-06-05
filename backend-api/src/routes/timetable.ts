@@ -1,9 +1,24 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+
+// ── Multer (memory storage — file held in RAM, then streamed to Supabase) ─────
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+    if (allowed.includes(file.mimetype) || /\.(pdf|jpe?g|png|webp|heic)$/i.test(file.originalname)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF or image files (JPG, PNG, WEBP, HEIC) are accepted.'));
+    }
+  },
+});
 
 const router = Router();
 
@@ -674,6 +689,100 @@ router.post(
       res,
       { periods_copied: newRows.length },
       `Copied ${newRows.length} period(s) from ${from_class}-${from_section} to ${to_class}-${to_section}`,
+      201
+    );
+  }
+);
+
+// ── POST /api/timetable/upload ────────────────────────────────────────────────
+/**
+ * Upload a timetable file (PDF / image) for a class/section.
+ * The file is stored in the Supabase Storage bucket "timetable-uploads".
+ * An audit log entry is created so admins can review it.
+ * Auth: teacher, schooladmin, superadmin.
+ */
+router.post(
+  '/upload',
+  authenticate,
+  requireRole('superadmin', 'schooladmin', 'teacher'),
+  (req: Request, res: Response, next) => {
+    upload.single('file')(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          sendError(res, 'File must be under 10 MB.', 400);
+        } else {
+          sendError(res, err.message, 400);
+        }
+        return;
+      }
+      if (err) {
+        sendError(res, err instanceof Error ? err.message : 'File upload error', 400);
+        return;
+      }
+      next();
+    });
+  },
+  async (req: Request, res: Response) => {
+    if (!req.file) {
+      sendError(res, 'No file provided.', 400);
+      return;
+    }
+
+    const userId = req.user!.id;
+    const school_id = req.user!.school_id;
+    const className = req.body.class as string | undefined;
+    const section = req.body.section as string | undefined;
+
+    if (!school_id) {
+      sendError(res, 'Your account is not linked to a school', 403);
+      return;
+    }
+
+    // Build a unique storage path: timetable-uploads/<school_id>/<class>-<section>/<timestamp>_<filename>
+    const ts = Date.now();
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const folder = className && section ? `${className}-${section}` : 'misc';
+    const storagePath = `${school_id}/${folder}/${ts}_${safeName}`;
+
+    const BUCKET = 'timetable-uploads';
+
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from(BUCKET)
+      .upload(storagePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error('[timetable/upload] Storage error:', uploadError.message);
+      sendError(res, `Failed to store file: ${uploadError.message}`, 500);
+      return;
+    }
+
+    // Get a public or signed URL for reference
+    const { data: urlData } = supabaseAdmin.storage
+      .from(BUCKET)
+      .getPublicUrl(storagePath);
+
+    await logAudit(userId, 'TIMETABLE_FILE_UPLOADED', {
+      school_id,
+      class_name: className ?? null,
+      section: section ?? null,
+      file_name: req.file.originalname,
+      file_size: req.file.size,
+      storage_path: storagePath,
+      public_url: urlData?.publicUrl ?? null,
+    });
+
+    sendSuccess(
+      res,
+      {
+        storage_path: storagePath,
+        public_url: urlData?.publicUrl ?? null,
+        file_name: req.file.originalname,
+        file_size: req.file.size,
+      },
+      'Timetable uploaded successfully. Your admin will review it.',
       201
     );
   }

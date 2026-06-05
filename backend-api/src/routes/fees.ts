@@ -188,11 +188,16 @@ router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'tea
   const feePaid = parsed.data.amount_paid >= parsed.data.total_fee_amount;
   const studentId = req.params.student_id;
 
-  // Check if a fee record already exists for this student
+  // Check if a fee record already exists for this student.
+  // When term/academic_year are provided, match exactly. When they're omitted,
+  // fall back to the most-recent record for this student so we always UPDATE
+  // rather than INSERT (which would violate the unique constraint).
   let existingQuery = supabaseAdmin
     .from('student_fees')
     .select('id')
-    .eq('student_id', studentId);
+    .eq('student_id', studentId)
+    .order('created_at', { ascending: false })
+    .limit(1);
 
   if (parsed.data.term) {
     existingQuery = existingQuery.eq('term', parsed.data.term);
@@ -201,7 +206,8 @@ router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'tea
     existingQuery = existingQuery.eq('academic_year', parsed.data.academic_year);
   }
 
-  const { data: existing } = await existingQuery.maybeSingle();
+  const { data: existingRows } = await existingQuery;
+  const existing = existingRows?.[0] ?? null;
 
   let data: unknown;
   let error: { message: string } | null;
@@ -477,39 +483,23 @@ router.post('/send-reminder', requireRole('superadmin', 'schooladmin', 'teacher'
       message += ` ${custom_note.trim()}`;
     }
 
-    // Find the auth user record linked to this student
-    // Students authenticate via the students table directly (student tokens),
-    // but notifications.recipient_id references users.id.
-    // We need to look up parent_id or a linked user. For direct student notification,
-    // we check if there's a user with matching email/phone linked to the student.
-    // The students table has a parent_id col. We'll try to find a user_id.
-
-    // Look for student's linked user (via parent_students junction or direct user)
-    // Actually, check students table for user_id column
-    const { data: studentUser } = await supabaseAdmin
-      .from('students')
-      .select('id, full_name, parent_id')
-      .eq('id', student.id)
-      .single();
-
-    // For students without a linked user_id, we skip — they'd need a user account
-    // to receive notifications. We use parent_id as fallback.
-    const recipientUserId = (studentUser as { parent_id?: string | null } | null)?.parent_id ?? null;
-
-    if (!recipientUserId) {
-      skipped.push(student.full_name);
-      continue;
-    }
-
-    await supabaseAdmin.from('notifications').insert({
+    // Notifications use student.id directly as recipient_id for student tokens
+    // (the notifications GET endpoint resolves recipient_id from req.student.id)
+    const { error: notifErr } = await supabaseAdmin.from('notifications').insert({
       title: 'Fee Reminder',
       message,
       type: 'fee_reminder',
-      recipient_id: recipientUserId,
+      recipient_id: student.id,
       sender_id: req.user!.id,
       is_read: false,
       created_at: now,
     });
+
+    if (notifErr) {
+      console.error(`[fees] Failed to insert notification for student ${student.id}:`, notifErr.message);
+      skipped.push(student.full_name);
+      continue;
+    }
 
     sent++;
   }
