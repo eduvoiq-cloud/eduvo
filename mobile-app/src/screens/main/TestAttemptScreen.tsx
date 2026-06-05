@@ -142,16 +142,29 @@ function useCountdown(
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
+  // Only fire onExpire after the timer has actually been counting down from a
+  // positive value. This prevents an instant auto-submit when remaining time
+  // is computed as 0 on the very first assignment (e.g. clock skew or a
+  // resumed attempt whose time limit already elapsed).
+  const hasTickedRef = useRef(false);
 
   useEffect(() => {
-    // No timer active
-    if (secondsLeft === null) return;
-
-    // Already expired
-    if (secondsLeft <= 0) {
-      onExpireRef.current();
+    // No timer active — reset ticked flag
+    if (secondsLeft === null) {
+      hasTickedRef.current = false;
       return;
     }
+
+    // Expired — only call onExpire if we actually counted down to 0
+    if (secondsLeft <= 0) {
+      if (hasTickedRef.current) {
+        onExpireRef.current();
+      }
+      return;
+    }
+
+    // Timer running — mark that we've seen at least one positive tick
+    hasTickedRef.current = true;
 
     const id = setInterval(() => {
       setSecondsLeft((prev) => {
@@ -961,8 +974,8 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const { secondsLeft, setSecondsLeft } = useCountdown(
     null, // start as null; set when test begins
     () => {
-      // Auto-submit when timer hits 0
-      if (phase === 'active') {
+      // Auto-submit when timer hits 0 — use phaseRef to avoid stale closure
+      if (phaseRef.current === 'active') {
         handleSubmit(true);
       }
     }
@@ -1099,9 +1112,24 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       if (hasTimeLimit) {
         const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
         const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
+
+        // If time has already fully elapsed before the student sees a question,
+        // don't silently force-submit with 0 answers. Show a clear message instead.
+        if (remaining === 0) {
+          Alert.alert(
+            'Time Expired',
+            'The time limit for this test has already elapsed. Please contact your teacher.',
+          );
+          setStarting(false);
+          return;
+        }
+
         setSecondsLeft(remaining);
       }
 
+      // Sync phaseRef immediately before setPhase so onExpire never fires while
+      // still in 'pre' state due to React batching
+      phaseRef.current = 'active';
       setPhase('active');
     } catch (err: unknown) {
       const attemptIdFromErr =
@@ -1156,6 +1184,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const handleSubmit = useCallback(async (autoSubmit = false) => {
     if (!attemptId) return;
     setShowSubmitModal(false);
+    phaseRef.current = 'submitting'; // sync immediately so onExpire can't double-fire
     setPhase('submitting');
     setSubmitError(null);
 
