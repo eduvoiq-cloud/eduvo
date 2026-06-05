@@ -560,11 +560,11 @@ router.post('/staff/forgot-password', async (req: Request, res: Response) => {
 
     if (insertError) {
       console.error('[auth] Failed to store reset token:', insertError.message, insertError.code);
-      genericOk();
-      return;
+      // Table may not exist yet — still attempt to send the email so we can diagnose Resend separately
+      // DO NOT return here
+    } else {
+      console.log(`[auth] forgot-password: token stored OK`);
     }
-
-    console.log(`[auth] forgot-password: token stored, building email`);
 
     // 5. Build the reset URL
     const siteUrl = (process.env.SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
