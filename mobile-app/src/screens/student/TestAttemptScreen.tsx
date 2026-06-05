@@ -1143,19 +1143,17 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
   // ── AppState: correct timer on foreground; save progress on background ──────
+  // ── AppState: save progress on background; recalculate timer on foreground ──
   useEffect(() => {
-    // Track whether we've seen at least one background event first.
-    // This prevents the 'active' handler from firing on mount (Android fires
-    // 'active' immediately when the component mounts while the app is already
-    // in the foreground, which caused the timer to be recalculated using a
-    // stale started_at from a previous attempt, setting secondsLeft to 0 and
-    // triggering an immediate auto-submit).
+    // Only recalculate after the app has actually gone to background at least once.
+    // Android fires 'active' immediately on mount — we must ignore that first event
+    // or it will use startedAtRef from a previous attempt (which is null now, but
+    // belt-and-suspenders).
     let hasGoneToBackground = false;
 
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background' || state === 'inactive') {
         hasGoneToBackground = true;
-        // Save progress when leaving — timer is NOT saved, it will be recomputed on return
         const aid = attemptIdRef.current;
         if (aid && phaseRef.current === 'active') {
           saveProgress(
@@ -1163,18 +1161,23 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             aid,
             answersRef.current,
             currentIndexRef.current,
-            null  // never persist secondsLeft — always recompute from server timestamp
-          ).catch(() => {/* silent */});
+            null
+          ).catch(() => {});
         }
       } else if (state === 'active' && hasGoneToBackground) {
-        // App came back to foreground — recalculate remaining time from server started_at.
-        // This corrects any time the student spent outside the app.
-        if (phaseRef.current === 'active' && startedAtRef.current && timeLimitSecondsRef.current !== null) {
-          const elapsed = Math.floor((Date.now() - new Date(startedAtRef.current).getTime()) / 1000);
+        // Returned from background — correct the timer using server started_at.
+        // startedAtRef and timeLimitSecondsRef are only set after handleStart
+        // succeeds, so they always belong to the current attempt.
+        if (
+          phaseRef.current === 'active' &&
+          startedAtRef.current !== null &&
+          timeLimitSecondsRef.current !== null
+        ) {
+          const elapsed = Math.floor(
+            (Date.now() - new Date(startedAtRef.current).getTime()) / 1000
+          );
           const remaining = Math.max(0, timeLimitSecondsRef.current - elapsed);
           setSecondsLeft(remaining);
-          // If time has already expired while in background, the countdown hook will
-          // fire onExpire (→ handleSubmit) as soon as secondsLeft reaches 0.
         }
       }
     });
