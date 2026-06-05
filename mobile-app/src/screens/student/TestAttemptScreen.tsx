@@ -153,16 +153,29 @@ function useCountdown(
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
+  // Track whether the timer has ever counted down at least one tick.
+  // This prevents firing onExpire immediately when secondsLeft is set to 0
+  // on the very first assignment (e.g. when elapsed >= time limit on start).
+  const hasTickedRef = useRef(false);
 
   useEffect(() => {
     // No timer active
-    if (secondsLeft === null) return;
-
-    // Already expired
-    if (secondsLeft <= 0) {
-      onExpireRef.current();
+    if (secondsLeft === null) {
+      hasTickedRef.current = false;
       return;
     }
+
+    // Already expired — only fire onExpire if the timer has actually been
+    // counting down (i.e. it wasn't set to 0 on the very first assignment).
+    if (secondsLeft <= 0) {
+      if (hasTickedRef.current) {
+        onExpireRef.current();
+      }
+      return;
+    }
+
+    // Timer is running — mark that at least one positive value has been seen
+    hasTickedRef.current = true;
 
     const id = setInterval(() => {
       setSecondsLeft((prev) => {
@@ -1241,6 +1254,19 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       if (hasTimeLimit) {
         const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
         const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
+
+        // If the time limit has already fully elapsed before the student even
+        // sees the first question, don't silently submit with 0 answers.
+        // Show a clear message instead.
+        if (remaining === 0) {
+          Alert.alert(
+            'Time Expired',
+            'The time limit for this test has already elapsed. Please contact your teacher.',
+          );
+          setStarting(false);
+          return;
+        }
+
         setSecondsLeft(remaining);
       }
 
