@@ -26,8 +26,8 @@ const complaintRateLimit = rateLimit({
 
 const createComplaintSchema = z.object({
   message: z.string().min(1, 'Message is required').max(1000, 'Message must be 1000 characters or less'),
-  recipient_type: z.enum(['class_teacher', 'school_admin', 'subject_teacher'] as const, {
-    message: 'recipient_type must be "class_teacher", "subject_teacher", or "school_admin"',
+  recipient_type: z.enum(['school_admin', 'subject_teacher'] as const, {
+    message: 'recipient_type must be "subject_teacher" or "school_admin"',
   }),
   subject: z.string().max(200, 'Subject must be 200 characters or less').optional(),
   // Required when recipient_type is 'subject_teacher' — the teacher_id to send the complaint to
@@ -155,30 +155,7 @@ router.post(
     let teacherId: string | null = null;
     let notifyUserId: string | null = null;
 
-    if (recipient_type === 'class_teacher') {
-      // Find the first teacher assigned to this student's class and section
-      const { data: assignment, error: assignErr } = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('teacher_id')
-        .eq('school_id', student.school_id)
-        .eq('class_name', student.class_name)
-        .eq('section', student.section)
-        .limit(1)
-        .maybeSingle();
-
-      if (assignErr) {
-        sendError(res, 'Failed to look up class teacher', 500);
-        return;
-      }
-
-      if (!assignment) {
-        sendError(res, 'No teacher is assigned to your class. Please contact school admin instead.', 404);
-        return;
-      }
-
-      teacherId = assignment.teacher_id;
-      notifyUserId = assignment.teacher_id;
-    } else if (recipient_type === 'subject_teacher') {
+    if (recipient_type === 'subject_teacher') {
       // Verify the given teacher is actually assigned to this student's class
       const { data: assignment, error: assignErr } = await supabaseAdmin
         .from('teacher_assignments')

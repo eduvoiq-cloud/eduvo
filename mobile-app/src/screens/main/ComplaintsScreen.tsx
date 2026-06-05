@@ -19,7 +19,7 @@ import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type RecipientType = 'class_teacher' | 'school_admin' | 'subject_teacher';
+type RecipientType = 'school_admin' | 'subject_teacher';
 
 interface Complaint {
   id: string;
@@ -68,7 +68,6 @@ function timeAgo(iso: string): string {
 
 function recipientLabel(c: Complaint): string {
   switch (c.recipient_type) {
-    case 'class_teacher':   return 'Class Teacher';
     case 'subject_teacher': return 'Subject Teacher';
     case 'school_admin':    return 'School Admin';
     default:                return 'Unknown';
@@ -227,9 +226,7 @@ function ComplaintModal({
   const [submitting, setSubmitting] = useState(false);
 
   const title =
-    recipientType === 'class_teacher'
-      ? 'Complain to Class Teacher'
-      : recipientType === 'subject_teacher'
+    recipientType === 'subject_teacher'
       ? `Complain to ${selectedTeacher?.teacher_name ?? 'Subject Teacher'}`
       : 'Complain to School Admin';
 
@@ -249,6 +246,11 @@ function ComplaintModal({
       setSubject('');
       setMessage('');
       onClose();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to submit complaint. Please try again.';
+      Alert.alert('Error', msg);
     } finally {
       setSubmitting(false);
     }
@@ -593,21 +595,6 @@ export default function ComplaintsScreen() {
             <Text style={styles.successText}>✓ {successMessage}</Text>
           </View>
         )}
-
-        {/* Complain to Class Teacher */}
-        <TouchableOpacity
-          style={[styles.optionButton, styles.optionBlue]}
-          onPress={() => setModalRecipient('class_teacher')}
-          accessibilityRole="button"
-          accessibilityLabel="Complain to my class teacher"
-        >
-          <Text style={styles.optionIcon}>👨‍🏫</Text>
-          <View style={styles.optionText}>
-            <Text style={styles.optionTitle}>Complain to Class Teacher</Text>
-            <Text style={styles.optionDesc}>For general classroom issues</Text>
-          </View>
-          <Text style={styles.optionArrow}>›</Text>
-        </TouchableOpacity>
 
         {/* Complain to Subject Teacher */}
         <TouchableOpacity
