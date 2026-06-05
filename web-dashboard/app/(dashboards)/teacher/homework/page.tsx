@@ -36,6 +36,7 @@ interface AckCount {
 
 interface HomeworkForm {
   subject_id: string;
+  custom_subject: string;
   class_name: string;
   section: string;
   title: string;
@@ -199,6 +200,7 @@ function HomeworkFormModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<HomeworkForm>({
     subject_id: '',
+    custom_subject: '',
     class_name: filterClass,
     section: filterSection,
     title: '',
@@ -216,6 +218,7 @@ function HomeworkFormModal({
       const matchedSubject = subjects.find((s) => s.name === initial.subject_name);
       setForm({
         subject_id: matchedSubject?.id ?? initial.subject_id ?? '',
+        custom_subject: matchedSubject ? '' : (initial.subject_name ?? ''),
         class_name: filterClass,
         section: filterSection,
         title: initial.title,
@@ -226,6 +229,7 @@ function HomeworkFormModal({
     } else {
       setForm({
         subject_id: '',
+        custom_subject: '',
         class_name: filterClass,
         section: filterSection,
         title: '',
@@ -241,14 +245,46 @@ function HomeworkFormModal({
     assignments.filter((a) => a.class_name === form.class_name).map((a) => a.section)
   )].sort();
 
-  const subjectsForClassSection = subjects.filter((s) =>
-    assignments.some((a) => a.class_name === form.class_name && a.section === form.section && a.subject === s.name)
-  );
+  // Subjects assigned to this teacher for the selected class/section,
+  // enriched with IDs from the subjects API where available.
+  const subjectsForClassSection: (Subject & { missing?: boolean })[] = (() => {
+    if (!form.class_name || !form.section) return [];
+    const assignedNames = [...new Set(
+      assignments
+        .filter((a) => a.class_name === form.class_name && a.section === form.section)
+        .map((a) => a.subject)
+    )].sort();
+
+    return assignedNames.map((name) => {
+      const found = subjects.find((s) => s.name.toLowerCase() === name.toLowerCase());
+      return found ? found : { id: '', name, missing: true };
+    });
+  })();
+
+  const useCustomSubject = form.subject_id === '__custom__';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
-    if (!form.subject_id || !form.class_name || !form.section || !form.title || !form.due_date) {
+
+    // Resolve the effective subject_id and name
+    let effectiveSubjectId = form.subject_id;
+    const isCustom = form.subject_id === '__custom__';
+    const customName = form.custom_subject.trim();
+
+    if (isCustom) {
+      if (!customName) { setError('Please enter a subject name.'); return; }
+      // Look up by custom name in subjects list
+      const found = subjects.find((s) => s.name.toLowerCase() === customName.toLowerCase());
+      if (!found) { setError(`Subject "${customName}" is not in the school subjects list. Please ask your admin to add it first.`); return; }
+      effectiveSubjectId = found.id;
+    } else {
+      // Check if it's a missing-ID subject (assigned but not in DB)
+      const sel = subjectsForClassSection.find((s) => s.id === effectiveSubjectId || (s.id === '' && s.name === effectiveSubjectId));
+      if (sel && !sel.id) { setError(`Subject "${sel.name}" is not yet in the school subjects list. Please ask your admin to add it.`); return; }
+    }
+
+    if (!effectiveSubjectId || !form.class_name || !form.section || !form.title || !form.due_date) {
       setError('Please fill in all required fields.');
       return;
     }
@@ -274,7 +310,7 @@ function HomeworkFormModal({
       }
 
       const payload: Record<string, unknown> = {
-        subject_id: form.subject_id,
+        subject_id: effectiveSubjectId,
         class: form.class_name,
         section: form.section,
         title: form.title.trim(),
@@ -327,10 +363,31 @@ function HomeworkFormModal({
 
         <FormField label="Subject" htmlFor="hw-subject" required>
           <select id="hw-subject" className={inputClass} value={form.subject_id} disabled={!form.section}
-            onChange={(e) => setForm((f) => ({ ...f, subject_id: e.target.value }))}>
+            onChange={(e) => setForm((f) => ({ ...f, subject_id: e.target.value, custom_subject: '' }))}>
             <option value="">Select subject…</option>
-            {subjectsForClassSection.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {subjectsForClassSection.map((s) => (
+              <option key={s.id || s.name} value={s.id || `__missing__${s.name}`} disabled={!s.id}>
+                {s.name}{!s.id ? ' (not in DB — contact admin)' : ''}
+              </option>
+            ))}
+            <option value="__custom__">✏️ Type a different subject…</option>
           </select>
+          {useCustomSubject && (
+            <input
+              type="text"
+              className={`${inputClass} mt-2`}
+              placeholder="Enter subject name…"
+              value={form.custom_subject}
+              onChange={(e) => setForm((f) => ({ ...f, custom_subject: e.target.value }))}
+              autoFocus
+            />
+          )}
+          {!form.section && (
+            <p className="mt-1 text-xs text-gray-400">Select a section first</p>
+          )}
+          {form.section && subjectsForClassSection.length === 0 && (
+            <p className="mt-1 text-xs text-amber-600">No subjects assigned for this class/section. Use "Type a different subject" or ask your admin to set up assignments.</p>
+          )}
         </FormField>
 
         <FormField label="Title" htmlFor="hw-title" required>
