@@ -1198,6 +1198,9 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   const handleStart = useCallback(async () => {
     setStarting(true);
+    // Reset refs from any previous attempt so stale data can't bleed in
+    startedAtRef.current = null;
+    timeLimitSecondsRef.current = null;
     try {
       const res = await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
       const payload = res.data.data as {
