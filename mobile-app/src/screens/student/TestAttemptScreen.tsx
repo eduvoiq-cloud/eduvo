@@ -111,7 +111,7 @@ interface SavedProgress {
   attempt_id: string;
   answers: Answer[];
   currentIndex: number;
-  // secondsLeft intentionally NOT saved — timer is always recomputed from started_at
+  secondsLeft: number | null;
   savedAt: string;
 }
 
@@ -120,12 +120,13 @@ async function saveProgress(
   attempt_id: string,
   answers: Answer[],
   currentIndex: number,
-  _secondsLeft: number | null  // kept in signature for call-site compat, ignored
+  secondsLeft: number | null
 ): Promise<void> {
   const payload: SavedProgress = {
     attempt_id,
     answers,
     currentIndex,
+    secondsLeft,
     savedAt: new Date().toISOString(),
   };
   await AsyncStorage.setItem(progressKey(testId), JSON.stringify(payload));
@@ -153,30 +154,13 @@ function useCountdown(
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
-  // Track whether the timer has ever counted down at least one tick.
-  // This prevents firing onExpire immediately when secondsLeft is set to 0
-  // on the very first assignment (e.g. when elapsed >= time limit on start).
-  const hasTickedRef = useRef(false);
 
   useEffect(() => {
-    // No timer active
-    if (secondsLeft === null) {
-      hasTickedRef.current = false;
-      return;
-    }
-
-    // Already expired — only fire onExpire if the timer has actually been
-    // counting down (i.e. it wasn't set to 0 on the very first assignment).
+    if (secondsLeft === null) return;
     if (secondsLeft <= 0) {
-      if (hasTickedRef.current) {
-        onExpireRef.current();
-      }
+      onExpireRef.current();
       return;
     }
-
-    // Timer is running — mark that at least one positive value has been seen
-    hasTickedRef.current = true;
-
     const id = setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev === null) return null;
@@ -184,7 +168,6 @@ function useCountdown(
         return prev - 1;
       });
     }, 1000);
-
     return () => clearInterval(id);
   }, [secondsLeft]);
 
@@ -1142,13 +1125,8 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   useEffect(() => { secondsLeftRef.current = secondsLeft; }, [secondsLeft]);
   useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  // ── AppState: correct timer on foreground; save progress on background ──────
-  // ── AppState: save progress on background; recalculate timer on foreground ──
+  // ── AppState: save progress on background; correct timer on foreground ──────
   useEffect(() => {
-    // Only recalculate after the app has actually gone to background at least once.
-    // Android fires 'active' immediately on mount — we must ignore that first event
-    // or it will use startedAtRef from a previous attempt (which is null now, but
-    // belt-and-suspenders).
     let hasGoneToBackground = false;
 
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
@@ -1161,13 +1139,11 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
             aid,
             answersRef.current,
             currentIndexRef.current,
-            null
+            secondsLeftRef.current
           ).catch(() => {});
         }
       } else if (state === 'active' && hasGoneToBackground) {
-        // Returned from background — correct the timer using server started_at.
-        // startedAtRef and timeLimitSecondsRef are only set after handleStart
-        // succeeds, so they always belong to the current attempt.
+        // App returned from background — recalculate remaining time from server started_at
         if (
           phaseRef.current === 'active' &&
           startedAtRef.current !== null &&
@@ -1224,33 +1200,23 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       if (saved && saved.attempt_id === payload.attempt_id) {
         setAnswers(saved.answers);
         setCurrentIndex(saved.currentIndex);
+        // Restore timer from saved progress if available, otherwise recompute from started_at
+        if (saved.secondsLeft !== null && saved.secondsLeft !== undefined) {
+          if (hasTimeLimit) setSecondsLeft(saved.secondsLeft);
+        } else if (hasTimeLimit) {
+          const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
+          setSecondsLeft(Math.max(0, payload.time_limit_minutes * 60 - elapsed));
+        }
+      } else if (payload.resumed && hasTimeLimit) {
+        const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
+        setSecondsLeft(Math.max(0, payload.time_limit_minutes * 60 - elapsed));
+      } else if (hasTimeLimit) {
+        setSecondsLeft(payload.time_limit_minutes * 60);
       }
 
-      // Store started_at and time limit in refs so the AppState foreground handler
-      // can recompute remaining time whenever the student returns to the app.
+      // Store started_at and time limit in refs for AppState foreground recalculation
       startedAtRef.current = payload.started_at;
       timeLimitSecondsRef.current = hasTimeLimit ? payload.time_limit_minutes * 60 : null;
-
-      // Timer is ALWAYS computed from started_at so it keeps running
-      // even when the app is backgrounded or killed and relaunched.
-      if (hasTimeLimit) {
-        const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
-        const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
-
-        // If the time limit has already fully elapsed before the student even
-        // sees the first question, don't silently submit with 0 answers.
-        // Show a clear message instead.
-        if (remaining === 0) {
-          Alert.alert(
-            'Time Expired',
-            'The time limit for this test has already elapsed. Please contact your teacher.',
-          );
-          setStarting(false);
-          return;
-        }
-
-        setSecondsLeft(remaining);
-      }
 
       phaseRef.current = 'active';
       setPhase('active');
