@@ -154,14 +154,36 @@ function downloadIdCard(student: AdminStudent, schoolName: string) {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function FeeBadge({ paid }: { paid: boolean }) {
+function FeeBadge({ record }: { record: FeeRecord | undefined }) {
+  const paid = record?.fee_paid ?? false;
+  const total = record?.total_fee_amount != null ? Number(record.total_fee_amount) : null;
+  const amountPaid = record?.amount_paid != null ? Number(record.amount_paid) : 0;
+  const remaining = total !== null ? Math.max(0, total - amountPaid) : null;
+  const status = record?.payment_status ?? (paid ? 'paid' : 'unpaid');
+
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-      paid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-    }`}>
-      <span className={`w-1.5 h-1.5 rounded-full inline-block ${paid ? 'bg-green-500' : 'bg-red-400'}`} />
-      {paid ? 'Paid' : 'Unpaid'}
-    </span>
+    <div className="flex flex-col gap-0.5">
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium w-fit ${
+        status === 'paid' ? 'bg-green-100 text-green-700'
+        : status === 'partial' ? 'bg-yellow-100 text-yellow-700'
+        : 'bg-red-100 text-red-600'
+      }`}>
+        <span className={`w-1.5 h-1.5 rounded-full inline-block ${
+          status === 'paid' ? 'bg-green-500' : status === 'partial' ? 'bg-yellow-500' : 'bg-red-400'
+        }`} />
+        {status === 'paid' ? 'Paid' : status === 'partial' ? 'Partial' : 'Unpaid'}
+      </span>
+      {remaining !== null && remaining > 0 && (
+        <span className="text-xs text-red-600 font-medium pl-0.5">
+          ₹{remaining.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} due
+        </span>
+      )}
+      {remaining !== null && remaining === 0 && total !== null && (
+        <span className="text-xs text-green-600 pl-0.5">
+          ₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -301,7 +323,7 @@ function StudentsPageInner() {
 
   // ── Data state ──────────────────────────────────────────────────────────
   const [students, setStudents] = useState<AdminStudent[]>([]);
-  const [feeMap, setFeeMap] = useState<Record<string, boolean>>({});
+  const [feeMap, setFeeMap] = useState<Record<string, FeeRecord>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -410,8 +432,8 @@ function StudentsPageInner() {
     if (!token) return;
     try {
       const feesRes = await feesApi.list(token).catch(() => ({ data: [] as FeeRecord[] }));
-      const map: Record<string, boolean> = {};
-      for (const f of feesRes.data ?? []) map[f.student_id] = f.fee_paid;
+      const map: Record<string, FeeRecord> = {};
+      for (const f of feesRes.data ?? []) map[f.student_id] = f;
       setFeeMap(map);
     } catch { /* swallow */ }
   }, []);
@@ -641,7 +663,7 @@ function StudentsPageInner() {
                         <td className="px-4 py-3 text-gray-500">{s.roll_number ?? '—'}</td>
                         <td className="px-4 py-3 text-gray-600">{s.class_name}</td>
                         <td className="px-4 py-3 text-gray-600">{s.section ?? '—'}</td>
-                        <td className="px-4 py-3"><FeeBadge paid={feeMap[s.id] ?? false} /></td>
+                        <td className="px-4 py-3"><FeeBadge record={feeMap[s.id]} /></td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1.5">
                             <Link

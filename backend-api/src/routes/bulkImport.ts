@@ -154,9 +154,9 @@ function validateStudentName(name: unknown): string | null {
 }
 
 function validateRollNumber(roll: unknown): string | null {
-  if (typeof roll !== 'string' && typeof roll !== 'number') return 'Roll Number is required';
+  // Roll number is optional — skip validation if empty
+  if (roll === undefined || roll === null || String(roll).trim() === '') return null;
   const str = String(roll).trim();
-  if (!str) return 'Roll Number is required';
   if (!/^[a-zA-Z0-9]+$/.test(str)) return 'Roll Number must be alphanumeric only';
   return null;
 }
@@ -438,20 +438,22 @@ router.post(
       if (dobErr) errors.push(dobErr);
 
       // Normalize for duplicate checks
-      const rollStr  = String(rollNumber).trim().toLowerCase();
+      const rollStr  = String(rollNumber || '').trim().toLowerCase();
       const classStr = String(className).trim().toLowerCase();
-      const key      = `${rollStr}|${classStr}`;
+      const key      = rollStr ? `${rollStr}|${classStr}` : null;
       const phoneStr = String(parentPhone || '').trim();
 
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
 
-      // Check for roll number duplicates
-      if (seenInFile.has(key)) {
-        errors.push('Duplicate roll number within this file');
-        status = 'duplicate';
-      } else if (existingSet.has(key)) {
-        errors.push('Roll number already exists in database for this class');
-        status = 'duplicate';
+      // Check for roll number duplicates (only when roll number is provided)
+      if (key) {
+        if (seenInFile.has(key)) {
+          errors.push('Duplicate roll number within this file');
+          status = 'duplicate';
+        } else if (existingSet.has(key)) {
+          errors.push('Roll number already exists in database for this class');
+          status = 'duplicate';
+        }
       }
 
       // Check for phone number duplicates (only if phone is valid)
@@ -470,7 +472,7 @@ router.post(
       }
 
       if (status === 'valid') {
-        seenInFile.add(key);
+        if (key) seenInFile.add(key);
         if (phoneStr) seenPhonesInFile.add(phoneStr);
       }
 

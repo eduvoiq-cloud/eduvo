@@ -47,7 +47,7 @@ interface ImportResult {
 
 const COLUMNS = [
   { name: 'Student Name', required: true, note: 'Full name of the student' },
-  { name: 'Roll No', required: true, note: 'Unique roll number within the class' },
+  { name: 'Roll No', required: false, note: 'Unique roll number within the class (optional)' },
   { name: 'Class', required: true, note: 'e.g. Grade 5, Class 10' },
   { name: 'Division', required: true, note: 'Section/Division e.g. A, B' },
   { name: 'Parent Name', required: false, note: 'Full name of parent/guardian' },
