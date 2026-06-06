@@ -145,6 +145,33 @@ interface PreviewResponse {
   rows: PreviewRow[];
 }
 
+// ── Cell value helper ─────────────────────────────────────────────────────────
+/**
+ * ExcelJS can return cell values as objects (e.g. hyperlinked emails come back
+ * as { text: 'user@example.com', hyperlink: 'mailto:...' }, rich-text cells as
+ * { richText: [{text:'...'}] }, formulas as { result: '...' }, etc.).
+ * This helper extracts a plain string in all those cases.
+ */
+function cellToString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    // Hyperlink cell: { text: '...', hyperlink: '...' }
+    if (typeof obj['text'] === 'string') return obj['text'];
+    // Rich-text cell: { richText: [{ text: '...' }] }
+    if (Array.isArray(obj['richText'])) {
+      return (obj['richText'] as Array<{ text?: string }>)
+        .map((r) => r.text ?? '')
+        .join('');
+    }
+    // Formula cell: { formula: '...', result: '...' }
+    if (obj['result'] !== undefined) return cellToString(obj['result']);
+  }
+  return String(value);
+}
+
 // ── Validation helpers ────────────────────────────────────────────────────────
 function validateStudentName(name: unknown): string | null {
   if (typeof name !== 'string' || !name.trim()) return 'Student Name is required';
@@ -403,13 +430,13 @@ router.post(
       const rowNumber = i + 2; // Excel row number (header is row 1)
 
       // Columns: Student Name | Roll Number | Class | Division | Parent Name | Parent Phone | Date of Birth
-      const studentName = row[0];
-      const rollNumber  = row[1];
-      const className   = row[2];
-      const division    = row[3];
-      const parentName  = row[4];
-      const parentPhone = row[5];
-      const dateOfBirth = row[6];
+      const studentName = cellToString(row[0]);
+      const rollNumber  = cellToString(row[1]);
+      const className   = cellToString(row[2]);
+      const division    = cellToString(row[3]);
+      const parentName  = cellToString(row[4]);
+      const parentPhone = cellToString(row[5]);
+      const dateOfBirth = cellToString(row[6]);
 
       const errors: string[] = [];
 
@@ -438,10 +465,10 @@ router.post(
       if (dobErr) errors.push(dobErr);
 
       // Normalize for duplicate checks
-      const rollStr  = String(rollNumber || '').trim().toLowerCase();
-      const classStr = String(className).trim().toLowerCase();
+      const rollStr  = rollNumber.trim().toLowerCase();
+      const classStr = className.trim().toLowerCase();
       const key      = rollStr ? `${rollStr}|${classStr}` : null;
-      const phoneStr = String(parentPhone || '').trim();
+      const phoneStr = parentPhone.trim();
 
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
 
@@ -479,13 +506,13 @@ router.post(
       previewRows.push({
         row_number: rowNumber,
         data: {
-          name:          String(studentName || '').trim(),
-          roll_number:   String(rollNumber || '').trim(),
-          class:         String(className || '').trim(),
-          division:      String(division || '').trim().toUpperCase(),
-          parent_name:   String(parentName || '').trim(),
+          name:          studentName.trim(),
+          roll_number:   rollNumber.trim(),
+          class:         className.trim(),
+          division:      division.trim().toUpperCase(),
+          parent_name:   parentName.trim(),
           parent_phone:  phoneStr,
-          date_of_birth: parsedDob ?? String(dateOfBirth || '').trim(), // ISO if valid, raw if not
+          date_of_birth: parsedDob ?? dateOfBirth.trim(), // ISO if valid, raw if not
         },
         status,
         errors,
@@ -761,12 +788,12 @@ router.post(
       const row = dataRows[i] as unknown[];
       allRawRows.push({
         row_number: i + 2,
-        name:      String(row[0] ?? '').trim(),
-        email:     String(row[1] ?? '').trim(),
-        phone:     String(row[2] ?? '').trim(),
-        class:     String(row[3] ?? '').trim(),
-        division:  String(row[4] ?? '').trim().toUpperCase(),
-        subject:   String(row[5] ?? '').trim(),
+        name:      cellToString(row[0]).trim(),
+        email:     cellToString(row[1]).trim(),
+        phone:     cellToString(row[2]).trim(),
+        class:     cellToString(row[3]).trim(),
+        division:  cellToString(row[4]).trim().toUpperCase(),
+        subject:   cellToString(row[5]).trim(),
       });
     }
 
