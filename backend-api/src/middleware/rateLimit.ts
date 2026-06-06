@@ -93,6 +93,40 @@ export const templateDownloadRateLimit = rateLimit({
 });
 
 /**
+ * Forgot password rate limit — max 5 per hour per IP.
+ * Prevents email spam / user enumeration attacks.
+ */
+export const forgotPasswordRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  keyGenerator: (req: Request) => `forgot_pwd:${req.ip ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  message: {
+    success: false,
+    message: 'Too many password reset requests. Please try again later.',
+  },
+});
+
+/**
+ * Test submission rate limit — max 30 per hour per student.
+ * Prevents bulk/scripted test submissions.
+ */
+export const testSubmitRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30,
+  keyGenerator: (req: Request) => `test_submit:${req.ip ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  message: {
+    success: false,
+    message: 'Too many test submissions. Please try again later.',
+  },
+});
+
+/**
  * Legacy alias kept for any routes that still import authRateLimit.
  * Points to loginRateLimit behaviour (10/hour per IP).
  * @deprecated Use loginRateLimit or registerRateLimit instead.

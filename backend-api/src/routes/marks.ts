@@ -15,7 +15,7 @@ router.use(authenticateAny);
 const createMarkSchema = z.object({
   student_id: z.string().uuid(),
   subject: z.string().min(1).max(100),
-  score: z.number().min(0).max(100),
+  score: z.number().min(0),
   max_score: z.number().min(1).default(100),
   term: z.string().min(1).max(50),
   exam_type: z.enum(['quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test']),
@@ -60,8 +60,9 @@ router.get('/', async (req: Request, res: Response) => {
       : query.in('term', termValues);
   }
 
-  // ── Student token: filter to their own records ──────────────────────────
+  // ── Student token: filter strictly to their own records ─────────────────
   if (req.tokenType === 'student') {
+    // Ignore any student_id in the query string — always use the token owner's ID
     query = query.eq('student_id', req.student!.id);
   } else {
     // ── Staff token ─────────────────────────────────────────────────────────
@@ -72,7 +73,29 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    if (student_id) query = query.eq('student_id', student_id);
+    // Teachers and school admins are scoped to their own school
+    if (role === 'teacher' || role === 'schooladmin') {
+      const schoolId = req.user!.school_id;
+      if (!schoolId) {
+        sendError(res, 'Your account is not linked to a school', 403);
+        return;
+      }
+      // Only fetch marks for students in the teacher's school
+      const { data: schoolStudents } = await supabaseAdmin
+        .from('students')
+        .select('id')
+        .eq('school_id', schoolId)
+        .eq('is_deleted', false);
+      const schoolStudentIds = (schoolStudents ?? []).map((s: { id: string }) => s.id);
+      if (schoolStudentIds.length === 0) {
+        sendSuccess(res, []);
+        return;
+      }
+      query = query.in('student_id', schoolStudentIds);
+      if (student_id) query = query.eq('student_id', student_id);
+    } else if (role !== 'superadmin') {
+      if (student_id) query = query.eq('student_id', student_id);
+    }
 
     // Logged-in as student role via staff token (legacy) — filter to own marks
     if (role === 'student') {
@@ -127,6 +150,20 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     return;
   }
 
+  // Verify the student belongs to the requesting user's school (non-superadmin)
+  if (req.user!.role !== 'superadmin') {
+    const { data: student } = await supabaseAdmin
+      .from('students')
+      .select('school_id')
+      .eq('id', parsed.data.student_id)
+      .maybeSingle();
+
+    if (!student || student.school_id !== req.user!.school_id) {
+      sendError(res, 'Student not found in your school', 403);
+      return;
+    }
+  }
+
   const { data, error } = await supabaseAdmin
     .from('marks')
     .insert({ ...parsed.data, term: normaliseTerm(parsed.data.term) ?? parsed.data.term, recorded_by: req.user!.id })
@@ -165,14 +202,30 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
     return;
   }
 
-  // If only score is provided, fetch existing max_score to validate
+  // Fetch the existing mark and verify the student belongs to the requesting user's school
+  const { data: existing } = await supabaseAdmin
+    .from('marks')
+    .select('id, max_score, student_id, students!inner(school_id)')
+    .eq('id', req.params.id)
+    .maybeSingle();
+
+  if (!existing) {
+    sendError(res, 'Mark not found', 404);
+    return;
+  }
+
+  // Non-superadmin users can only update marks for students in their school
+  if (req.user!.role !== 'superadmin') {
+    const studentSchool = (existing as Record<string, unknown>).students as { school_id: string } | null;
+    if (!studentSchool || studentSchool.school_id !== req.user!.school_id) {
+      sendError(res, 'Access denied', 403);
+      return;
+    }
+  }
+
+  // If only score is provided, validate against existing max_score
   if (parsed.data.score !== undefined && parsed.data.max_score === undefined) {
-    const { data: existing } = await supabaseAdmin
-      .from('marks')
-      .select('max_score')
-      .eq('id', req.params.id)
-      .maybeSingle();
-    if (existing && parsed.data.score > (existing as { max_score: number }).max_score) {
+    if (parsed.data.score > (existing as { max_score: number }).max_score) {
       sendError(res, `Score (${parsed.data.score}) cannot exceed existing max score (${(existing as { max_score: number }).max_score})`, 400);
       return;
     }
@@ -197,6 +250,26 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
 
 /** DELETE /api/marks/:id — superadmin, schooladmin only */
 router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  // Verify the mark belongs to the requesting user's school before deleting
+  if (req.user!.role !== 'superadmin') {
+    const { data: existing } = await supabaseAdmin
+      .from('marks')
+      .select('id, students!inner(school_id)')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (!existing) {
+      sendError(res, 'Mark not found', 404);
+      return;
+    }
+
+    const studentSchool = (existing as Record<string, unknown>).students as { school_id: string } | null;
+    if (!studentSchool || studentSchool.school_id !== req.user!.school_id) {
+      sendError(res, 'Access denied', 403);
+      return;
+    }
+  }
+
   const { error } = await supabaseAdmin
     .from('marks')
     .delete()

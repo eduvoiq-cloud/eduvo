@@ -28,7 +28,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Resend } from 'resend';
 import { supabase, supabaseAdmin } from '../config/supabase';
-import { loginRateLimit, studentLoginRateLimit } from '../middleware/rateLimit';
+import { loginRateLimit, studentLoginRateLimit, forgotPasswordRateLimit } from '../middleware/rateLimit';
 import {
   authenticate,
   authenticateStudent,
@@ -497,7 +497,7 @@ const forgotPasswordSchema = z.object({
   email: z.string().email().max(254),
 });
 
-router.post('/staff/forgot-password', async (req: Request, res: Response) => {
+router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Request, res: Response) => {
   const parsed = forgotPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());

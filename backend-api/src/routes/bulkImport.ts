@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
 import rateLimit from 'express-rate-limit';
@@ -296,12 +296,12 @@ function validateAssignedClasses(classes: unknown): string | null {
 }
 
 // ── GET /api/import/students/template ─────────────────────────────────────────
-router.get('/students/template', requireRole('superadmin', 'schooladmin'), templateDownloadRateLimit, (_req: Request, res: Response) => {
-  const wb = XLSX.utils.book_new();
+router.get('/students/template', requireRole('superadmin', 'schooladmin'), templateDownloadRateLimit, async (_req: Request, res: Response) => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Students');
 
-  // Header row — Parent Phone IS the login phone number for the student account.
-  // Date of Birth format: DD/MM/YYYY
-  const headers = [
+  // Header row
+  ws.addRow([
     'Student Name',
     'Roll Number',
     'Class',
@@ -309,24 +309,17 @@ router.get('/students/template', requireRole('superadmin', 'schooladmin'), templ
     'Parent Name',
     'Parent Phone',
     'Date of Birth (DD/MM/YYYY)',
-  ];
+  ]);
 
   // Example rows
-  const exampleRows = [
-    ['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', '15/08/2010'],
-    ['Alice Smith', 'R002', '10', 'B', 'Bob Smith', '9876543211', '22/03/2011'],
-  ];
+  ws.addRow(['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', '15/08/2010']);
+  ws.addRow(['Alice Smith', 'R002', '10', 'B', 'Bob Smith', '9876543211', '22/03/2011']);
 
-  const data = [headers, ...exampleRows];
-  const ws = XLSX.utils.aoa_to_sheet(data);
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Students');
-
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const buffer = await wb.xlsx.writeBuffer();
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename=student_import_template.xlsx');
-  res.send(buffer);
+  res.send(buffer as unknown as Buffer);
 });
 
 // ── POST /api/import/students/preview ─────────────────────────────────────────
@@ -347,17 +340,21 @@ router.post(
       return;
     }
 
-    // Parse workbook
-    let wb: XLSX.WorkBook;
+    // Parse workbook with ExcelJS (safer than xlsx for untrusted input)
+    let rawRows: unknown[][] = [];
     try {
-      wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(req.file.buffer.buffer.slice(req.file.buffer.byteOffset, req.file.buffer.byteOffset + req.file.buffer.byteLength) as ArrayBuffer);
+      const ws = wb.worksheets[0];
+      if (!ws) throw new Error('No worksheet found');
+      ws.eachRow((row, _rowNumber) => {
+        const values = (row.values as unknown[]).slice(1); // ExcelJS rows are 1-indexed, index 0 is empty
+        rawRows.push(values);
+      });
     } catch {
       sendError(res, 'Failed to parse Excel file. Ensure it is a valid .xlsx or .xls file.', 400);
       return;
     }
-
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
 
     // Skip header row (index 0)
     const dataRows = rawRows.slice(1).filter((row) => {
@@ -660,49 +657,31 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
 });
 
 // ── GET /api/import/teachers/template ─────────────────────────────────────────
-router.get('/teachers/template', requireRole('superadmin', 'schooladmin'), templateDownloadRateLimit, (_req: Request, res: Response) => {
-  const wb = XLSX.utils.book_new();
+router.get('/teachers/template', requireRole('superadmin', 'schooladmin'), templateDownloadRateLimit, async (_req: Request, res: Response) => {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Teachers');
 
-  // ── Headers and sample rows ──────────────────────────────────────────────────
-  // A teacher can appear multiple times (same name/email/phone) with different
-  // class/division/subject rows. All rows with the same email are merged into
-  // one account with multiple teacher_assignment rows.
-  const headers = [
-    'name',        // required — Full name
-    'email',       // required — Email address (used as login username)
-    'phone',       // required — Phone number (auto-set as default password)
-    'class',       // optional — Class number e.g. 10
-    'division',    // optional — Division/section e.g. A
-    'subject',     // optional — Subject they teach e.g. Maths
+  // Headers
+  ws.addRow(['name', 'email', 'phone', 'class', 'division', 'subject']);
+
+  // Example rows
+  ws.addRow(['Priya Shah',  'priya@school.com',  '9876543210', '10', 'A', 'Maths']);
+  ws.addRow(['Priya Shah',  'priya@school.com',  '9876543210', '10', 'B', 'Maths']);
+  ws.addRow(['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'A', 'Hindi']);
+  ws.addRow(['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'B', 'Hindi']);
+  ws.addRow(['Sita Verma',  'sita@school.com',   '9988776655',  '',   '',  '']);
+
+  // Column widths
+  ws.columns = [
+    { width: 20 }, { width: 28 }, { width: 14 },
+    { width: 8 },  { width: 10 }, { width: 16 },
   ];
 
-  const exampleRows = [
-    ['Priya Shah',  'priya@school.com',  '9876543210', '10', 'A', 'Maths'],
-    ['Priya Shah',  'priya@school.com',  '9876543210', '10', 'B', 'Maths'],
-    ['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'A', 'Hindi'],
-    ['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'B', 'Hindi'],
-    ['Sita Verma',  'sita@school.com',   '9988776655',  '',   '',  ''],     // no assignment yet
-  ];
-
-  const ws = XLSX.utils.aoa_to_sheet([headers, ...exampleRows]);
-
-  // Widen columns for readability
-  ws['!cols'] = [
-    { wch: 20 }, // name
-    { wch: 28 }, // email
-    { wch: 14 }, // phone
-    { wch: 8 },  // class
-    { wch: 10 }, // division
-    { wch: 16 }, // subject
-  ];
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Teachers');
-
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const buffer = await wb.xlsx.writeBuffer();
 
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename=teacher_import_template.xlsx');
-  res.send(buffer);
+  res.send(buffer as unknown as Buffer);
 });
 
 // ── POST /api/import/teachers/preview ─────────────────────────────────────────
@@ -723,18 +702,22 @@ router.post(
       return;
     }
 
-    let wb: XLSX.WorkBook;
+    let rawRowsTeacher: unknown[][] = [];
     try {
-      wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(req.file.buffer.buffer.slice(req.file.buffer.byteOffset, req.file.buffer.byteOffset + req.file.buffer.byteLength) as ArrayBuffer);
+      const ws = wb.worksheets[0];
+      if (!ws) throw new Error('No worksheet found');
+      ws.eachRow((row, _rowNumber) => {
+        const values = (row.values as unknown[]).slice(1);
+        rawRowsTeacher.push(values);
+      });
     } catch {
       sendError(res, 'Failed to parse Excel file. Ensure it is a valid .xlsx or .xls file.', 400);
       return;
     }
 
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
-
-    const dataRows = rawRows.slice(1).filter((row) => {
+    const dataRows = rawRowsTeacher.slice(1).filter((row) => {
       return (row as unknown[]).some((cell) => cell !== '' && cell !== null && cell !== undefined);
     });
 
@@ -1136,61 +1119,28 @@ router.get(
       return;
     }
 
-    // Build Excel workbook
-    const wb = XLSX.utils.book_new();
+    // Build Excel workbook with ExcelJS
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Marks');
 
     // Rows 1-3: metadata header
-    const metaRows: unknown[][] = [
-      [`Class: ${className} Section: ${section}`],
-      [`Subject: ${subject.name}`],
-      [`Exam Type: ${exam_type} Term: ${term}`],
-      [], // Row 4: blank spacer
-      ['Roll No', 'Student Name', 'Score', 'Max Score'], // Row 5: column headers
-    ];
+    ws.addRow([`Class: ${className} Section: ${section}`]);
+    ws.addRow([`Subject: ${subject.name}`]);
+    ws.addRow([`Exam Type: ${exam_type} Term: ${term}`]);
+    ws.addRow([]); // blank spacer
+    ws.addRow(['Roll No', 'Student Name', 'Score', 'Max Score']); // column headers
 
-    // Rows 6+: student data (Score empty, Max Score pre-filled with 100)
-    const studentRows = (students as { id: string; full_name: string; roll_number: string }[]).map(
-      (s) => [s.roll_number, s.full_name, '', 100]
-    );
-
-    const allRows = [...metaRows, ...studentRows];
-    const ws = XLSX.utils.aoa_to_sheet(allRows);
-
-    // Lock columns A (Roll No) and B (Student Name) — mark as read-only via cell protection
-    // XLSX.js doesn't support per-cell protection natively, but we can set sheet protection
-    // and mark the score/max_score columns as unlocked. This is the standard approach.
-    ws['!sheetProtection'] = {
-      sheet: true,
-      password: '',
-      selectLockedCells: true,
-      selectUnlockedCells: true,
-    };
-
-    // Mark Score (col C) and Max Score (col D) cells as unlocked for data rows
-    const dataStartRow = 5; // 0-indexed row 5 = Excel row 6
-    for (let i = 0; i < students.length; i++) {
-      const rowIdx = dataStartRow + i;
-      const scoreCell = XLSX.utils.encode_cell({ r: rowIdx, c: 2 }); // C
-      const maxCell   = XLSX.utils.encode_cell({ r: rowIdx, c: 3 }); // D
-
-      if (!ws[scoreCell]) ws[scoreCell] = { t: 'z', v: '' };
-      if (!ws[maxCell])   ws[maxCell]   = { t: 'n', v: 100 };
-
-      ws[scoreCell].s = { protection: { locked: false } };
-      ws[maxCell].s   = { protection: { locked: false } };
+    // Student data rows
+    for (const s of (students as { id: string; full_name: string; roll_number: string }[])) {
+      ws.addRow([s.roll_number, s.full_name, '', 100]);
     }
 
-    // Set column widths
-    ws['!cols'] = [
-      { wch: 14 }, // Roll No
-      { wch: 28 }, // Student Name
-      { wch: 10 }, // Score
-      { wch: 12 }, // Max Score
+    // Column widths
+    ws.columns = [
+      { width: 14 }, { width: 28 }, { width: 10 }, { width: 12 },
     ];
 
-    XLSX.utils.book_append_sheet(wb, ws, 'Marks');
-
-    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    const buffer = await wb.xlsx.writeBuffer();
 
     const filename = `marks_${className}${section}_${subject.name}_${exam_type}_${term}.xlsx`
       .replace(/\s+/g, '_')
@@ -1198,7 +1148,7 @@ router.get(
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
-    res.send(buffer);
+    res.send(buffer as unknown as Buffer);
   }
 );
 
@@ -1250,21 +1200,24 @@ router.post(
       }
     }
 
-    // Parse workbook
-    let wb: XLSX.WorkBook;
+    // Parse workbook with ExcelJS (safer for untrusted input)
+    let rawRowsMarks: unknown[][] = [];
     try {
-      wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(req.file.buffer.buffer.slice(req.file.buffer.byteOffset, req.file.buffer.byteOffset + req.file.buffer.byteLength) as ArrayBuffer);
+      const ws = wb.worksheets[0];
+      if (!ws) throw new Error('No worksheet found');
+      ws.eachRow((row, _rowNumber) => {
+        const values = (row.values as unknown[]).slice(1);
+        rawRowsMarks.push(values);
+      });
     } catch {
       sendError(res, 'Failed to parse Excel file. Ensure it is a valid .xlsx or .xls file.', 400);
       return;
     }
 
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    // header: 1 → raw arrays; defval: '' → empty cells become ''
-    const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' });
-
     // Skip rows 1-5 (indices 0-4): metadata + column headers
-    const dataRows = rawRows.slice(5).filter((row) =>
+    const dataRows = rawRowsMarks.slice(5).filter((row) =>
       (row as unknown[]).some((cell) => cell !== '' && cell !== null && cell !== undefined)
     );
 

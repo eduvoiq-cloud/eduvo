@@ -13,6 +13,24 @@ process.on('unhandledRejection', (reason: unknown) => {
   process.exit(1);
 });
 
+// ── Startup environment variable validation ───────────────────────────────────
+// Fail fast if critical env vars are missing before any network connections.
+const REQUIRED_ENV_VARS = [
+  'SUPABASE_URL',
+  'SUPABASE_ANON_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'JWT_SECRET',
+] as const;
+
+const missingVars = REQUIRED_ENV_VARS.filter((v) => !process.env[v]);
+if (missingVars.length > 0) {
+  console.error(
+    `[fatal] Missing required environment variables: ${missingVars.join(', ')}\n` +
+    'Set them in Railway (production) or .env (local) and restart the server.'
+  );
+  process.exit(1);
+}
+
 import { execSync } from 'child_process';
 import * as net from 'net';
 import express, { Request, Response, NextFunction } from 'express';
@@ -179,21 +197,28 @@ async function startServer() {
   // ── CORS ────────────────────────────────────────────────────────────────────
   // Allowed origins are read from CORS_ORIGINS env var (comma-separated).
   // Falls back to localhost in development so the server is usable without config.
-  const allowedOrigins = process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
-    : [
-        'http://localhost:3000',
-        'http://localhost:3001',
-        'https://hoppscotch.io',
-        'chrome-extension://amknoiejhlmhancpahfcfcfhllgkpbld',
-      ];
-
+  // In production (NODE_ENV=production) CORS_ORIGINS MUST be set — no fallback.
   const isDev = (process.env.NODE_ENV ?? 'development') !== 'production';
+
+  let allowedOrigins: string[];
+  if (process.env.CORS_ORIGINS) {
+    allowedOrigins = process.env.CORS_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean);
+  } else if (isDev) {
+    allowedOrigins = [
+      'http://localhost:3000',
+      'http://localhost:3001',
+    ];
+    console.warn('[cors] CORS_ORIGINS not set — allowing localhost only (dev mode)');
+  } else {
+    // Production with no CORS_ORIGINS: refuse all cross-origin requests
+    allowedOrigins = [];
+    console.error('[cors] CORS_ORIGINS is not set in production! Cross-origin requests will be blocked.');
+  }
 
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, Postman)
+        // Allow requests with no origin (mobile apps, curl, Postman, server-to-server)
         if (!origin) return callback(null, true);
 
         // Exact match against the configured allow-list
@@ -201,11 +226,6 @@ async function startServer() {
 
         // Dev-only: allow any localhost port (http or https)
         if (isDev && /^https?:\/\/localhost(:\d+)?$/.test(origin)) {
-          return callback(null, true);
-        }
-
-        // Dev-only: allow browser extension origins (e.g. chrome-extension://, moz-extension://)
-        if (isDev && /^(chrome-extension|moz-extension|ms-browser-extension):\/\//.test(origin)) {
           return callback(null, true);
         }
 
@@ -219,14 +239,6 @@ async function startServer() {
 
   // ── Body parsing ─────────────────────────────────────────────────────────────
   app.use(express.json());
-
-  // ── Request logging (temporary debug) ────────────────────────────────────────
-  app.use((req: Request, _res: Response, next: NextFunction) => {
-    if (req.path.includes('/tests')) {
-      console.log(`[REQ] ${req.method} ${req.path}`, JSON.stringify(req.body ?? {}));
-    }
-    next();
-  });
 
   // ── Global rate limit (applies to every route) ───────────────────────────────
   app.use(globalRateLimit);

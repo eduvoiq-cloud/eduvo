@@ -110,7 +110,7 @@ export async function authenticate(
   // ── Fetch profile from users table ───────────────────────────────────────
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('users')
-    .select('id, name, email, role, school_id')
+    .select('id, name, email, role, school_id, must_reset_password, is_deleted')
     .eq('id', authUser.id)
     .single();
 
@@ -122,6 +122,21 @@ export async function authenticate(
   if ((profile as Record<string, unknown>).is_deleted === true) {
     sendError(res, 'This account has been deactivated.', 403);
     return;
+  }
+
+  // Block routes if the user must reset their password first.
+  // Allow only: POST /api/auth/staff/change-password and GET /api/auth/me
+  if ((profile as Record<string, unknown>).must_reset_password === true) {
+    const allowedPaths = [
+      '/api/auth/staff/change-password',
+      '/api/auth/me',
+      '/api/auth/logout',
+    ];
+    const isAllowed = allowedPaths.some((p) => req.path === p || req.originalUrl.endsWith(p));
+    if (!isAllowed) {
+      sendError(res, 'You must change your password before accessing this resource.', 403);
+      return;
+    }
   }
 
   req.user = {
@@ -182,6 +197,21 @@ export async function authenticateStudent(
   if (error || !student) {
     sendError(res, 'Student not found', 403);
     return;
+  }
+
+  // Block routes until the student changes their initial password.
+  // Allow only: POST /api/auth/student/change-password, GET /api/auth/me, POST /api/auth/logout
+  if (student.is_first_login === true) {
+    const allowedPaths = [
+      '/api/auth/student/change-password',
+      '/api/auth/me',
+      '/api/auth/logout',
+    ];
+    const isAllowed = allowedPaths.some((p) => req.path === p || req.originalUrl.endsWith(p));
+    if (!isAllowed) {
+      sendError(res, 'You must change your password before accessing this resource.', 403);
+      return;
+    }
   }
 
   req.student = {
@@ -255,7 +285,7 @@ export async function authenticateAny(
 
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('users')
-    .select('id, name, email, role, school_id')
+    .select('id, name, email, role, school_id, must_reset_password, is_deleted')
     .eq('id', authData.user.id)
     .single();
 

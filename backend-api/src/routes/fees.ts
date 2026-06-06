@@ -69,9 +69,12 @@ const toggleFeeSchema = z.object({
 const updatePaymentSchema = z.object({
   term: z.string().max(50).optional(),
   academic_year: z.string().max(20).optional(),
-  total_fee_amount: z.number().min(0),
-  amount_paid: z.number().min(0),
+  total_fee_amount: z.number().min(0, 'Total fee amount cannot be negative'),
+  amount_paid: z.number().min(0, 'Amount paid cannot be negative'),
   notes: z.string().max(500).optional(),
+}).refine((data) => data.amount_paid <= data.total_fee_amount, {
+  message: 'Amount paid cannot exceed total fee amount',
+  path: ['amount_paid'],
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

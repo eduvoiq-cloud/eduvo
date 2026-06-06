@@ -184,9 +184,26 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
     return;
   }
 
+  // Non-superadmin users can only update students in their own school
+  if (req.user!.role !== 'superadmin') {
+    const { data: existing } = await supabaseAdmin
+      .from('students')
+      .select('school_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (!existing || existing.school_id !== req.user!.school_id) {
+      sendError(res, 'Student not found or access denied', 403);
+      return;
+    }
+  }
+
+  // Prevent role escalation — strip any attempt to change school_id via this endpoint
+  const { school_id: _removed, ...safeUpdate } = parsed.data as Record<string, unknown>;
+
   const { data, error } = await supabaseAdmin
     .from('students')
-    .update(parsed.data)
+    .update(safeUpdate)
     .eq('id', req.params.id)
     .select()
     .single();

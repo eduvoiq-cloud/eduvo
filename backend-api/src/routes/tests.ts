@@ -6,6 +6,7 @@ import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { normaliseTerm } from '../utils/term';
 import { getTokensForStudents, sendPushMulticast } from '../services/fcmService';
+import { testSubmitRateLimit } from '../middleware/rateLimit';
 
 const router = Router();
 
@@ -45,7 +46,10 @@ const submitAttemptSchema = z.object({
   answers: z.array(z.object({
     question_id: z.string().uuid(),
     selected_option: z.enum(['a', 'b', 'c', 'd']).optional(),
-    theory_answer: z.string().optional(),
+    // Sanitize theory answers: strip HTML tags, limit length to 5000 chars
+    theory_answer: z.string().max(5000).transform((s) =>
+      s.replace(/<[^>]*>/g, '').trim()
+    ).optional(),
   })).min(1),
 });
 
@@ -679,7 +683,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
  * Theory answers stored for teacher marking later.
  * Auto-submits if time limit exceeded.
  */
-router.post('/attempt/submit', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+router.post('/attempt/submit', authenticateStudent, requireRole('student'), testSubmitRateLimit, async (req: Request, res: Response) => {
   const parsed = submitAttemptSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -916,8 +920,29 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
     }
   }
 
-  // Update each theory answer's marks_awarded
+  // Update each theory answer's marks_awarded — validate against question max marks
   for (const { question_id, marks_awarded } of theory_marks) {
+    // Fetch question to verify marks_awarded doesn't exceed question max
+    const { data: question } = await supabaseAdmin
+      .from('test_questions')
+      .select('marks')
+      .eq('id', question_id)
+      .maybeSingle()
+      .then(async (res) => {
+        if (res.data) return res;
+        // Fallback to legacy questions table
+        return supabaseAdmin.from('questions').select('marks').eq('id', question_id).maybeSingle();
+      });
+
+    if (question && marks_awarded > (question as { marks: number }).marks) {
+      sendError(
+        res,
+        `Marks awarded (${marks_awarded}) cannot exceed question max marks (${(question as { marks: number }).marks}) for question ${question_id}`,
+        400
+      );
+      return;
+    }
+
     const { error: uErr } = await supabaseAdmin
       .from('student_answers')
       .update({ marks_awarded })
