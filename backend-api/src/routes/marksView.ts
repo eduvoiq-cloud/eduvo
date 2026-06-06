@@ -3,6 +3,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError } from '../utils/response';
+import { termFilterValues } from '../utils/term';
 
 const router = Router();
 
@@ -113,7 +114,12 @@ router.get('/class', async (req: Request, res: Response) => {
     .in('student_id', studentIds)
     .order('created_at', { ascending: false });
 
-  if (term) marksQuery = marksQuery.eq('term', term);
+  if (term) {
+    const termValues = termFilterValues(term);
+    marksQuery = termValues.length === 1
+      ? marksQuery.eq('term', termValues[0])
+      : marksQuery.in('term', termValues);
+  }
   if (exam_type) marksQuery = marksQuery.eq('exam_type', exam_type);
 
   const { data: marks, error: marksError } = await marksQuery;
@@ -123,16 +129,40 @@ router.get('/class', async (req: Request, res: Response) => {
     return;
   }
 
-  // Fetch submitted test attempts for all students in one query
-  const { data: attempts } = await supabaseAdmin
+  // Fetch submitted test attempts for all students.
+  // When term or exam_type filters are active, join with the tests table so
+  // the submission count reflects only tests matching those filters.
+  let attemptsQuery = supabaseAdmin
     .from('test_attempts')
-    .select('student_id, test_id, mcq_score, total_score, is_submitted')
+    .select('student_id, test_id, mcq_score, total_score, is_submitted, tests!test_attempts_test_id_fkey(term, exam_type)')
     .in('student_id', studentIds)
     .eq('is_submitted', true);
 
-  // Build attempt count map: student_id -> number of submitted attempts
+  const { data: rawAttempts } = await attemptsQuery;
+
+  type AttemptWithTest = {
+    student_id: string;
+    tests: { term: string | null; exam_type: string | null } | null;
+  };
+
+  // supabase-js returns the FK join as an object (not array) when using the fkey hint
+  const typedAttempts = (rawAttempts ?? []) as unknown as AttemptWithTest[];
+
+  // Filter attempts by term/exam_type if filters are active
+  const termValues = term ? termFilterValues(term) : null;
+  const filteredAttempts = typedAttempts.filter((a) => {
+    // supabase-js may return tests as object or array depending on join cardinality
+    const testData = Array.isArray(a.tests) ? (a.tests as Array<{ term: string | null; exam_type: string | null }>)[0] ?? null : a.tests;
+    const testTerm = testData?.term ?? null;
+    const testExamType = testData?.exam_type ?? null;
+    if (termValues && testTerm && !termValues.includes(testTerm)) return false;
+    if (exam_type && testExamType !== exam_type) return false;
+    return true;
+  });
+
+  // Build attempt count map: student_id -> number of submitted attempts (respecting filters)
   const attemptCountByStudent: Record<string, number> = {};
-  for (const a of (attempts ?? []) as Array<{ student_id: string }>) {
+  for (const a of (filteredAttempts as Array<{ student_id: string }>) ?? []) {
     attemptCountByStudent[a.student_id] = (attemptCountByStudent[a.student_id] ?? 0) + 1;
   }
 
@@ -245,7 +275,12 @@ router.get('/student/:id', async (req: Request, res: Response) => {
     .eq('student_id', id)
     .order('subject', { ascending: true });
 
-  if (term) marksQuery = marksQuery.eq('term', term);
+  if (term) {
+    const termValues = termFilterValues(term);
+    marksQuery = termValues.length === 1
+      ? marksQuery.eq('term', termValues[0])
+      : marksQuery.in('term', termValues);
+  }
   if (exam_type) marksQuery = marksQuery.eq('exam_type', exam_type);
 
   const { data: marks, error: marksError } = await marksQuery;

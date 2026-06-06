@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { normaliseTerm } from '../utils/term';
 
 const router = Router();
 
@@ -155,7 +156,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       subject_id: testFields.subject_id,
       class:   testFields.class,       // DB column is "class"
       section: testFields.section,
-      term:    testFields.term,
+      term:    normaliseTerm(testFields.term) ?? testFields.term,
       date:    testFields.date,
       exam_type: testFields.exam_type ?? 'class_test',
       available_from:  testFields.available_from ?? null,
@@ -274,7 +275,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   const { data: tests, error: tErr } = await supabaseAdmin
     .from('tests')
     .select(`
-      id, title, subject_id, date, time_limit_minutes,
+      id, title, subject_id, date, term, time_limit_minutes,
       available_from, available_until,
       questions:test_questions(count)
     `)
@@ -290,6 +291,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     title: t.title,
     subject_id: t.subject_id,
     date: t.date,
+    term: t.term ?? null,
     time_limit_minutes: t.time_limit_minutes,
     available_from: t.available_from ?? null,
     available_until: t.available_until ?? null,
@@ -306,11 +308,11 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   const studentId = studentRecord.id;
   const testIds = result.map((t) => t.id);
 
-  // Fetch attempt status and restrictions in parallel
-  const [attemptsResult, restrictionsResult] = await Promise.all([
+  // Fetch attempt status, scores, and restrictions in parallel
+  const [attemptsResult, restrictionsResult, marksResult] = await Promise.all([
     supabaseAdmin
       .from('test_attempts')
-      .select('test_id, is_submitted')
+      .select('id, test_id, is_submitted, mcq_score, total_score')
       .eq('student_id', studentId)
       .in('test_id', testIds),
     supabaseAdmin
@@ -318,22 +320,54 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       .select('test_id')
       .eq('student_id', studentId)
       .in('test_id', testIds),
+    supabaseAdmin
+      .from('marks')
+      .select('notes, max_score')
+      .eq('student_id', studentId)
+      .like('notes', 'auto:attempt:%'),
   ]);
 
-  const attemptMap = new Map<string, 'in_progress' | 'completed'>();
-  for (const a of (attemptsResult.data ?? [])) {
-    attemptMap.set(a.test_id, a.is_submitted ? 'completed' : 'in_progress');
+  type AttemptRow = { id: string; test_id: string; is_submitted: boolean; mcq_score: number | null; total_score: number | null };
+
+  const attemptMap = new Map<string, AttemptRow>();
+  for (const a of ((attemptsResult.data ?? []) as AttemptRow[])) {
+    attemptMap.set(a.test_id, a);
+  }
+
+  // Build map: attempt_id -> max_score from the auto-written marks record
+  const maxScoreByAttempt = new Map<string, number>();
+  for (const m of ((marksResult.data ?? []) as Array<{ notes: string; max_score: number }>)) {
+    const match = m.notes?.match(/^auto:attempt:(.+)$/);
+    if (match) maxScoreByAttempt.set(match[1], m.max_score);
   }
 
   const restrictedTestIds = new Set<string>(
     (restrictionsResult.data ?? []).map((r: { test_id: string }) => r.test_id)
   );
 
-  const enriched = result.map((t) => ({
-    ...t,
-    attempt_status: attemptMap.get(t.id) ?? 'not_started',
-    is_restricted: restrictedTestIds.has(t.id),
-  }));
+  const enriched = result.map((t) => {
+    const attempt = attemptMap.get(t.id);
+    const attemptStatus = attempt
+      ? (attempt.is_submitted ? 'completed' : 'in_progress')
+      : 'not_started';
+
+    // For a completed attempt: prefer total_score (MCQ + theory), fall back to mcq_score.
+    // If both are null after submission, theory marking is still pending.
+    const mcqScore = attempt?.mcq_score ?? null;
+    const totalScore = attempt?.total_score ?? null;
+    const maxScore = attempt ? (maxScoreByAttempt.get(attempt.id) ?? null) : null;
+    const totalScorePending = attemptStatus === 'completed' && totalScore === null && mcqScore === null;
+
+    return {
+      ...t,
+      attempt_status: attemptStatus,
+      is_restricted: restrictedTestIds.has(t.id),
+      mcq_score: mcqScore,
+      total_score: totalScore,
+      max_score: maxScore,
+      total_score_pending: totalScorePending,
+    };
+  });
 
   sendSuccess(res, enriched);
 });
@@ -769,7 +803,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
           subject:     testMeta.subject,
           score:       mcqScore,
           max_score:   totalMcqMarks,
-          term:        testMeta.term,
+          term:        normaliseTerm(testMeta.term) ?? testMeta.term,
           exam_type:   testMeta.exam_type ?? 'class_test',
           notes:       noteTag,
           recorded_by: null,
@@ -910,7 +944,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
             subject:     testMeta.subject,
             score:       totalScore,
             max_score:   maxScore,
-            term:        testMeta.term,
+            term:        normaliseTerm(testMeta.term) ?? testMeta.term,
             exam_type:   testMeta.exam_type ?? 'class_test',
             notes:       noteTag,
             recorded_by: req.user!.id,
@@ -1139,8 +1173,8 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     return;
   }
 
-  // Normalise term to title-case to satisfy the DB check constraint (e.g. "term 1" → "Term 1")
-  const normalisedTerm = rest.term.replace(/\bterm\b/i, 'Term').replace(/\bT(\d)/i, 'T$1');
+  // Normalise term to canonical underscore format (e.g. "Term 1" → "term_1", "term1" → "term_1")
+  const normalisedTerm = normaliseTerm(rest.term) ?? rest.term;
 
   const { data: test, error: testErr } = await supabaseAdmin
     .from('tests')
@@ -1708,7 +1742,7 @@ router.post('/backfill-marks', authenticate, requireRole('teacher', 'schooladmin
           subject:     test.subject,
           score,
           max_score:   maxScore,
-          term:        test.term,
+          term:        normaliseTerm(test.term as string | null) ?? (test.term as string),
           exam_type:   (test.exam_type as string) ?? 'class_test',
           notes:       noteTag,
           recorded_by: null,

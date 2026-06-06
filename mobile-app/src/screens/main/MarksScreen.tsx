@@ -29,9 +29,11 @@ interface TestRecord {
   id: string;
   title: string;
   date: string;
+  term?: string | null;
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
   mcq_score?: number | null;
   total_score?: number | null;
+  max_score?: number | null;
   total_score_pending?: boolean;
 }
 
@@ -367,9 +369,28 @@ const cardStyles = StyleSheet.create({
 // ── Test result card ──────────────────────────────────────────────────────────
 
 function TestResultCard({ test }: { test: TestRecord }) {
-  const score = test.total_score_pending ? null : (test.total_score ?? test.mcq_score);
-  const scoreLabel = test.total_score_pending ? 'Pending grading' : score !== null ? `Score: ${score}` : '—';
-  const scoreColor = test.total_score_pending ? '#D97706' : '#1D4ED8';
+  // Prefer total_score (MCQ + theory) over mcq_score
+  const rawScore = test.total_score ?? test.mcq_score;
+  const maxScore = test.max_score ?? null;
+
+  let scoreLabel: string;
+  let scoreColor: string;
+
+  if (test.total_score_pending) {
+    scoreLabel = 'Pending grading';
+    scoreColor = '#D97706';
+  } else if (rawScore !== null && rawScore !== undefined) {
+    if (maxScore && maxScore > 0) {
+      const pctVal = Math.round((rawScore / maxScore) * 100);
+      scoreLabel = `${pctVal}%`;
+    } else {
+      scoreLabel = `Score: ${rawScore}`;
+    }
+    scoreColor = '#1D4ED8';
+  } else {
+    scoreLabel = '—';
+    scoreColor = '#6B7280';
+  }
 
   return (
     <View style={testCardStyles.card}>
@@ -380,7 +401,7 @@ function TestResultCard({ test }: { test: TestRecord }) {
         </Text>
       </View>
       <View style={testCardStyles.right}>
-        <View style={[testCardStyles.badge, { backgroundColor: test.total_score_pending ? '#FEF3C7' : '#DBEAFE' }]}>
+        <View style={[testCardStyles.badge, { backgroundColor: test.total_score_pending ? '#FEF3C7' : rawScore !== null && rawScore !== undefined ? '#DBEAFE' : '#F3F4F6' }]}>
           <Text style={[testCardStyles.badgeText, { color: scoreColor }]}>{scoreLabel}</Text>
         </View>
         <Text style={testCardStyles.status}>✓ Completed</Text>
@@ -470,8 +491,21 @@ export default function MarksScreen() {
 
   const filteredMarks = useMemo(() => {
     if (termFilter === 'All') return marks;
-    return marks.filter((m) => m.term === termFilter);
+    // Normalise both sides: stored values may be "term_1" or legacy "Term 1"
+    return marks.filter((m) => {
+      const stored = m.term?.toLowerCase().replace(/[\s\-]+/g, '_').replace(/^term_?(\d)$/, 'term_$1');
+      return stored === termFilter;
+    });
   }, [marks, termFilter]);
+
+  const filteredTests = useMemo(() => {
+    if (termFilter === 'All') return completedTests;
+    // Same normalisation for test term values
+    return completedTests.filter((t) => {
+      const stored = t.term?.toLowerCase().replace(/[\s\-]+/g, '_').replace(/^term_?(\d)$/, 'term_$1');
+      return stored === termFilter;
+    });
+  }, [completedTests, termFilter]);
 
   const summaries = useMemo(() => buildSubjectSummaries(filteredMarks), [filteredMarks]);
   const sortedSummaries = useMemo(
@@ -525,7 +559,7 @@ export default function MarksScreen() {
             </View>
 
             {/* ── Test Results Section ── */}
-            {completedTests.length > 0 && (
+            {filteredTests.length > 0 && (
               <View style={styles.testSection}>
                 <TouchableOpacity
                   style={styles.testSectionHeader}
@@ -533,12 +567,12 @@ export default function MarksScreen() {
                   accessibilityRole="button"
                   accessibilityLabel={showTests ? 'Collapse test results' : 'Expand test results'}
                 >
-                  <Text style={styles.testSectionTitle}>📝 Test Results ({completedTests.length})</Text>
+                  <Text style={styles.testSectionTitle}>📝 Test Results ({filteredTests.length})</Text>
                   <Text style={styles.testSectionChevron}>{showTests ? '▲' : '▼'}</Text>
                 </TouchableOpacity>
                 {showTests && (
                   <View style={{ padding: 12, paddingTop: 8 }}>
-                    {completedTests.map((t) => (
+                    {filteredTests.map((t) => (
                       <TestResultCard key={t.id} test={t} />
                     ))}
                   </View>

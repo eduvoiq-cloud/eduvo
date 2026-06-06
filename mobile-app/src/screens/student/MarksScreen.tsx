@@ -412,10 +412,13 @@ export default function StudentMarksScreen() {
     fetchMarks();
   }, [fetchMarks]);
 
-  // Filter marks by term
+  // Filter marks by term — normalise both sides to handle "term_1" and legacy "Term 1"
   const filteredMarks = useMemo(() => {
     if (termFilter === 'All') return marks;
-    return marks.filter((m) => m.term === termFilter);
+    return marks.filter((m) => {
+      const stored = m.term?.toLowerCase().replace(/[\s\-]+/g, '_').replace(/^term_?(\d)$/, 'term_$1');
+      return stored === termFilter;
+    });
   }, [marks, termFilter]);
 
   // Build per-subject summaries

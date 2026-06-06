@@ -136,14 +136,14 @@ export default function TeacherClassMarksPage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Term</label>
-            <select className={inputClass} value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)}>
+            <select className={inputClass} value={filterTerm} onChange={(e) => { setFilterTerm(e.target.value); setLoaded(false); setRows([]); }}>
               <option value="">All terms</option>
               {Object.entries(TERM_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Exam Type</label>
-            <select className={inputClass} value={filterExamType} onChange={(e) => setFilterExamType(e.target.value)}>
+            <select className={inputClass} value={filterExamType} onChange={(e) => { setFilterExamType(e.target.value); setLoaded(false); setRows([]); }}>
               <option value="">All types</option>
               {Object.entries(EXAM_TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>

@@ -116,14 +116,14 @@ export default function AdminClassMarksPage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Term</label>
-            <select className={inputClass} value={filterTerm} onChange={(e) => setFilterTerm(e.target.value)}>
+            <select className={inputClass} value={filterTerm} onChange={(e) => { setFilterTerm(e.target.value); setLoaded(false); setRows([]); }}>
               <option value="">All terms</option>
               {Object.entries(TERM_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Exam Type</label>
-            <select className={inputClass} value={filterExamType} onChange={(e) => setFilterExamType(e.target.value)}>
+            <select className={inputClass} value={filterExamType} onChange={(e) => { setFilterExamType(e.target.value); setLoaded(false); setRows([]); }}>
               <option value="">All types</option>
               {Object.entries(EXAM_TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
@@ -178,7 +178,7 @@ export default function AdminClassMarksPage() {
                       <tr key={row.student_id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 text-gray-500">{row.roll_number ?? '—'}</td>
                         <td className="px-4 py-3 font-medium text-gray-900">{row.full_name}</td>
-                        <td className="px-4 py-3 text-center text-gray-600">{row.marks.length}</td>
+                        <td className="px-4 py-3 text-center text-gray-600">{row.test_submissions ?? row.marks.length}</td>
                         <td className="px-4 py-3 text-center text-gray-700 font-medium">
                           {row.marks.length > 0 ? `${row.total_obtained}/${row.total_max}` : '—'}
                         </td>

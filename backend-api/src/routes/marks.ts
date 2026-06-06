@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { normaliseTerm, termFilterValues } from '../utils/term';
 
 const router = Router();
 
@@ -50,7 +51,14 @@ router.get('/', async (req: Request, res: Response) => {
     .order('created_at', { ascending: false });
 
   if (subject) query = query.eq('subject', subject);
-  if (term) query = query.eq('term', term);
+
+  // Accept both term formats (term_1 or Term 1) by matching all equivalents
+  if (term) {
+    const termValues = termFilterValues(term);
+    query = termValues.length === 1
+      ? query.eq('term', termValues[0])
+      : query.in('term', termValues);
+  }
 
   // ── Student token: filter to their own records ──────────────────────────
   if (req.tokenType === 'student') {
@@ -121,7 +129,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
 
   const { data, error } = await supabaseAdmin
     .from('marks')
-    .insert({ ...parsed.data, recorded_by: req.user!.id })
+    .insert({ ...parsed.data, term: normaliseTerm(parsed.data.term) ?? parsed.data.term, recorded_by: req.user!.id })
     .select()
     .single();
 
