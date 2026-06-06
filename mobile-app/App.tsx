@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
+import { isRunningInExpoGo } from 'expo';
 import * as Notifications from 'expo-notifications';
+import * as Sentry from '@sentry/react-native';
 import { NavigationContainerRef } from '@react-navigation/native';
 import AppNavigator from './src/navigation/AppNavigator';
 import {
@@ -13,7 +15,43 @@ import {
 import { useAuthStore } from './src/store/authStore';
 import apiClient from './src/api/client';
 
-export default function App() {
+// ── Sentry initialisation ─────────────────────────────────────────────────────
+// Must be called before any other app code.
+Sentry.init({
+  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+  sendDefaultPii: true,
+
+  // Capture all transactions in dev; lower in production to manage quota
+  tracesSampleRate: __DEV__ ? 1.0 : 0.1,
+
+  // Profile 100% of traced transactions (profiling is a subset of tracing)
+  profilesSampleRate: 1.0,
+
+  // Session Replay: all error sessions + 10% of normal sessions
+  replaysOnErrorSampleRate: 1.0,
+  replaysSessionSampleRate: __DEV__ ? 1.0 : 0.1,
+
+  // Structured logs via Sentry.logger.*
+  enableLogs: true,
+
+  integrations: [
+    // Record screenshots alongside errors (text + images masked by default)
+    Sentry.mobileReplayIntegration({
+      maskAllText: true,
+      maskAllImages: true,
+    }),
+  ],
+
+  // Slow/frozen frames tracking — disable in Expo Go to avoid warnings
+  enableNativeFramesTracking: !isRunningInExpoGo(),
+
+  environment: __DEV__ ? 'development' : 'production',
+
+  // Verbose SDK logging in dev only
+  debug: __DEV__,
+});
+
+function App() {
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
   const student = useAuthStore((state) => state.student);
   const [hydrated, setHydrated] = useState(false);
@@ -75,3 +113,6 @@ export default function App() {
     </>
   );
 }
+
+// Wrap the root component so React render errors are captured by Sentry
+export default Sentry.wrap(App);

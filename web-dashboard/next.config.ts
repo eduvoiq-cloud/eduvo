@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 // RAILWAY_API_URL must be set in Vercel environment variables.
 // It should be the full Railway backend URL, e.g. https://eduvo-api.up.railway.app
@@ -30,7 +31,7 @@ const securityHeaders = [
       "img-src 'self' data: https:",
       "font-src 'self'",
       // Allow API calls to our own origin and the Railway backend
-      `connect-src 'self' ${process.env.RAILWAY_API_URL ?? ''} https://*.supabase.co wss://*.supabase.co`,
+      `connect-src 'self' ${process.env.RAILWAY_API_URL ?? ''} https://*.supabase.co wss://*.supabase.co https://*.ingest.us.sentry.io https://*.sentry.io`,
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
@@ -66,4 +67,21 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withSentryConfig(nextConfig, {
+  org: "eduvo",
+  project: "eduvo-web",
+
+  // Source map upload auth token — set SENTRY_AUTH_TOKEN in your environment.
+  // Generate one at: https://sentry.io/settings/auth-tokens/
+  // Add it to Vercel env vars and your local .env.sentry-build-plugin (gitignored).
+  authToken: process.env.SENTRY_AUTH_TOKEN,
+
+  // Upload a broader set of client files for better stack trace resolution
+  widenClientFileUpload: true,
+
+  // Proxy Sentry event requests through /monitoring to bypass ad-blockers
+  tunnelRoute: "/monitoring",
+
+  // Suppress non-CI build output
+  silent: !process.env.CI,
+});

@@ -37,6 +37,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import * as Sentry from '@sentry/node';
+import type { NodeOptions } from '@sentry/node';
 
 import { globalRateLimit } from './middleware/rateLimit';
 import authRoutes from './routes/auth';
@@ -173,12 +174,19 @@ async function resolvePort(candidates: number[]): Promise<number> {
 async function startServer() {
   // ── Sentry initialisation (must happen before app is created) ───────────────
   if (process.env.SENTRY_DSN) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (Sentry.init as (options: Record<string, unknown>) => void)({
+    const sentryOptions: NodeOptions = {
       dsn: process.env.SENTRY_DSN,
       environment: process.env.NODE_ENV ?? 'development',
-      tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
-    });
+      // 100% of traces in dev, 10% in production to keep quota sensible
+      tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+      // Attach local variable values to stack frames for richer debugging
+      includeLocalVariables: true,
+      // Enable structured logging via Sentry.logger.*
+      enableLogs: true,
+      // Capture request metadata (headers, IP) — safe for internal API
+      sendDefaultPii: true,
+    };
+    Sentry.init(sentryOptions);
     console.log('[sentry] Error tracking enabled');
   } else {
     console.warn('[sentry] SENTRY_DSN not set — error tracking disabled');
@@ -277,6 +285,13 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  // ── Sentry Express error handler (must come after all routes, before 404) ───
+  // This captures 5xx errors automatically — no need to call captureException
+  // manually in the error handler below.
+  if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+  }
+
   // ── 404 handler ──────────────────────────────────────────────────────────────
   app.use((_req, res) => {
     res.status(404).json({ success: false, message: 'Route not found' });
@@ -285,11 +300,11 @@ async function startServer() {
   // ── Global error handler (must be last, after all routes) ────────────────────
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-    if (process.env.SENTRY_DSN) {
-      Sentry.captureException(err);
+    // Sentry already captured the error via setupExpressErrorHandler above;
+    // manual capture is kept as a safety net when Sentry is not configured.
+    if (!process.env.SENTRY_DSN) {
+      console.error('[error]', err.message, err.stack);
     }
-
-    console.error('[error]', err.message, err.stack);
 
     const message =
       process.env.NODE_ENV === 'production'

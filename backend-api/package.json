@@ -15,7 +15,7 @@
   "type": "commonjs",
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
-    "@sentry/node": "^8.55.0",
+    "@sentry/node": "^10.56.0",
     "@supabase/supabase-js": "^2.106.2",
     "@types/archiver": "^6.0.3",
     "archiver": "^7.0.1",
