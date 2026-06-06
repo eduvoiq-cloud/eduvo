@@ -1,12 +1,76 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 
 const router = Router();
 
+// ── Schemas ───────────────────────────────────────────────────────────────────
+
+const updateUserSchema = z.object({
+  name: z.string().min(1).max(150).optional(),
+  email: z.string().email().max(254).optional(),
+});
+
+const fcmTokenSchema = z.object({
+  fcm_token: z.string().min(1).max(512),
+});
+
+const studentFcmTokenSchema = z.object({
+  student_id: z.string().uuid(),
+  fcm_token:  z.string().min(1).max(512),
+  platform:   z.enum(['android', 'ios', 'web']).optional(),
+});
+
+// ── Student FCM token endpoint (before authenticate middleware) ────────────────
+// Uses authenticateStudent so it works with student JWTs.
+
+/**
+ * POST /api/users/fcm-token-student
+ * Registers the device's FCM / Expo push token for a student.
+ * Called by the mobile app after login.
+ * Body: { student_id: string, fcm_token: string, platform?: 'android'|'ios'|'web' }
+ */
+router.post('/fcm-token-student', authenticateStudent, async (req: Request, res: Response) => {
+  const parsed = studentFcmTokenSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { student_id, fcm_token, platform } = parsed.data;
+
+  // Students can only register their own token
+  if (req.student!.id !== student_id) {
+    sendError(res, 'You can only register your own device token', 403);
+    return;
+  }
+
+  // Upsert into fcm_tokens table (token is unique — update on conflict)
+  const { error: tableErr } = await supabaseAdmin
+    .from('fcm_tokens')
+    .upsert(
+      { student_id, token: fcm_token, platform: platform ?? null, updated_at: new Date().toISOString() },
+      { onConflict: 'token' }
+    );
+
+  if (tableErr) {
+    // Non-fatal: log and continue — still update the legacy column
+    console.warn('[users] fcm_tokens upsert failed:', tableErr.message);
+  }
+
+  // Also keep the legacy students.fcm_token column in sync
+  await supabaseAdmin
+    .from('students')
+    .update({ fcm_token })
+    .eq('id', student_id);
+
+  sendSuccess(res, null, 'FCM token registered');
+});
+
+// ── All routes below require staff authentication ─────────────────────────────
 router.use(authenticate);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -24,23 +88,13 @@ async function logAudit(
   });
 }
 
-// ── Schemas ───────────────────────────────────────────────────────────────────
-
-const updateUserSchema = z.object({
-  name: z.string().min(1).max(150).optional(),
-  email: z.string().email().max(254).optional(),
-});
-
-const fcmTokenSchema = z.object({
-  fcm_token: z.string().min(1).max(512),
-});
-
-// ── Routes ────────────────────────────────────────────────────────────────────
+// ── Staff FCM token ────────────────────────────────────────────────────────────
 
 /**
  * POST /api/users/fcm-token
- * Saves the device's FCM / Expo push token so the server can send push
- * notifications to this specific device.
+ * Saves the device's FCM / Expo push token for the authenticated staff user
+ * (schooladmin, teacher, parent) so the server can send push notifications
+ * to this specific device.
  * Body: { fcm_token: string }
  */
 router.post('/fcm-token', async (req: Request, res: Response) => {
@@ -52,6 +106,15 @@ router.post('/fcm-token', async (req: Request, res: Response) => {
 
   const { fcm_token } = parsed.data;
 
+  // Upsert into fcm_tokens table
+  await supabaseAdmin
+    .from('fcm_tokens')
+    .upsert(
+      { user_id: req.user!.id, token: fcm_token, updated_at: new Date().toISOString() },
+      { onConflict: 'token' }
+    );
+
+  // Also keep legacy users.fcm_token column in sync
   const { error } = await supabaseAdmin
     .from('users')
     .update({ fcm_token })

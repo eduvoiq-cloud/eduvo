@@ -5,6 +5,7 @@ import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { normaliseTerm } from '../utils/term';
+import { getTokensForStudents, sendPushMulticast } from '../services/fcmService';
 
 const router = Router();
 
@@ -201,6 +202,55 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     class_name: testFields.class,
     section: testFields.section,
     question_count: questions.length,
+  });
+
+  // Fire-and-forget: notify all students in the class that a new test is available
+  setImmediate(() => {
+    (async () => {
+      try {
+        // Fetch all students in this class/section
+        const { data: classStudents } = await supabaseAdmin
+          .from('students')
+          .select('id')
+          .eq('school_id', req.user!.school_id ?? '')
+          .ilike('class_name', testFields.class.trim())
+          .ilike('section', testFields.section.trim())
+          .eq('is_deleted', false);
+
+        if (!classStudents || classStudents.length === 0) return;
+
+        const studentIds = classStudents.map((s: { id: string }) => s.id);
+
+        // Insert in-app notifications
+        const senderId = req.user!.id;
+        const notifRows = studentIds.map((recipient_id: string) => ({
+          title: 'New Test Available',
+          message: `A new test "${testFields.title}" has been assigned to your class.`,
+          type: 'alert',
+          recipient_id,
+          sender_id: senderId,
+          is_read: false,
+          created_at: new Date().toISOString(),
+        }));
+
+        await supabaseAdmin.from('notifications').insert(notifRows);
+
+        // Send FCM push to students
+        const tokens = await getTokensForStudents(studentIds);
+        if (tokens.length > 0) {
+          const { successCount, failureCount } = await sendPushMulticast(
+            tokens,
+            'New Test Available',
+            `A new test "${testFields.title}" has been assigned. Good luck!`
+          );
+          console.log(
+            `[FCM] Test notification — sent: ${successCount}, failed: ${failureCount}, test: ${test.id}`
+          );
+        }
+      } catch (err) {
+        console.error('[FCM] Failed to send test assignment notifications:', err);
+      }
+    })();
   });
 
   sendSuccess(res, { test_id: test.id, success: true }, 'Test created', 201);

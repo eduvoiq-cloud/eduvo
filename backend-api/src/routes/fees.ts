@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { getTokensForStudents, sendPush } from '../services/fcmService';
 
 const router = Router();
 
@@ -500,6 +501,20 @@ router.post('/send-reminder', requireRole('superadmin', 'schooladmin', 'teacher'
       skipped.push(student.full_name);
       continue;
     }
+
+    // Send FCM push to the student's registered device(s)
+    setImmediate(() => {
+      (async () => {
+        try {
+          const tokens = await getTokensForStudents([student.id]);
+          for (const token of tokens) {
+            await sendPush(token, 'Fee Reminder', message);
+          }
+        } catch (err) {
+          console.error(`[FCM] Fee reminder push failed for student ${student.id}:`, err);
+        }
+      })();
+    });
 
     sent++;
   }

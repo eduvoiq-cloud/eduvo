@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { getTokensForStudents, getTokensForUsers, sendPushMulticast } from '../services/fcmService';
 
 const router = Router();
 
@@ -116,6 +117,36 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   await logAudit(req.user!.id, 'NOTIFICATION_SENT', {
     type,
     recipient_count: recipient_ids.length,
+  });
+
+  // Fire-and-forget: send FCM push to all recipients' registered devices.
+  // We split recipient_ids into students (uuid may map to students table)
+  // and users (staff/parents), fetching tokens from both storage paths.
+  setImmediate(() => {
+    (async () => {
+      try {
+        // Try fetching tokens treating recipient_ids as student IDs
+        const studentTokens = await getTokensForStudents(recipient_ids);
+        // Also try treating them as user IDs (staff/parents)
+        const userTokens = await getTokensForUsers(recipient_ids);
+
+        // Deduplicate across both sets
+        const allTokens = Array.from(new Set([...studentTokens, ...userTokens]));
+
+        if (allTokens.length > 0) {
+          const { successCount, failureCount } = await sendPushMulticast(
+            allTokens,
+            title,
+            body
+          );
+          console.log(
+            `[FCM] Announcement push — sent: ${successCount}, failed: ${failureCount}, type: ${type}`
+          );
+        }
+      } catch (err) {
+        console.error('[FCM] Failed to send announcement push notifications:', err);
+      }
+    })();
   });
 
   sendSuccess(
