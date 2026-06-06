@@ -183,24 +183,42 @@ router.get('/class', async (req: Request, res: Response) => {
     section: string | null;
   }>).map((s) => {
     const studentMarks = marksByStudent[s.id] ?? [];
-    const totalObtained = studentMarks.reduce(
+    const submissionCount = attemptCountByStudent[s.id] ?? 0;
+
+    // When filtering by exam_type, only count marks for students who have
+    // actually submitted a test. Students with 0 submissions should show 0
+    // marks regardless of any stale manually-entered marks in the marks table.
+    const effectiveMarks = (exam_type && submissionCount === 0) ? [] : studentMarks;
+
+    const totalObtained = effectiveMarks.reduce(
       (sum: number, m: { score: number }) => sum + Number(m.score), 0
     );
-    const totalMax = studentMarks.reduce(
+    const totalMax = effectiveMarks.reduce(
       (sum: number, m: { max_score: number }) => sum + Number(m.max_score), 0
     );
-    const percentage = totalMax > 0 ? Math.round((totalObtained / totalMax) * 100) : null;
+
+    // When exam_type is filtered and student hasn't submitted, derive max from
+    // the class reference (use raw marks max_score from their record if available,
+    // so we can show 0/100 rather than just —).
+    const refMax = (exam_type && submissionCount === 0 && studentMarks.length > 0)
+      ? studentMarks.reduce((sum: number, m: { max_score: number }) => sum + Number(m.max_score), 0)
+      : totalMax;
+
+    const percentage = (exam_type && submissionCount === 0)
+      ? (refMax > 0 ? 0 : null)
+      : (totalMax > 0 ? Math.round((totalObtained / totalMax) * 100) : null);
+
     return {
       student_id: s.id,
       full_name: s.full_name,
       roll_number: s.roll_number,
       class_name: s.class_name,
       section: s.section,
-      marks: studentMarks,
+      marks: effectiveMarks,
       total_obtained: totalObtained,
-      total_max: totalMax,
+      total_max: exam_type && submissionCount === 0 ? refMax : totalMax,
       percentage,
-      test_submissions: attemptCountByStudent[s.id] ?? 0,
+      test_submissions: submissionCount,
     };
   });
 

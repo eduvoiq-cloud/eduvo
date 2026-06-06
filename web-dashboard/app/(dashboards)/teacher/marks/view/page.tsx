@@ -200,10 +200,10 @@ export default function TeacherClassMarksPage() {
                         <td className="px-4 py-3 font-medium text-gray-900">{row.full_name}</td>
                         <td className="px-4 py-3 text-center text-gray-600">{row.test_submissions ?? row.marks.length}</td>
                         <td className="px-4 py-3 text-center text-gray-700 font-medium">
-                          {row.marks.length > 0 ? `${row.total_obtained}/${row.total_max}` : '—'}
+                          {row.total_max > 0 ? `${row.total_obtained}/${row.total_max}` : '—'}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <GradeBadge percentage={row.marks.length > 0 ? row.percentage : null} />
+                          <GradeBadge percentage={row.percentage ?? null} />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-2">

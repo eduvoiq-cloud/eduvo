@@ -28,7 +28,7 @@ const createMarkSchema = z.object({
   student_id: z.string().uuid(),
   subject: z.string().min(1).max(100),
   test_name: z.string().min(1).max(200),
-  exam_type: z.enum(['unit_test', 'mid_term', 'final', 'class_test']),
+  exam_type: z.enum(['unit_test', 'mid_term', 'final', 'class_test', 'quiz', 'midterm', 'assignment', 'project']),
   term: z.enum(['term_1', 'term_2', 'term_3']),
   score: z.number().min(0),
   max_score: z.number().min(1),

@@ -24,6 +24,7 @@ interface TestForm {
   date: string;
   available_from: string;
   available_until: string;
+  time_limit_minutes: string;
 }
 
 interface MCQDraft {
@@ -42,7 +43,7 @@ interface TheoryDraft {
 
 type QuestionDraft = MCQDraft | TheoryDraft;
 
-const EMPTY_TEST: TestForm = { title: '', subject: '', class_name: '', section: '', term: '', exam_type: 'class_test', date: '', available_from: '', available_until: '' };
+const EMPTY_TEST: TestForm = { title: '', subject: '', class_name: '', section: '', term: '', exam_type: 'class_test', date: '', available_from: '', available_until: '', time_limit_minutes: '' };
 const EMPTY_MCQ: MCQDraft = { type: 'mcq', text: '', marks: '1', options: ['', '', '', ''], correct_option: 0 };
 const EMPTY_THEORY: TheoryDraft = { type: 'theory', text: '', marks: '5' };
 
@@ -233,6 +234,7 @@ export default function TestsPage() {
         ...testForm,
         available_from:  testForm.available_from  || null,
         available_until: testForm.available_until || null,
+        time_limit_minutes: testForm.time_limit_minutes ? parseInt(testForm.time_limit_minutes) : undefined,
         questions: builtQuestions,
       });      setShowCreate(false);
       setTestForm(EMPTY_TEST);
@@ -560,6 +562,13 @@ export default function TestsPage() {
             <FormField label="Test Date" htmlFor="t-date" required>
               <input id="t-date" type="date" className={inputClass}
                 value={testForm.date} onChange={(e) => setTestForm((f) => ({ ...f, date: e.target.value }))} required />
+            </FormField>
+
+            <FormField label="Time Limit (minutes)" htmlFor="t-time-limit">
+              <input id="t-time-limit" type="number" min={1} step={1} className={inputClass}
+                placeholder="e.g. 60 (optional)"
+                value={testForm.time_limit_minutes}
+                onChange={(e) => setTestForm((f) => ({ ...f, time_limit_minutes: e.target.value }))} />
             </FormField>
 
             {/* Scheduling window — optional */}

@@ -14,9 +14,16 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 type Step = 'configure' | 'upload' | 'preview' | 'success';
 
-const EXAM_TYPES = ['unit_test', 'mid_term', 'final', 'class_test'] as const;
+const EXAM_TYPES = ['unit_test', 'mid_term', 'final', 'class_test', 'quiz', 'midterm', 'assignment', 'project'] as const;
 const EXAM_LABELS: Record<string, string> = {
-  unit_test: 'Unit Test', mid_term: 'Mid Term', final: 'Final', class_test: 'Class Test',
+  unit_test: 'Unit Test',
+  mid_term: 'Mid Term',
+  final: 'Final',
+  class_test: 'Class Test',
+  quiz: 'Quiz',
+  midterm: 'Midterm',
+  assignment: 'Assignment',
+  project: 'Project',
 };
 const TERMS = ['term_1', 'term_2', 'term_3'] as const;
 const TERM_LABELS: Record<string, string> = { term_1: 'Term 1', term_2: 'Term 2', term_3: 'Term 3' };
