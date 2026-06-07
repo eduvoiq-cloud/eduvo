@@ -63,6 +63,7 @@ import aiAssistantRoutes from './routes/aiAssistant';
 import timetableRoutes from './routes/timetable';
 import homeworkRoutes from './routes/homework';
 import marksViewRoutes from './routes/marksView';
+import announcementRoutes from './routes/announcements';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -275,6 +276,7 @@ async function startServer() {
   app.use('/api/timetable', timetableRoutes);
   app.use('/api/homework', homeworkRoutes);
   app.use('/api/marks-view', marksViewRoutes);
+  app.use('/api/announcements', announcementRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

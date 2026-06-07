@@ -37,6 +37,7 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
     { label: 'Homework', href: '/teacher/homework' },
     { label: 'AI Assistant', href: '/teacher/ai-assistant' },
     { label: 'Complaints', href: '/teacher/complaints' },
+    { label: 'Announcements', href: '/teacher/announcements' },
   ],
   parent: [],
   student: [],
