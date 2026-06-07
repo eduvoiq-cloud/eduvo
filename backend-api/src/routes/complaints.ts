@@ -162,49 +162,25 @@ router.post(
     let notifyUserId: string | null = null;
 
     if (recipient_type === 'subject_teacher') {
-      // Verify the given teacher is actually assigned to this student's class.
-      // Try with school_id first; fall back without it in case the column is missing on this DB.
-      let assignment: { teacher_id: string } | null = null;
-      let assignErr: unknown = null;
-
-      const primaryResult = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('teacher_id')
+      // Verify the teacher exists and belongs to the same school.
+      // We use the users table (always reliable) rather than teacher_assignments
+      // which may have schema differences across environments.
+      const { data: teacherUser, error: teacherErr } = await supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('id', subject_teacher_id!)
         .eq('school_id', student.school_id)
-        .eq('class_name', student.class_name)
-        .eq('section', student.section)
-        .eq('teacher_id', subject_teacher_id!)
+        .eq('role', 'teacher')
         .maybeSingle();
 
-      if (primaryResult.error) {
-        console.error('[complaints] teacher_assignments query error (with school_id):', primaryResult.error);
-
-        // Fallback: query without school_id in case that column doesn't exist yet
-        const fallbackResult = await supabaseAdmin
-          .from('teacher_assignments')
-          .select('teacher_id')
-          .eq('class_name', student.class_name)
-          .eq('section', student.section)
-          .eq('teacher_id', subject_teacher_id!)
-          .maybeSingle();
-
-        if (fallbackResult.error) {
-          console.error('[complaints] teacher_assignments fallback query also failed:', fallbackResult.error);
-          assignErr = fallbackResult.error;
-        } else {
-          assignment = fallbackResult.data;
-        }
-      } else {
-        assignment = primaryResult.data;
-      }
-
-      if (assignErr) {
-        sendError(res, 'Failed to verify subject teacher assignment', 500);
+      if (teacherErr) {
+        console.error('[complaints] teacher lookup error:', teacherErr);
+        sendError(res, 'Failed to verify teacher', 500);
         return;
       }
 
-      if (!assignment) {
-        sendError(res, 'The selected teacher is not assigned to your class', 404);
+      if (!teacherUser) {
+        sendError(res, 'The selected teacher was not found in your school', 404);
         return;
       }
 
@@ -431,7 +407,7 @@ router.get(
 
 // ── GET /api/complaints/my-teachers ──────────────────────────────────────────
 /**
- * Returns the distinct subject teachers assigned to the student's class/section.
+ * Returns the teachers in the same school as the student.
  * Used by the mobile app to populate the "Complain to Subject Teacher" picker.
  * Auth: student token
  */
@@ -441,47 +417,24 @@ router.get(
   async (req: Request, res: Response) => {
     const student = req.student!;
 
-    if (!student.class_name || !student.section) {
-      sendError(res, 'Your student profile is missing class or section information', 400);
+    // Return all teachers in this school from the users table (always reliable).
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('id, name')
+      .eq('school_id', student.school_id)
+      .eq('role', 'teacher')
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('[complaints] my-teachers query error:', error);
+      sendError(res, error.message, 500);
       return;
     }
 
-    // Get all teacher assignments for this class/section, with teacher name.
-    // Try with school_id filter first; fall back without it if the column is absent.
-    let data: Record<string, unknown>[] | null = null;
-
-    const primaryResult = await supabaseAdmin
-      .from('teacher_assignments')
-      .select('teacher_id, subject, users!teacher_assignments_teacher_id_fkey(name)')
-      .eq('school_id', student.school_id)
-      .eq('class_name', student.class_name)
-      .eq('section', student.section);
-
-    if (primaryResult.error) {
-      console.error('[complaints] my-teachers query error (with school_id):', primaryResult.error);
-
-      const fallbackResult = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('teacher_id, subject, users!teacher_assignments_teacher_id_fkey(name)')
-        .eq('class_name', student.class_name)
-        .eq('section', student.section);
-
-      if (fallbackResult.error) {
-        console.error('[complaints] my-teachers fallback query also failed:', fallbackResult.error);
-        sendError(res, fallbackResult.error.message, 500);
-        return;
-      }
-      data = (fallbackResult.data ?? []) as Record<string, unknown>[];
-    } else {
-      data = (primaryResult.data ?? []) as Record<string, unknown>[];
-    }
-
-    // Deduplicate by teacher_id (a teacher may have multiple subjects listed)
-    // Return one entry per subject assignment
-    const result = (data ?? []).map((row: Record<string, unknown>) => ({
-      teacher_id: row.teacher_id as string,
-      subject: row.subject as string | null,
-      teacher_name: (row.users as { name: string } | null)?.name ?? 'Unknown Teacher',
+    const result = (data ?? []).map((row: { id: string; name: string }) => ({
+      teacher_id: row.id,
+      subject: null,
+      teacher_name: row.name ?? 'Unknown Teacher',
     }));
 
     sendSuccess(res, result);
