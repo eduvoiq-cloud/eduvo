@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate, authenticateStudent } from '../middleware/auth';
+import { authenticate, authenticateStudent, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 
@@ -160,23 +160,7 @@ function timeBefore(a: string, b: string): boolean {
  */
 router.get(
   '/class',
-  async (req: Request, res: Response, next) => {
-    // Accept either a staff token or a student token
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      sendError(res, 'Missing or malformed Authorization header', 401);
-      return;
-    }
-
-    // Try student auth first, then staff auth
-    authenticateStudent(req, res, (studentErr) => {
-      if (!studentErr && req.student) return next();
-      authenticate(req, res, (staffErr) => {
-        if (!staffErr && req.user) return next();
-        sendError(res, 'Invalid or expired token', 401);
-      });
-    });
-  },
+  authenticateAny,
   async (req: Request, res: Response) => {
     const { class: className, section } = req.query as Record<string, string>;
     let school_id = req.query.school_id as string | undefined;
