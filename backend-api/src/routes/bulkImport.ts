@@ -834,11 +834,27 @@ router.post(
         .map((token) => token.trim())
         .filter(Boolean)
         .map((token) => {
-          // Expected format: "10A-Maths" or "10 A - Maths" (flexible)
+          // Primary format: "10A-Maths" or "10 A - Maths" (dash separator)
+          // Fallback format: "10A Maths" or "4b maths" (space separator, no dash)
+          let classDiv: string;
+          let subject: string;
+
           const dashIdx = token.indexOf('-');
-          if (dashIdx === -1) return null; // skip malformed tokens
-          const classDiv = token.slice(0, dashIdx).trim();  // e.g. "10A" or "10 A"
-          const subject  = token.slice(dashIdx + 1).trim(); // e.g. "Maths"
+          if (dashIdx !== -1) {
+            classDiv = token.slice(0, dashIdx).trim();
+            subject  = token.slice(dashIdx + 1).trim();
+          } else {
+            // No dash — try splitting class+division prefix from subject by space.
+            // Match a leading class+division block (digits + optional letters) then the rest as subject.
+            const spaceMatch = token.match(/^(\d+[A-Za-z]*)\s+(.+)$/);
+            if (spaceMatch) {
+              classDiv = spaceMatch[1].trim();
+              subject  = spaceMatch[2].trim();
+            } else {
+              return null; // still malformed — skip
+            }
+          }
+
           if (!classDiv || !subject) return null;
 
           // Extract trailing letter(s) as division, rest as class number
@@ -859,9 +875,24 @@ router.post(
     /**
      * Detect whether this file uses the NEW single-row format (column 4 = assignments string)
      * or the OLD multi-row format (columns 4/5/6 = class/division/subject).
-     * Heuristic: if ANY row has a dash in column 4 value, it's the new format.
+     * Heuristics (in order):
+     * 1. If any row has a dash in column 4, it's definitely the new format.
+     * 2. If any row's column 4 starts with a digit followed by a letter (e.g. "4b", "10A"), it's new format.
+     * 3. If any row has a non-empty column 6 (old subject column), it's old format.
+     * Default to new format if ambiguous.
      */
-    const isNewFormat = allRawRows.some((r) => r.assignments_raw.includes('-'));
+    const isNewFormat = (() => {
+      // Check for explicit new-format signals
+      for (const r of allRawRows) {
+        if (r.assignments_raw.includes('-')) return true;
+        // Matches patterns like "4b maths", "10A Science" — class+div prefix
+        if (/^\d+[A-Za-z]/.test(r.assignments_raw)) return true;
+      }
+      // Check for old-format signal: a non-empty 6th column (subject)
+      const hasOldFormatSubjectCol = allRawRows.some((r) => r.subject.length > 0);
+      if (hasOldFormatSubjectCol) return false;
+      return true; // default to new format
+    })();
 
     // ── Group rows by email ────────────────────────────────────────────────────
     const emailToFirstRow = new Map<string, RawTeacherRow>();

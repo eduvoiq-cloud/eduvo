@@ -318,15 +318,23 @@ export interface TestAttemptDetail {
 
 export interface Complaint {
   id: string;
-  subject: string;
-  body: string;
+  subject: string | null;
+  // 'message' is what the API returns for student complaints
+  message?: string | null;
+  // 'body' retained for legacy parent complaints
+  body?: string | null;
   status: 'pending' | 'reviewed' | 'resolved';
-  school_id: string;
-  submitted_by: string;
+  recipient_type?: 'subject_teacher' | 'school_admin';
+  school_id?: string;
+  submitted_by?: string;
   student_id?: string;
-  resolution_note?: string;
+  // Joined student fields returned by /api/complaints/admin and /api/complaints/teacher
+  student_name?: string | null;
+  class_name?: string | null;
+  section?: string | null;
+  resolution_note?: string | null;
   reviewed_by?: string;
-  reviewed_at?: string;
+  reviewed_at?: string | null;
   created_at: string;
   users?: { name: string; email: string };
 }
