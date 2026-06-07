@@ -407,7 +407,7 @@ router.get(
 
 // ── GET /api/complaints/my-teachers ──────────────────────────────────────────
 /**
- * Returns the teachers in the same school as the student.
+ * Returns the distinct subject teachers assigned to the student's class/section.
  * Used by the mobile app to populate the "Complain to Subject Teacher" picker.
  * Auth: student token
  */
@@ -417,24 +417,52 @@ router.get(
   async (req: Request, res: Response) => {
     const student = req.student!;
 
-    // Return all teachers in this school from the users table (always reliable).
-    const { data, error } = await supabaseAdmin
-      .from('users')
-      .select('id, name')
-      .eq('school_id', student.school_id)
-      .eq('role', 'teacher')
-      .order('name', { ascending: true });
-
-    if (error) {
-      console.error('[complaints] my-teachers query error:', error);
-      sendError(res, error.message, 500);
+    if (!student.class_name || !student.section) {
+      sendError(res, 'Your student profile is missing class or section information', 400);
       return;
     }
 
-    const result = (data ?? []).map((row: { id: string; name: string }) => ({
-      teacher_id: row.id,
-      subject: null,
-      teacher_name: row.name ?? 'Unknown Teacher',
+    // Fetch teacher assignments for this class/section.
+    // Select teacher_id + subject only (no FK join hint — avoids PostgREST FK name issues).
+    const { data: assignments, error: assignErr } = await supabaseAdmin
+      .from('teacher_assignments')
+      .select('teacher_id, subject')
+      .eq('school_id', student.school_id)
+      .eq('class_name', student.class_name)
+      .eq('section', student.section);
+
+    if (assignErr) {
+      console.error('[complaints] my-teachers assignments query error:', assignErr);
+      sendError(res, assignErr.message, 500);
+      return;
+    }
+
+    if (!assignments || assignments.length === 0) {
+      sendSuccess(res, []);
+      return;
+    }
+
+    // Collect unique teacher IDs then fetch their names from users table
+    const teacherIds = [...new Set((assignments as { teacher_id: string; subject: string | null }[]).map(a => a.teacher_id))];
+
+    const { data: teachers, error: teacherErr } = await supabaseAdmin
+      .from('users')
+      .select('id, name')
+      .in('id', teacherIds);
+
+    if (teacherErr) {
+      console.error('[complaints] my-teachers users query error:', teacherErr);
+      sendError(res, teacherErr.message, 500);
+      return;
+    }
+
+    const teacherMap = new Map((teachers ?? []).map((t: { id: string; name: string }) => [t.id, t.name]));
+
+    // One entry per assignment row (teacher + subject pair)
+    const result = (assignments as { teacher_id: string; subject: string | null }[]).map(a => ({
+      teacher_id: a.teacher_id,
+      subject: a.subject ?? null,
+      teacher_name: teacherMap.get(a.teacher_id) ?? 'Unknown Teacher',
     }));
 
     sendSuccess(res, result);

@@ -22,8 +22,25 @@ interface Period {
   end_time: string;
   subject_name: string;
   teacher_name: string;
-  day: string;
+  day: string; // normalised day name (e.g. "Monday")
 }
+
+// Shape returned by GET /api/timetable/class — day-keyed object
+type TimetableByDayRaw = Record<
+  string,
+  Array<{
+    id: string;
+    period: number;
+    start_time: string;
+    end_time: string;
+    subject_name: string | null;
+    teacher_name: string | null;
+    subject_id: string;
+    teacher_id: string;
+    class_name: string;
+    section: string;
+  }>
+>;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -124,19 +141,29 @@ export default function TimetableScreen() {
           section: activeStudent?.section,
         },
       });
-      const data: Period[] = response.data.data ?? [];
 
-      // Group by day
+      // Backend returns a day-keyed object: { monday: [...], tuesday: [...], ... }
+      // Each entry uses `period` (not `period_number`) as the period index field.
+      const raw: TimetableByDayRaw = response.data.data ?? {};
+
       const grouped: Record<string, Period[]> = {};
-      for (const period of data) {
-        const day = period.day;
-        if (!grouped[day]) grouped[day] = [];
-        grouped[day].push(period);
+      for (const [dayKey, entries] of Object.entries(raw)) {
+        // Capitalise the day key so it matches DAYS array ("monday" → "Monday")
+        const dayName = dayKey.charAt(0).toUpperCase() + dayKey.slice(1);
+        const periods: Period[] = entries.map((e) => ({
+          id: e.id,
+          period_number: e.period,
+          start_time: e.start_time,
+          end_time: e.end_time,
+          subject_name: e.subject_name ?? 'Unknown Subject',
+          teacher_name: e.teacher_name ?? '',
+          day: dayName,
+        }));
+        // Already sorted by backend, but sort defensively
+        periods.sort((a, b) => a.period_number - b.period_number);
+        grouped[dayName] = periods;
       }
-      // Sort each day's periods by period_number
-      for (const day of Object.keys(grouped)) {
-        grouped[day].sort((a, b) => a.period_number - b.period_number);
-      }
+
       setTimetable(grouped);
     } catch (err) {
       console.warn('[Timetable] fetch error:', err);
