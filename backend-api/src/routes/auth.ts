@@ -715,6 +715,39 @@ router.post('/staff/reset-password', async (req: Request, res: Response) => {
   sendSuccess(res, null, 'Password reset successfully. You can now sign in.');
 });
 
+// ── POST /api/auth/refresh ────────────────────────────────────────────────────
+
+/**
+ * Exchanges a Supabase refresh_token for a new access_token + refresh_token.
+ * Public route — no auth middleware needed (the old access token may be expired).
+ */
+const refreshSchema = z.object({
+  refresh_token: z.string().min(1),
+});
+
+router.post('/refresh', async (req: Request, res: Response) => {
+  const parsed = refreshSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { refresh_token } = parsed.data;
+
+  const { data, error } = await supabase.auth.refreshSession({ refresh_token });
+
+  if (error || !data.session) {
+    sendError(res, 'Session expired. Please log in again.', 401);
+    return;
+  }
+
+  sendSuccess(res, {
+    token: data.session.access_token,
+    refresh_token: data.session.refresh_token,
+    expires_at: data.session.expires_at,
+  });
+});
+
 // ── GET /api/auth/me ──────────────────────────────────────────────────────────
 
 /**

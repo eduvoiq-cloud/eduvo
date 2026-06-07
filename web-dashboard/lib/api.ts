@@ -348,6 +348,16 @@ export const authApi = {
       body: JSON.stringify({ email, password }),
     }),
 
+  /** Refresh an expired staff token using the stored refresh_token */
+  refresh: (refreshToken: string) =>
+    request<{ token: string; refresh_token: string; expires_at: number }>(
+      '/api/auth/refresh',
+      {
+        method: 'POST',
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      }
+    ),
+
   logout: (token: string) =>
     request<null>('/api/auth/logout', { method: 'POST' }, token),
 
