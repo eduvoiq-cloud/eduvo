@@ -50,6 +50,7 @@ const createPeriodSchema = z.object({
   start_time: timeSchema,
   end_time: timeSchema,
   subject_id: z.string().uuid(),
+  teacher_id: z.string().uuid('teacher_id must be a valid UUID'),
 });
 
 const updatePeriodSchema = z.object({
@@ -314,12 +315,12 @@ router.get(
 // ── POST /api/timetable/period ────────────────────────────────────────────────
 /**
  * Add a new period slot to the timetable.
- * Auth: teacher (must be assigned to the class+subject), schooladmin, superadmin.
+ * Auth: schooladmin, superadmin only. Teachers do not manage the timetable structure.
  */
 router.post(
   '/period',
   authenticate,
-  requireRole('superadmin', 'schooladmin', 'teacher'),
+  requireRole('superadmin', 'schooladmin'),
   async (req: Request, res: Response) => {
     const parsed = createPeriodSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -335,10 +336,10 @@ router.post(
       start_time,
       end_time,
       subject_id,
+      teacher_id,
     } = parsed.data;
 
     const userId = req.user!.id;
-    const userRole = req.user!.role;
     const school_id = req.user!.school_id;
 
     if (!school_id) {
@@ -350,36 +351,6 @@ router.post(
     if (!timeBefore(start_time, end_time)) {
       sendError(res, 'start_time must be before end_time', 400);
       return;
-    }
-
-    // Teachers must be assigned to this class + subject
-    if (userRole === 'teacher') {
-      // Resolve subject name from subject_id
-      const { data: subject, error: subErr } = await supabaseAdmin
-        .from('subjects')
-        .select('name')
-        .eq('id', subject_id)
-        .eq('school_id', school_id)
-        .maybeSingle();
-
-      if (subErr || !subject) {
-        sendError(res, 'Subject not found', 404);
-        return;
-      }
-
-      const { data: assignment } = await supabaseAdmin
-        .from('teacher_assignments')
-        .select('id')
-        .eq('teacher_id', userId)
-        .eq('class_name', className)
-        .eq('section', section)
-        .eq('subject', subject.name)
-        .maybeSingle();
-
-      if (!assignment) {
-        sendError(res, 'You are not assigned to this class and subject', 403);
-        return;
-      }
     }
 
     // Check for slot conflict: same class+section+day+period
@@ -410,7 +381,7 @@ router.post(
         start_time,
         end_time,
         subject_id,
-        teacher_id: userId,
+        teacher_id,
         created_by: userId,
         created_at: new Date().toISOString(),
       })
@@ -440,13 +411,13 @@ router.post(
 
 // ── PUT /api/timetable/period/:id ─────────────────────────────────────────────
 /**
- * Update an existing period (start_time, end_time, subject_id).
- * Auth: teacher who created it, or schooladmin/superadmin.
+ * Update an existing period (start_time, end_time, subject_id, teacher_id).
+ * Auth: schooladmin or superadmin only.
  */
 router.put(
   '/period/:id',
   authenticate,
-  requireRole('superadmin', 'schooladmin', 'teacher'),
+  requireRole('superadmin', 'schooladmin'),
   async (req: Request, res: Response) => {
     const { id } = req.params;
 
@@ -464,7 +435,6 @@ router.put(
     }
 
     const userId = req.user!.id;
-    const userRole = req.user!.role;
 
     // Fetch the existing period
     const { data: period, error: fetchErr } = await supabaseAdmin
@@ -475,12 +445,6 @@ router.put(
 
     if (fetchErr || !period) {
       sendError(res, 'Period not found', 404);
-      return;
-    }
-
-    // Teachers can only update periods they created
-    if (userRole === 'teacher' && period.created_by !== userId) {
-      sendError(res, 'You can only update periods you created', 403);
       return;
     }
 
@@ -524,21 +488,21 @@ router.put(
 // ── DELETE /api/timetable/period/:id ─────────────────────────────────────────
 /**
  * Delete a period from the timetable.
- * Auth: teacher who created it, or schooladmin/superadmin.
+ * Auth: schooladmin or superadmin only.
  */
 router.delete(
   '/period/:id',
   authenticate,
-  requireRole('superadmin', 'schooladmin', 'teacher'),
+  requireRole('superadmin', 'schooladmin'),
   async (req: Request, res: Response) => {
     const { id } = req.params;
     const userId = req.user!.id;
     const userRole = req.user!.role;
 
-    // Fetch the period to verify ownership
+    // Fetch the period to verify it exists and belongs to this school
     const { data: period, error: fetchErr } = await supabaseAdmin
       .from('timetable')
-      .select('id, created_by, class_name, section, day_of_week, period_number')
+      .select('id, created_by, class_name, section, day_of_week, period_number, school_id')
       .eq('id', id)
       .maybeSingle();
 
@@ -547,9 +511,9 @@ router.delete(
       return;
     }
 
-    // Teachers can only delete periods they created
-    if (userRole === 'teacher' && period.created_by !== userId) {
-      sendError(res, 'You can only delete periods you created', 403);
+    // Admins can only delete periods from their own school
+    if (userRole === 'schooladmin' && period.school_id !== req.user!.school_id) {
+      sendError(res, 'You can only delete periods from your own school', 403);
       return;
     }
 
