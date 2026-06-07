@@ -690,20 +690,37 @@ router.get('/teachers/template', requireRole('superadmin', 'schooladmin'), templ
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Teachers');
 
-  // Headers
-  ws.addRow(['name', 'email', 'phone', 'class', 'division', 'subject']);
+  // ── Header row ──────────────────────────────────────────────────────────────
+  const headerRow = ws.addRow(['name', 'email', 'phone', 'assignments']);
+  headerRow.font = { bold: true };
+  headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2EFDA' } };
 
-  // Example rows
-  ws.addRow(['Priya Shah',  'priya@school.com',  '9876543210', '10', 'A', 'Maths']);
-  ws.addRow(['Priya Shah',  'priya@school.com',  '9876543210', '10', 'B', 'Maths']);
-  ws.addRow(['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'A', 'Hindi']);
-  ws.addRow(['Ravi Mehta',  'ravi@school.com',   '9123456780',  '9', 'B', 'Hindi']);
-  ws.addRow(['Sita Verma',  'sita@school.com',   '9988776655',  '',   '',  '']);
+  // ── Example rows (one row per teacher, all assignments in one cell) ─────────
+  ws.addRow(['Priya Shah', 'priya@school.com', '9876543210', '10A-Maths, 10B-Maths']);
+  ws.addRow(['Ravi Mehta', 'ravi@school.com',  '9123456780', '9A-Hindi, 9B-Hindi, 8A-Hindi']);
+  ws.addRow(['Sita Verma', 'sita@school.com',  '9988776655', '4A-Science']);
+  ws.addRow(['Amit Patel', 'amit@school.com',  '9112233445', '']);  // no assignments yet
 
-  // Column widths
+  // ── Instructions sheet ──────────────────────────────────────────────────────
+  const info = wb.addWorksheet('Instructions');
+  info.addRow(['Column', 'Required', 'Notes']);
+  info.addRow(['name',        'Yes', 'Full name of the teacher']);
+  info.addRow(['email',       'Yes', 'Email address — used as login username']);
+  info.addRow(['phone',       'Yes', 'Phone number — used as default password']);
+  info.addRow(['assignments', 'No',  'Comma-separated list in format: ClassDivision-Subject  e.g. 10A-Maths, 9B-Hindi, 8A-Science']);
+  info.addRow([]);
+  info.addRow(['Assignment format', '', 'ClassDivision-Subject  →  10A-Maths']);
+  info.addRow(['Multiple classes',  '', 'Separate with commas  →  10A-Maths, 9B-Hindi, 8A-Science']);
+  info.addRow(['No assignment',     '', 'Leave the cell blank — you can assign classes later from the dashboard']);
+  info.columns = [{ width: 20 }, { width: 12 }, { width: 70 }];
+  info.getRow(1).font = { bold: true };
+
+  // ── Column widths on main sheet ─────────────────────────────────────────────
   ws.columns = [
-    { width: 20 }, { width: 28 }, { width: 14 },
-    { width: 8 },  { width: 10 }, { width: 16 },
+    { width: 22 },  // name
+    { width: 30 },  // email
+    { width: 15 },  // phone
+    { width: 50 },  // assignments
   ];
 
   const buffer = await wb.xlsx.writeBuffer();
@@ -772,12 +789,18 @@ router.post(
     );
 
     // ── First pass: collect all rows and group by email ────────────────────────
-    // This detects multi-row teachers (same email, different class/division/subject).
+    // New format: one row per teacher. Column 4 (index 3) is a comma-separated
+    // assignments string like "10A-Maths, 9B-Hindi, 8A-Science".
+    // We still support the OLD multi-row format (separate class/division/subject
+    // columns) as a fallback, so existing files keep working.
     interface RawTeacherRow {
       row_number: number;
       name: string;
       email: string;
       phone: string;
+      // new single-row format
+      assignments_raw: string;
+      // old multi-row format (columns 3/4/5)
       class: string;
       division: string;
       subject: string;
@@ -787,17 +810,60 @@ router.post(
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i] as unknown[];
       allRawRows.push({
-        row_number: i + 2,
-        name:      cellToString(row[0]).trim(),
-        email:     cellToString(row[1]).trim(),
-        phone:     cellToString(row[2]).trim(),
-        class:     cellToString(row[3]).trim(),
-        division:  cellToString(row[4]).trim().toUpperCase(),
-        subject:   cellToString(row[5]).trim(),
+        row_number:      i + 2,
+        name:            cellToString(row[0]).trim(),
+        email:           cellToString(row[1]).trim(),
+        phone:           cellToString(row[2]).trim(),
+        assignments_raw: cellToString(row[3]).trim(),  // new format: "10A-Maths, 9B-Hindi"
+        class:           cellToString(row[3]).trim(),  // old format: class number
+        division:        cellToString(row[4]).trim().toUpperCase(), // old format: division letter
+        subject:         cellToString(row[5]).trim(),  // old format: subject
       });
     }
 
-    // ── Group rows by email — first occurrence defines name/phone ──────────────
+    /**
+     * Parse a single assignments string like "10A-Maths, 9B-Hindi, 8A-Science"
+     * into structured { class, division, subject } objects.
+     * Each token is ClassDivision-Subject, e.g. "10A-Maths" → class=10, division=A, subject=Maths.
+     * Division is the last letter of the class+division part before the dash.
+     */
+    function parseAssignmentsString(raw: string): Array<{ class: string; division: string; subject: string }> {
+      if (!raw.trim()) return [];
+      return raw
+        .split(',')
+        .map((token) => token.trim())
+        .filter(Boolean)
+        .map((token) => {
+          // Expected format: "10A-Maths" or "10 A - Maths" (flexible)
+          const dashIdx = token.indexOf('-');
+          if (dashIdx === -1) return null; // skip malformed tokens
+          const classDiv = token.slice(0, dashIdx).trim();  // e.g. "10A" or "10 A"
+          const subject  = token.slice(dashIdx + 1).trim(); // e.g. "Maths"
+          if (!classDiv || !subject) return null;
+
+          // Extract trailing letter(s) as division, rest as class number
+          const divMatch = classDiv.match(/^(\d+)\s*([A-Za-z]+)$/);
+          if (divMatch) {
+            return { class: divMatch[1], division: divMatch[2].toUpperCase(), subject };
+          }
+          // If no division letter (e.g. just "10"), use class with empty division
+          const numMatch = classDiv.match(/^(\d+)$/);
+          if (numMatch) {
+            return { class: numMatch[1], division: '', subject };
+          }
+          return null;
+        })
+        .filter((a): a is { class: string; division: string; subject: string } => a !== null);
+    }
+
+    /**
+     * Detect whether this file uses the NEW single-row format (column 4 = assignments string)
+     * or the OLD multi-row format (columns 4/5/6 = class/division/subject).
+     * Heuristic: if ANY row has a dash in column 4 value, it's the new format.
+     */
+    const isNewFormat = allRawRows.some((r) => r.assignments_raw.includes('-'));
+
+    // ── Group rows by email ────────────────────────────────────────────────────
     const emailToFirstRow = new Map<string, RawTeacherRow>();
     const emailToAssignments = new Map<string, Array<{ class: string; division: string; subject: string }>>();
 
@@ -807,8 +873,21 @@ router.post(
         emailToFirstRow.set(key, r);
         emailToAssignments.set(key, []);
       }
-      if (r.class || r.division || r.subject) {
-        emailToAssignments.get(key)!.push({ class: r.class, division: r.division, subject: r.subject });
+
+      const list = emailToAssignments.get(key)!;
+
+      if (isNewFormat) {
+        // New format: parse the assignments_raw string once per unique email
+        // (only process the first occurrence to avoid re-parsing duplicates)
+        if (emailToFirstRow.get(key) === r) {
+          const parsed = parseAssignmentsString(r.assignments_raw);
+          list.push(...parsed);
+        }
+      } else {
+        // Old multi-row format: each row is one assignment
+        if (r.class || r.division || r.subject) {
+          list.push({ class: r.class, division: r.division, subject: r.subject });
+        }
       }
     }
 

@@ -45,12 +45,10 @@ interface ImportResult {
 // ── Column guide — matches new template format ────────────────────────────────
 
 const COLUMNS = [
-  { name: 'name',     required: true,  note: 'Full name of the teacher' },
-  { name: 'email',    required: true,  note: 'Email address — used as login username' },
-  { name: 'phone',    required: true,  note: 'Phone number — auto-set as default password' },
-  { name: 'class',    required: false, note: 'Class number e.g. 10' },
-  { name: 'division', required: false, note: 'Division / section e.g. A' },
-  { name: 'subject',  required: false, note: 'Subject they teach e.g. Maths' },
+  { name: 'name',        required: true,  note: 'Full name of the teacher' },
+  { name: 'email',       required: true,  note: 'Email address — used as login username' },
+  { name: 'phone',       required: true,  note: 'Phone number — used as default password' },
+  { name: 'assignments', required: false, note: 'Comma-separated ClassDiv-Subject pairs  e.g. 10A-Maths, 9B-Hindi, 8A-Science' },
 ];
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -332,9 +330,11 @@ export default function ImportTeachersPage() {
                   </table>
                 </div>
 
-                {/* Multi-row tip */}
+                {/* Assignment format tip */}
                 <div className="mt-3 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
-                  <strong>Multiple assignments per teacher:</strong> Use multiple rows with the same email — the system merges them into one account with multiple class assignments.
+                  <strong>Multiple class assignments:</strong> Put all assignments in one cell, comma-separated.
+                  Format: <span className="font-mono">ClassDivision-Subject</span> — e.g. <span className="font-mono">10A-Maths, 9B-Hindi, 8A-Science</span>.
+                  You can also leave it blank and assign classes later from the dashboard.
                 </div>
 
                 {/* Password info */}
