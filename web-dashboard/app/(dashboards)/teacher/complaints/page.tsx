@@ -142,7 +142,7 @@ export default function ComplaintsPage() {
                     </span>
                   </div>
                   <p className="font-medium text-gray-900 text-sm">{c.subject}</p>
-                  <p className="text-sm text-gray-600 mt-1 line-clamp-2">{c.body}</p>
+                  <p className="text-sm text-gray-600 mt-1 line-clamp-2">{c.message ?? c.body}</p>
                   {c.users && (
                     <p className="text-xs text-gray-400 mt-1.5">
                       From: <span className="font-medium text-gray-600">{c.users.name}</span> · {c.users.email}

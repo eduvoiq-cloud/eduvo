@@ -818,4 +818,87 @@ router.post(
   }
 );
 
+// ── GET /api/timetable/file ───────────────────────────────────────────────────
+/**
+ * Returns the latest uploaded timetable file (PDF / image) for a class/section.
+ * Looks up the most recent TIMETABLE_FILE_UPLOADED audit log entry.
+ * Auth: any authenticated user (staff or student) of the same school.
+ *
+ * Query params: class, section
+ * Response: { public_url, file_name, uploaded_at, is_image }
+ */
+router.get(
+  '/file',
+  authenticateAny,
+  async (req: Request, res: Response) => {
+    const { class: className, section } = req.query as Record<string, string>;
+
+    if (!className || !section) {
+      sendError(res, 'class and section are required', 400);
+      return;
+    }
+
+    let school_id: string | undefined;
+    if (req.student) {
+      school_id = req.student.school_id;
+      // Students can only view their own class timetable
+      if (req.student.class_name !== className || req.student.section !== section) {
+        sendError(res, 'You can only view your own class timetable', 403);
+        return;
+      }
+    } else if (req.user) {
+      school_id = req.user.school_id ?? undefined;
+    }
+
+    if (!school_id) {
+      sendError(res, 'school_id could not be determined', 400);
+      return;
+    }
+
+    // Query audit_logs for the most recent TIMETABLE_FILE_UPLOADED for this class+section+school
+    const { data, error } = await supabaseAdmin
+      .from('audit_logs')
+      .select('details, created_at')
+      .eq('action', 'TIMETABLE_FILE_UPLOADED')
+      .order('created_at', { ascending: false })
+      .limit(50); // fetch a batch to filter by class+section in JS
+
+    if (error) {
+      sendError(res, error.message, 500);
+      return;
+    }
+
+    // Find the first (most recent) entry matching this school + class + section
+    const match = (data ?? []).find((row: { details: Record<string, unknown>; created_at: string }) => {
+      const d = row.details as Record<string, unknown>;
+      return (
+        d?.school_id === school_id &&
+        d?.class_name === className &&
+        d?.section === section &&
+        d?.public_url
+      );
+    });
+
+    if (!match) {
+      sendSuccess(res, null, 'No uploaded timetable file found');
+      return;
+    }
+
+    const details = match.details as Record<string, unknown>;
+    const publicUrl = details.public_url as string;
+    const fileName = details.file_name as string | undefined;
+
+    // Determine if the file is an image (so the app can render it inline vs. open PDF)
+    const isImage = /\.(jpe?g|png|webp|heic)$/i.test(fileName ?? '') ||
+      /\/(jpeg|jpg|png|webp|heic)$/i.test(publicUrl);
+
+    sendSuccess(res, {
+      public_url: publicUrl,
+      file_name: fileName ?? null,
+      uploaded_at: match.created_at as string,
+      is_image: isImage,
+    });
+  }
+);
+
 export default router;
