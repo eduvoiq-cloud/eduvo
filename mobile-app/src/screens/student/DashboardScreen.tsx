@@ -48,11 +48,19 @@ interface TestRecord {
   question_count: number;
 }
 
+interface AnnouncementRecord {
+  id: string;
+  title: string;
+  message: string;
+  created_at: string;
+}
+
 interface DashboardData {
   attendance: AttendanceSummary | null;
   todayAttendance: TodayAttendance;
   recentMarks: MarkRecord[];
   availableTests: TestRecord[];
+  announcements: AnnouncementRecord[];
 }
 
 type StudentNavProp = BottomTabNavigationProp<StudentTabParamList>;
@@ -81,6 +89,15 @@ function calcAvgMarks(marks: MarkRecord[]): number {
   if (marks.length === 0) return 0;
   const sum = marks.reduce((acc, m) => acc + Math.round((m.score / m.max_score) * 100), 0);
   return Math.round(sum / marks.length);
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
 // ── Attendance status badge ───────────────────────────────────────────────────
@@ -164,7 +181,7 @@ export default function StudentDashboardScreen() {
 
       // We need the student's own ID — it's stored in the user record
       // The marks and attendance endpoints filter by role automatically
-      const [marksRes, testsRes, attHistRes, attTodayRes] = await Promise.allSettled([
+      const [marksRes, testsRes, attHistRes, attTodayRes, annRes] = await Promise.allSettled([
         apiClient.get('/api/marks'),
         apiClient.get('/api/tests/student'),
         apiClient.get('/api/attendance/history', {
@@ -173,6 +190,7 @@ export default function StudentDashboardScreen() {
         apiClient.get('/api/attendance', {
           params: { student_id: user?.id, date: today },
         }),
+        apiClient.get('/api/announcements/student'),
       ]);
 
       // Marks
@@ -212,7 +230,11 @@ export default function StudentDashboardScreen() {
         }
       }
 
-      setData({ attendance, todayAttendance, recentMarks, availableTests });
+      // Announcements for this student's class
+      const announcements: AnnouncementRecord[] =
+        annRes.status === 'fulfilled' ? (annRes.value.data.data ?? []) : [];
+
+      setData({ attendance, todayAttendance, recentMarks, availableTests, announcements });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load dashboard';
       console.warn('[StudentDashboard] fetchAll error:', msg);
@@ -374,6 +396,22 @@ export default function StudentDashboardScreen() {
             <Text style={[styles.quickArrow, { color: '#B45309' }]}>View Tests →</Text>
           </TouchableOpacity>
         </View>
+
+        {/* ── Announcements ─────────────────────────────────────────────── */}
+        {!loading && data && data.announcements.length > 0 && (
+          <>
+            <Text style={[styles.sectionTitle, { marginTop: 24 }]}>📢 Announcements</Text>
+            {data.announcements.slice(0, 5).map((ann) => (
+              <View key={ann.id} style={styles.annCard}>
+                <View style={styles.annHeader}>
+                  <Text style={styles.annTitle} numberOfLines={2}>{ann.title}</Text>
+                  <Text style={styles.annTime}>{timeAgo(ann.created_at)}</Text>
+                </View>
+                <Text style={styles.annMessage}>{ann.message}</Text>
+              </View>
+            ))}
+          </>
+        )}
 
         {/* ── Latest marks summary ──────────────────────────────────────────── */}
         {!loading && data && data.recentMarks.length > 0 && (
@@ -548,6 +586,36 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 12,
   },
+
+  // Announcement cards
+  annCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#1D4ED8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  annHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  annTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+    flex: 1,
+    marginRight: 8,
+  },
+  annTime: { fontSize: 11, color: '#9CA3AF', flexShrink: 0 },
+  annMessage: { fontSize: 13, color: '#4B5563', lineHeight: 18 },
 
   // Recent marks
   markRow: {

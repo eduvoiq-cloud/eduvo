@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { getTokensForUsers, sendPushMulticast } from '../services/fcmService';
@@ -175,6 +175,64 @@ router.post('/teacher', requireRole('teacher'), async (req: Request, res: Respon
     201
   );
 });
+
+// ── GET /api/announcements/student ───────────────────────────────────────────
+/**
+ * Returns announcements targeted at the logged-in student's class + section.
+ * Uses the authenticateStudent middleware so req.student is available.
+ * Filters by school_id and checks whether target_classes JSON array contains
+ * an entry matching the student's class_name and section (case-insensitive).
+ */
+router.get(
+  '/student',
+  authenticateStudent,
+  async (req: Request, res: Response) => {
+    const student = req.student;
+    if (!student) {
+      sendError(res, 'Student not authenticated', 401);
+      return;
+    }
+
+    const { class_name, section, school_id } = student;
+
+    if (!class_name || !section) {
+      // Student has no class assigned — return empty list gracefully
+      sendSuccess(res, []);
+      return;
+    }
+
+    // Fetch all announcements for this school, then filter in JS for
+    // target_classes containment (avoids complex JSONB GIN index requirement).
+    // For schools with large announcement volumes this could be paginated,
+    // but a LIMIT of 50 keeps it snappy for now.
+    const { data, error } = await supabaseAdmin
+      .from('announcements')
+      .select('id, title, message, target_classes, created_by, created_at')
+      .eq('school_id', school_id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      sendError(res, error.message, 500);
+      return;
+    }
+
+    // Filter to only those announcements that target this student's class+section
+    const studentClass   = class_name.trim().toLowerCase();
+    const studentSection = section.trim().toLowerCase();
+
+    const relevant = (data ?? []).filter((ann: { target_classes?: Array<{ class: string; section: string }> }) => {
+      const targets: Array<{ class: string; section: string }> = ann.target_classes ?? [];
+      return targets.some(
+        (t) =>
+          t.class?.trim().toLowerCase()   === studentClass &&
+          t.section?.trim().toLowerCase() === studentSection
+      );
+    });
+
+    sendSuccess(res, relevant);
+  }
+);
 
 // ── GET /api/announcements/my ─────────────────────────────────────────────────
 /**
