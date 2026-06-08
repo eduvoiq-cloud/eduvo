@@ -45,7 +45,7 @@ router.get('/classes', async (req: Request, res: Response) => {
 // Returns all marks for every student in a class, joined with student info.
 // Supports optional term and exam_type filters.
 router.get('/class', async (req: Request, res: Response) => {
-  const { class_name, section, term, exam_type } = req.query as Record<string, string>;
+  const { class_name, section, term, exam_type, subject } = req.query as Record<string, string>;
 
   if (!class_name) {
     sendError(res, 'class_name is required', 400);
@@ -121,6 +121,7 @@ router.get('/class', async (req: Request, res: Response) => {
       : marksQuery.in('term', termValues);
   }
   if (exam_type) marksQuery = marksQuery.eq('exam_type', exam_type);
+  if (subject) marksQuery = marksQuery.ilike('subject', subject);
 
   const { data: marks, error: marksError } = await marksQuery;
 
@@ -134,7 +135,7 @@ router.get('/class', async (req: Request, res: Response) => {
   // the submission count reflects only tests matching those filters.
   let attemptsQuery = supabaseAdmin
     .from('test_attempts')
-    .select('student_id, test_id, mcq_score, total_score, is_submitted, tests!test_attempts_test_id_fkey(term, exam_type)')
+    .select('student_id, test_id, mcq_score, total_score, is_submitted, tests!test_attempts_test_id_fkey(term, exam_type, subject)')
     .in('student_id', studentIds)
     .eq('is_submitted', true);
 
@@ -142,21 +143,23 @@ router.get('/class', async (req: Request, res: Response) => {
 
   type AttemptWithTest = {
     student_id: string;
-    tests: { term: string | null; exam_type: string | null } | null;
+    tests: { term: string | null; exam_type: string | null; subject: string | null } | null;
   };
 
   // supabase-js returns the FK join as an object (not array) when using the fkey hint
   const typedAttempts = (rawAttempts ?? []) as unknown as AttemptWithTest[];
 
-  // Filter attempts by term/exam_type if filters are active
+  // Filter attempts by term/exam_type/subject if filters are active
   const termValues = term ? termFilterValues(term) : null;
   const filteredAttempts = typedAttempts.filter((a) => {
     // supabase-js may return tests as object or array depending on join cardinality
-    const testData = Array.isArray(a.tests) ? (a.tests as Array<{ term: string | null; exam_type: string | null }>)[0] ?? null : a.tests;
+    const testData = Array.isArray(a.tests) ? (a.tests as Array<{ term: string | null; exam_type: string | null; subject: string | null }>)[0] ?? null : a.tests;
     const testTerm = testData?.term ?? null;
     const testExamType = testData?.exam_type ?? null;
+    const testSubject = testData?.subject ?? null;
     if (termValues && testTerm && !termValues.includes(testTerm)) return false;
     if (exam_type && testExamType !== exam_type) return false;
+    if (subject && testSubject && testSubject.toLowerCase() !== subject.toLowerCase()) return false;
     return true;
   });
 

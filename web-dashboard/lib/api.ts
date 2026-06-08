@@ -380,10 +380,14 @@ export const authApi = {
 
   /** Authenticated staff member sets a new password (clears must_reset_password) */
   changePassword: (token: string, newPassword: string) =>
-    request<null>('/api/auth/staff/change-password', {
-      method: 'POST',
-      body: JSON.stringify({ new_password: newPassword }),
-    }, token),
+    request<{ requires_relogin: boolean; token?: string; refresh_token?: string; expires_at?: number } | null>(
+      '/api/auth/staff/change-password',
+      {
+        method: 'POST',
+        body: JSON.stringify({ new_password: newPassword }),
+      },
+      token
+    ),
 
   /** Create a new teacher account (school_admin only) */
   createUser: (
@@ -663,12 +667,13 @@ export const marksViewApi = {
   /** GET /api/marks-view/class — all students in a class with their marks */
   listClass: (
     token: string,
-    params: { class_name: string; section?: string; term?: string; exam_type?: string }
+    params: { class_name: string; section?: string; term?: string; exam_type?: string; subject?: string }
   ) => {
     const qs = new URLSearchParams({ class_name: params.class_name });
     if (params.section) qs.set('section', params.section);
     if (params.term) qs.set('term', params.term);
     if (params.exam_type) qs.set('exam_type', params.exam_type);
+    if (params.subject) qs.set('subject', params.subject);
     return request<StudentMarksRow[]>(`/api/marks-view/class?${qs.toString()}`, { method: 'GET' }, token);
   },
 

@@ -54,6 +54,7 @@ export default function TeacherClassMarksPage() {
   // Filters
   const [filterClass, setFilterClass] = useState('');
   const [filterSection, setFilterSection] = useState('');
+  const [filterSubject, setFilterSubject] = useState('');
   const [filterTerm, setFilterTerm] = useState('');
   const [filterExamType, setFilterExamType] = useState('');
 
@@ -79,6 +80,11 @@ export default function TeacherClassMarksPage() {
   const sectionsForClass = [...new Set(
     assignments.filter((a) => a.class_name === filterClass).map((a) => a.section)
   )].sort();
+  const subjectsForClass = [...new Set(
+    assignments
+      .filter((a) => a.class_name === filterClass && (!filterSection || a.section === filterSection))
+      .map((a) => a.subject)
+  )].sort();
 
   const handleLoad = useCallback(async () => {
     if (!filterClass) { setError('Please select a class.'); return; }
@@ -93,6 +99,7 @@ export default function TeacherClassMarksPage() {
         section: filterSection || undefined,
         term: filterTerm || undefined,
         exam_type: filterExamType || undefined,
+        subject: filterSubject || undefined,
       });
       setRows(res.data ?? []);
       setLoaded(true);
@@ -101,7 +108,7 @@ export default function TeacherClassMarksPage() {
     } finally {
       setLoading(false);
     }
-  }, [filterClass, filterSection, filterTerm, filterExamType]);
+  }, [filterClass, filterSection, filterSubject, filterTerm, filterExamType]);
 
   return (
     <>
@@ -109,14 +116,14 @@ export default function TeacherClassMarksPage() {
 
       {/* Filters */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6 max-w-4xl">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Class <span className="text-red-500">*</span></label>
             <select
               className={inputClass}
               disabled={loadingAssignments}
               value={filterClass}
-              onChange={(e) => { setFilterClass(e.target.value); setFilterSection(''); setLoaded(false); setRows([]); }}
+              onChange={(e) => { setFilterClass(e.target.value); setFilterSection(''); setFilterSubject(''); setLoaded(false); setRows([]); }}
             >
               <option value="">{loadingAssignments ? 'Loading…' : 'Select class…'}</option>
               {myClasses.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -128,10 +135,22 @@ export default function TeacherClassMarksPage() {
               className={inputClass}
               disabled={!filterClass}
               value={filterSection}
-              onChange={(e) => { setFilterSection(e.target.value); setLoaded(false); setRows([]); }}
+              onChange={(e) => { setFilterSection(e.target.value); setFilterSubject(''); setLoaded(false); setRows([]); }}
             >
               <option value="">All sections</option>
               {sectionsForClass.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Subject</label>
+            <select
+              className={inputClass}
+              disabled={!filterClass}
+              value={filterSubject}
+              onChange={(e) => { setFilterSubject(e.target.value); setLoaded(false); setRows([]); }}
+            >
+              <option value="">All subjects</option>
+              {subjectsForClass.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -170,9 +189,9 @@ export default function TeacherClassMarksPage() {
             <h2 className="text-sm font-semibold text-gray-900">
               {filterClass}{filterSection ? ` · ${filterSection}` : ''} — {rows.length} student{rows.length !== 1 ? 's' : ''}
             </h2>
-            {(filterTerm || filterExamType) && (
+            {(filterTerm || filterExamType || filterSubject) && (
               <span className="text-xs text-gray-500">
-                {filterTerm ? TERM_LABELS[filterTerm] : ''}{filterTerm && filterExamType ? ' · ' : ''}{filterExamType ? EXAM_TYPE_LABELS[filterExamType] : ''}
+                {filterSubject ? filterSubject : ''}{filterSubject && (filterTerm || filterExamType) ? ' · ' : ''}{filterTerm ? TERM_LABELS[filterTerm] : ''}{filterTerm && filterExamType ? ' · ' : ''}{filterExamType ? EXAM_TYPE_LABELS[filterExamType] : ''}
               </span>
             )}
           </div>
