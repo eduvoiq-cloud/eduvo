@@ -19,6 +19,7 @@ type MoreStackParamList = {
   Homework: undefined;
   Timetable: undefined;
   Notifications: undefined;
+  Announcements: undefined;
   Complaints: undefined;
   FeeStatus: undefined;
   ChangePassword: undefined;
@@ -109,6 +110,13 @@ export default function MoreHomeScreen() {
         {/* Communication */}
         <Text style={styles.sectionLabel}>Communication</Text>
         <View style={styles.section}>
+          <MenuItem
+            icon="📢"
+            label="Announcements"
+            description="View all school announcements"
+            color="#1D4ED8"
+            onPress={() => navigation.navigate('Announcements')}
+          />
           <MenuItem
             icon="💬"
             label="Complaints"

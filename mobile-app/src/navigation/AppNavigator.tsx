@@ -27,6 +27,9 @@ import StudentTestsScreen from '../screens/student/TestsScreen';
 // More home screen
 import MoreHomeScreen from '../screens/main/MoreHomeScreen';
 
+// Announcements screen
+import AnnouncementsScreen from '../screens/main/AnnouncementsScreen';
+
 // Settings screens
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import LinkChildScreen from '../screens/settings/LinkChildScreen';
@@ -54,6 +57,7 @@ export type MainStackParamList = {
   TestAttempt: { test: TestMeta };
   ChangePassword: undefined;
   LinkChild: undefined;
+  Announcements: undefined;
 };
 
 // Keep StudentStackParamList as an alias so existing student screens don't break
@@ -120,6 +124,11 @@ function MoreNavigator() {
         name="Notifications"
         component={NotificationsScreen}
         options={{ title: 'Notifications' }}
+      />
+      <MoreStack.Screen
+        name="Announcements"
+        component={AnnouncementsScreen}
+        options={{ title: 'Announcements' }}
       />
       <MoreStack.Screen
         name="FeeStatus"

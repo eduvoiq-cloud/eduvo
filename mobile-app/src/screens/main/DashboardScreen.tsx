@@ -10,7 +10,7 @@ import {
   Modal,
   ActivityIndicator,
 } from 'react-native';
-import { useNavigation, CommonActions } from '@react-navigation/native';
+import { useNavigation, CommonActions, useFocusEffect } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuthStore } from '../../store/authStore';
 import { useChildStore } from '../../store/childStore';
@@ -241,6 +241,10 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [notifCount, setNotifCount] = useState(0);
+  const [annCount, setAnnCount] = useState(0);
+
+  // Total unseen items driving the bell badge
+  const totalUnread = notifCount + annCount;
 
   // Active student: if linked children exist, use active child; else use logged-in student
   const activeStudent =
@@ -356,18 +360,21 @@ export default function DashboardScreen() {
       let announcements: Announcement[] = [];
       if (annRes.status === 'fulfilled') {
         announcements = annRes.value.data.data ?? [];
+        // Track announcement count for the bell badge
+        setAnnCount(announcements.length);
       }
 
-      // Notification badge count
+      // Notification badge count (unread notifications)
       if (notifCountRes.status === 'fulfilled') {
         const notifs: any[] = notifCountRes.value.data.data ?? [];
         if (notifs.length > 0) {
           setNotifCount(notifCountRes.value.data.meta?.total ?? notifs.length);
+        } else {
+          setNotifCount(0);
         }
       }
 
-      setData({ attendance, homework, recentMark, announcements });
-    } catch (err) {
+      setData({ attendance, homework, recentMark, announcements });    } catch (err) {
       console.warn('[Dashboard] fetchAll error:', err);
     } finally {
       setLoading(false);
@@ -376,6 +383,23 @@ export default function DashboardScreen() {
   }, [activeStudent?.id, linkedChildren, activeChildIndex]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Re-fetch notification count whenever the screen is focused
+  // so the bell badge reflects reads done on the Notifications screen.
+  useFocusEffect(
+    useCallback(() => {
+      const fetchCounts = async () => {
+        try {
+          const res = await apiClient.get('/api/notifications', { params: { unread: true, limit: 1 } });
+          const notifs: any[] = res.data.data ?? [];
+          setNotifCount(notifs.length > 0 ? (res.data.meta?.total ?? notifs.length) : 0);
+        } catch {
+          // Silently ignore — counts just won't update
+        }
+      };
+      fetchCounts();
+    }, [])
+  );
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -394,9 +418,9 @@ export default function DashboardScreen() {
   const hwValue = loading ? '—' : String(data?.homework.pendingCount ?? 0);
   const hwSub = 'Pending homework';
 
-  const annCount = data?.announcements.length ?? 0;
-  const annValue = loading ? '—' : String(annCount);
-  const annSub = annCount === 0 ? 'No new announcements' : `${annCount} new announcement${annCount !== 1 ? 's' : ''}`;
+  const annDisplayCount = data?.announcements.length ?? 0;
+  const annValue = loading ? '—' : String(annDisplayCount);
+  const annSub = annDisplayCount === 0 ? 'No new announcements' : `${annDisplayCount} new announcement${annDisplayCount !== 1 ? 's' : ''}`;
 
   const markValue = data?.recentMark
     ? `${Math.round((data.recentMark.score / data.recentMark.max_score) * 100)}%`
@@ -427,15 +451,15 @@ export default function DashboardScreen() {
             </Text>
           </View>
           <TouchableOpacity
-            style={styles.bellWrapper}
-        onPress={() => navigateToMore('Notifications')}
+            style={[styles.bellWrapper, totalUnread > 0 && styles.bellWrapperActive]}
+            onPress={() => navigateToMore('Notifications')}
             accessibilityRole="button"
-            accessibilityLabel={`Notifications${notifCount > 0 ? `, ${notifCount} unread` : ''}`}
+            accessibilityLabel={`Notifications${totalUnread > 0 ? `, ${totalUnread} unread` : ''}`}
           >
-            <Text style={styles.bell}>🔔</Text>
-            {notifCount > 0 && (
+            <Text style={[styles.bell, totalUnread > 0 && styles.bellActive]}>🔔</Text>
+            {totalUnread > 0 && (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{notifCount > 9 ? '9+' : notifCount}</Text>
+                <Text style={styles.badgeText}>{totalUnread > 9 ? '9+' : totalUnread}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -478,6 +502,7 @@ export default function DashboardScreen() {
                 value={annValue}
                 sub={annSub}
                 color="#1D4ED8"
+                onPress={() => navigateToMore('Announcements')}
               />
               <DashCard
                 icon="📊"
@@ -512,10 +537,28 @@ export default function DashboardScreen() {
         {/* Announcements section — always shown below the cards */}
         {!loading && (
           <View style={styles.annSection}>
-            <Text style={styles.annSectionTitle}>📢 Announcements</Text>
+            <View style={styles.annSectionHeader}>
+              <Text style={styles.annSectionTitle}>📢 Announcements</Text>
+              {data?.announcements && data.announcements.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => navigateToMore('Announcements')}
+                  accessibilityRole="link"
+                  accessibilityLabel="See all announcements"
+                >
+                  <Text style={styles.annSeeAll}>See all →</Text>
+                </TouchableOpacity>
+              )}
+            </View>
             {data?.announcements && data.announcements.length > 0 ? (
-              data.announcements.slice(0, 5).map((ann) => (
-                <View key={ann.id} style={styles.announcementCard}>
+              data.announcements.slice(0, 3).map((ann) => (
+                <TouchableOpacity
+                  key={ann.id}
+                  style={styles.announcementCard}
+                  onPress={() => navigateToMore('Announcements')}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Announcement: ${ann.title}`}
+                >
                   <View style={styles.annCardHeader}>
                     <Text style={styles.announcementTitle} numberOfLines={2}>
                       {ann.title}
@@ -524,10 +567,10 @@ export default function DashboardScreen() {
                       {timeAgo(ann.created_at)}
                     </Text>
                   </View>
-                  <Text style={styles.announcementBody}>
+                  <Text style={styles.announcementBody} numberOfLines={2}>
                     {ann.message}
                   </Text>
-                </View>
+                </TouchableOpacity>
               ))
             ) : (
               <View style={styles.annEmpty}>
@@ -556,6 +599,11 @@ const styles = StyleSheet.create({
   subGreeting: { fontSize: 13, color: '#6B7280', marginTop: 3 },
   bellWrapper: { position: 'relative', padding: 4 },
   bell: { fontSize: 24 },
+  bellActive: { /* pulse handled via bellWrapper background below */ },
+  bellWrapperActive: {
+    backgroundColor: '#FEF9C3',
+    borderRadius: 20,
+  },
   badge: {
     position: 'absolute',
     top: 0,
@@ -574,11 +622,21 @@ const styles = StyleSheet.create({
   annSection: {
     marginTop: 24,
   },
+  annSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   annSectionTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#111827',
-    marginBottom: 12,
+  },
+  annSeeAll: {
+    fontSize: 13,
+    color: '#1D4ED8',
+    fontWeight: '500',
   },
   announcementCard: {
     backgroundColor: '#FFFFFF',
