@@ -1049,7 +1049,9 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
       const defaultPassword = phoneDigits;
 
       // ── Create Supabase Auth user with phone as password ───────────────────
-      const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+      // If the email exists in auth (e.g. from a previously soft-deleted teacher),
+      // hard-delete the stale auth entry first so we can re-create cleanly.
+      let { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
         email: data.email,
         password: defaultPassword,
         email_confirm: true,
@@ -1059,7 +1061,29 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
         },
       });
 
-      if (authErr || !authUser.user) {
+      if (authErr && authErr.message?.toLowerCase().includes('already been registered')) {
+        // Find and delete the stale auth user, then retry
+        const { data: existingAuthUsers } = await supabaseAdmin.auth.admin.listUsers();
+        const staleUser = existingAuthUsers?.users?.find(
+          (u) => u.email?.toLowerCase() === data.email.toLowerCase()
+        );
+        if (staleUser) {
+          await supabaseAdmin.auth.admin.deleteUser(staleUser.id);
+          // Also clean up any stale users row
+          await supabaseAdmin.from('users').delete().eq('id', staleUser.id);
+        }
+        // Retry creation
+        const retry = await supabaseAdmin.auth.admin.createUser({
+          email: data.email,
+          password: defaultPassword,
+          email_confirm: true,
+          user_metadata: { name: data.name, role: 'teacher' },
+        });
+        authUser = retry.data;
+        authErr  = retry.error;
+      }
+
+      if (authErr || !authUser?.user) {
         errors.push(`Row ${row.row_number}: Failed to create auth user — ${authErr?.message ?? 'unknown error'}`);
         continue;
       }

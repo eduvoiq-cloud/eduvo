@@ -670,20 +670,30 @@ router.delete('/teachers/:id', async (req: Request, res: Response) => {
 
   if (!teacher) { sendError(res, 'Teacher not found in your school', 404); return; }
 
-  // Soft-delete the user record
-  const { error: deleteErr } = await supabaseAdmin
-    .from('users')
-    .update({ is_deleted: true, deleted_at: new Date().toISOString() })
-    .eq('id', req.params.id);
+  // Hard-delete from Supabase Auth so the email can be re-used on re-import.
+  // The users row is cascade-deleted automatically (FK references auth.users ON DELETE CASCADE).
+  // We also clean up teacher_assignments explicitly before the auth delete fires.
 
-  if (deleteErr) { sendError(res, deleteErr.message, 500); return; }
-
-  // Remove all teacher_assignments for this teacher in this school
+  // Remove all teacher_assignments first
   await supabaseAdmin
     .from('teacher_assignments')
     .delete()
     .eq('teacher_id', req.params.id)
     .eq('school_id', schoolId);
+
+  // Hard-delete from auth.users (cascades to public.users via FK)
+  const teacherId = String(req.params.id);
+  const { error: authDeleteErr } = await supabaseAdmin.auth.admin.deleteUser(teacherId);
+
+  if (authDeleteErr) {
+    // Fall back to soft-delete if auth delete fails (e.g. user not in auth.users)
+    const { error: softDeleteErr } = await supabaseAdmin
+      .from('users')
+      .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+
+    if (softDeleteErr) { sendError(res, softDeleteErr.message, 500); return; }
+  }
 
   await logAudit(adminId, 'TEACHER_DELETED', 'users', {
     teacher_id:   req.params.id,
