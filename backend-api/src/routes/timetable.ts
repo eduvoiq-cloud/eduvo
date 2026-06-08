@@ -795,6 +795,7 @@ router.post(
     });
 
     // ── Notify students in the class/section ──────────────────────────────────
+    let notifiedCount = 0;
     if (className && section) {
       try {
         // Fetch all active students in this class+section
