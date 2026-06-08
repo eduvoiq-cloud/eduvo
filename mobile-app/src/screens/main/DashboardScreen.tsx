@@ -235,6 +235,8 @@ const cardStyles = StyleSheet.create({
 
 export default function DashboardScreen() {
   const student = useAuthStore((s) => s.student);
+  const login = useAuthStore((s) => s.login);
+  const token = useAuthStore((s) => s.token);
   const { linkedChildren, activeChildIndex } = useChildStore();
   const navigation = useNavigation<MainNavProp>();
 
@@ -388,6 +390,34 @@ export default function DashboardScreen() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Refresh the student's name from the server once on mount so it's always
+  // up-to-date even if the persisted store has a stale/null name.
+  useEffect(() => {
+    if (linkedChildren.length > 0) return; // parent view — name comes from child store
+    const refreshName = async () => {
+      try {
+        const res = await apiClient.get('/api/auth/me');
+        const freshStudent = res.data?.data?.student;
+        if (freshStudent?.name && student) {
+          // Update store only if name actually changed (avoids unnecessary re-renders)
+          if (freshStudent.name !== student.name) {
+            login(
+              {
+                ...student,
+                name: freshStudent.name,
+              },
+              token!
+            );
+          }
+        }
+      } catch {
+        // Non-critical — greeting will fall back to whatever is in the store
+      }
+    };
+    refreshName();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Re-fetch counts whenever Home is focused so the bell reflects
   // reads/views done on the Notifications or Announcements screens.
   useFocusEffect(
@@ -419,7 +449,7 @@ export default function DashboardScreen() {
     fetchAll();
   }, [fetchAll]);
 
-  const firstName = activeStudent?.name ?? student?.name ?? '';
+  const firstName = (activeStudent?.name ?? student?.name ?? '').trim();
 
   const attendanceValue = data?.attendance
     ? `${data.attendance.percentage}%`
