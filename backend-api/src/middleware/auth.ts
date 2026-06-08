@@ -190,7 +190,7 @@ export async function authenticateStudent(
 
   const { data: student, error } = await supabaseAdmin
     .from('students')
-    .select('id, name, phone_number, class_name, section, school_id, is_first_login')
+    .select('id, full_name, phone_number, class_name, section, school_id, is_first_login')
     .eq('id', payload.sub)
     .single();
 
@@ -216,7 +216,7 @@ export async function authenticateStudent(
 
   req.student = {
     id: student.id,
-    name: student.name,
+    name: student.full_name,
     phone_number: student.phone_number,
     class_name: student.class_name ?? null,
     section: student.section ?? null,
@@ -252,14 +252,14 @@ export async function authenticateAny(
       if (payload?.type === 'student') {
         const { data: student, error } = await supabaseAdmin
           .from('students')
-          .select('id, name, phone_number, class_name, section, school_id, is_first_login')
+          .select('id, full_name, phone_number, class_name, section, school_id, is_first_login')
           .eq('id', payload.sub)
           .single();
 
         if (!error && student) {
           req.student = {
             id: student.id,
-            name: student.name,
+            name: student.full_name,
             phone_number: student.phone_number,
             class_name: student.class_name ?? null,
             section: student.section ?? null,

@@ -210,7 +210,7 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
   // 1. Look up student by phone_number (also check legacy phone column)
   const { data: student, error: studentError } = await supabaseAdmin
     .from('students')
-    .select('id, name, phone_number, class_name, section, school_id, password_hash, is_first_login')
+    .select('id, full_name, phone_number, class_name, section, school_id, password_hash, is_first_login')
     .or(`phone_number.eq.${phone_number},phone.eq.${phone_number}`)
     .eq('is_deleted', false)
     .maybeSingle();
@@ -259,7 +259,7 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
     must_change_password: student.is_first_login === true,
     student: {
       id: student.id,
-      name: student.name,
+      name: student.full_name,
       phone: student.phone_number,
       class: student.class_name,
       section: student.section,
