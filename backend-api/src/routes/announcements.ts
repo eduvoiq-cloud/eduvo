@@ -6,8 +6,13 @@ import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { getTokensForUsers, sendPushMulticast } from '../services/fcmService';
 
+// ── Two routers: one for student-token routes (no `authenticate`),
+//    one for staff-token routes (protected by `authenticate`).
+//    Both are exported as a single combined router.
+const studentRouter = Router();
 const router = Router();
 
+// Staff-only routes use the authenticate middleware globally
 router.use(authenticate);
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -182,8 +187,11 @@ router.post('/teacher', requireRole('teacher'), async (req: Request, res: Respon
  * Uses the authenticateStudent middleware so req.student is available.
  * Filters by school_id and checks whether target_classes JSON array contains
  * an entry matching the student's class_name and section (case-insensitive).
+ *
+ * NOTE: this route lives on studentRouter (no global `authenticate` guard)
+ * so that student JWTs are accepted. `authenticateStudent` handles auth.
  */
-router.get(
+studentRouter.get(
   '/student',
   authenticateStudent,
   async (req: Request, res: Response) => {
@@ -315,4 +323,13 @@ router.delete('/:id', requireRole('teacher', 'schooladmin', 'superadmin'), async
   sendSuccess(res, null, 'Announcement deleted');
 });
 
-export default router;
+// ── Combined export ───────────────────────────────────────────────────────────
+// studentRouter handles routes that use student JWTs (no global `authenticate`).
+// These must be mounted BEFORE the staff `router` so Express matches them first.
+// In index.ts: app.use('/api/announcements', announcementsRouter)
+// Both routers share the same base path — Express merges them here.
+const combinedRouter = Router();
+combinedRouter.use(studentRouter); // student-token routes first (no authenticate guard)
+combinedRouter.use(router);        // staff-token routes second
+
+export default combinedRouter;

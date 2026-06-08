@@ -31,12 +31,6 @@ interface HomeworkSummary {
   pendingCount: number;
 }
 
-interface NextPeriod {
-  subject: string;
-  teacher: string;
-  time: string;
-}
-
 interface RecentMark {
   subject: string;
   score: number;
@@ -53,7 +47,6 @@ interface Announcement {
 interface DashboardData {
   attendance: AttendanceSummary | null;
   homework: HomeworkSummary;
-  nextPeriod: NextPeriod | null;
   recentMark: RecentMark | null;
   announcements: Announcement[];
 }
@@ -64,10 +57,6 @@ type MainNavProp = BottomTabNavigationProp<MainTabParamList>;
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
-}
-
-function todayDayName(): string {
-  return new Date().toLocaleDateString('en-US', { weekday: 'long' });
 }
 
 function timeAgo(iso: string): string {
@@ -296,7 +285,7 @@ export default function DashboardScreen() {
       const yearStart = `${new Date().getFullYear()}-01-01`;
       const yearEnd = `${new Date().getFullYear()}-12-31`;
 
-      const [attHistRes, attTodayRes, hwRes, marksRes, timetableRes, annRes, notifCountRes] =
+      const [attHistRes, attTodayRes, hwRes, marksRes, annRes, notifCountRes] =
         await Promise.allSettled([
           apiClient.get('/api/attendance/history', {
             params: { student_id: activeStudent?.id, start_date: yearStart, end_date: yearEnd },
@@ -307,9 +296,6 @@ export default function DashboardScreen() {
           // Homework pending count — use the dedicated student endpoint
           apiClient.get('/api/homework/pending-count'),
           apiClient.get('/api/marks'),
-          apiClient.get('/api/timetable/class', {
-            params: { class: activeStudent?.class, section: activeStudent?.section },
-          }),
           apiClient.get('/api/announcements/student'),
           apiClient.get('/api/notifications', { params: { unread: true, limit: 1 } }),
         ]);
@@ -339,32 +325,6 @@ export default function DashboardScreen() {
         hwRes.status === 'fulfilled' ? (hwRes.value.data.data?.count ?? 0) : 0;
       const homework: HomeworkSummary = { pendingCount };
 
-      // Next period
-      let nextPeriod: NextPeriod | null = null;
-      if (timetableRes.status === 'fulfilled') {
-        // API returns a day-keyed object: { monday: [...], tuesday: [...], ... }
-        // Extract today's periods array from the object
-        const timetableData = timetableRes.value.data.data;
-        const todayKey = todayDayName().toLowerCase();
-        const periods: any[] = Array.isArray(timetableData)
-          ? timetableData
-          : (timetableData?.[todayKey] ?? []);
-        const now = new Date();
-        const currentMinutes = now.getHours() * 60 + now.getMinutes();
-        const upcoming = periods.find((p: any) => {
-          if (!p.start_time) return false;
-          const [h, m] = p.start_time.split(':').map(Number);
-          return h * 60 + m > currentMinutes;
-        });
-        if (upcoming) {
-          nextPeriod = {
-            subject: upcoming.subject_name ?? upcoming.subject ?? 'Class',
-            teacher: upcoming.teacher_name ?? '',
-            time: upcoming.start_time ?? '',
-          };
-        }
-      }
-
       // Recent mark
       let recentMark: RecentMark | null = null;
       if (marksRes.status === 'fulfilled') {
@@ -393,14 +353,14 @@ export default function DashboardScreen() {
         }
       }
 
-      setData({ attendance, homework, nextPeriod, recentMark, announcements });
+      setData({ attendance, homework, recentMark, announcements });
     } catch (err) {
       console.warn('[Dashboard] fetchAll error:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeStudent?.id, activeStudent?.class, activeStudent?.section]);
+  }, [activeStudent?.id]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -421,10 +381,9 @@ export default function DashboardScreen() {
   const hwValue = loading ? '—' : String(data?.homework.pendingCount ?? 0);
   const hwSub = 'Pending homework';
 
-  const nextValue = data?.nextPeriod ? data.nextPeriod.time : '—';
-  const nextSub = data?.nextPeriod
-    ? `${data.nextPeriod.subject}${data.nextPeriod.teacher ? ` · ${data.nextPeriod.teacher}` : ''}`
-    : 'No more classes today';
+  const annCount = data?.announcements.length ?? 0;
+  const annValue = loading ? '—' : String(annCount);
+  const annSub = annCount === 0 ? 'No new announcements' : `${annCount} new announcement${annCount !== 1 ? 's' : ''}`;
 
   const markValue = data?.recentMark
     ? `${Math.round((data.recentMark.score / data.recentMark.max_score) * 100)}%`
@@ -501,12 +460,11 @@ export default function DashboardScreen() {
             </View>
             <View style={[styles.cardsRow, { marginTop: 12 }]}>
               <DashCard
-                icon="⏰"
-                title="Next Class"
-                value={nextValue}
-                sub={nextSub}
-                color="#8B5CF6"
-                onPress={() => navigateToMore('Timetable')}
+                icon="📢"
+                title="Announcements"
+                value={annValue}
+                sub={annSub}
+                color="#1D4ED8"
               />
               <DashCard
                 icon="📊"
@@ -538,24 +496,32 @@ export default function DashboardScreen() {
           </>
         )}
 
-        {/* Announcement banner */}
-        {data?.announcements && data.announcements.length > 0 && (
-          <>
-            {data.announcements.slice(0, 5).map((ann) => (
-              <View key={ann.id} style={styles.announcementCard}>
-                <Text style={styles.announcementLabel}>📢 Announcement</Text>
-                <Text style={styles.announcementTitle} numberOfLines={2}>
-                  {ann.title}
-                </Text>
-                <Text style={styles.announcementBody} numberOfLines={3}>
-                  {ann.message}
-                </Text>
-                <Text style={styles.announcementTime}>
-                  {timeAgo(ann.created_at)}
-                </Text>
+        {/* Announcements section — always shown below the cards */}
+        {!loading && (
+          <View style={styles.annSection}>
+            <Text style={styles.annSectionTitle}>📢 Announcements</Text>
+            {data?.announcements && data.announcements.length > 0 ? (
+              data.announcements.slice(0, 5).map((ann) => (
+                <View key={ann.id} style={styles.announcementCard}>
+                  <View style={styles.annCardHeader}>
+                    <Text style={styles.announcementTitle} numberOfLines={2}>
+                      {ann.title}
+                    </Text>
+                    <Text style={styles.announcementTime}>
+                      {timeAgo(ann.created_at)}
+                    </Text>
+                  </View>
+                  <Text style={styles.announcementBody}>
+                    {ann.message}
+                  </Text>
+                </View>
+              ))
+            ) : (
+              <View style={styles.annEmpty}>
+                <Text style={styles.annEmptyText}>No announcements for your class</Text>
               </View>
-            ))}
-          </>
+            )}
+          </View>
         )}
       </ScrollView>
     </>
@@ -592,16 +558,62 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 10, color: '#FFFFFF', fontWeight: '700' },
   loadingBox: { height: 200, justifyContent: 'center', alignItems: 'center' },
   cardsRow: { flexDirection: 'row', gap: 12 },
+  annSection: {
+    marginTop: 24,
+  },
+  annSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+  },
   announcementCard: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 16,
-    marginTop: 20,
+    marginBottom: 10,
     borderLeftWidth: 4,
     borderLeftColor: '#1D4ED8',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.07,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  announcementLabel: { fontSize: 11, color: '#1D4ED8', fontWeight: '700', marginBottom: 4 },
-  announcementTitle: { fontSize: 15, fontWeight: '700', color: '#1E3A8A', marginBottom: 4 },
-  announcementBody: { fontSize: 13, color: '#374151', lineHeight: 19 },
-  announcementTime: { fontSize: 11, color: '#93C5FD', marginTop: 6 },
+  annCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  announcementTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E3A8A',
+    flex: 1,
+    marginRight: 8,
+  },
+  announcementBody: {
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 19,
+  },
+  announcementTime: {
+    fontSize: 11,
+    color: '#93C5FD',
+    flexShrink: 0,
+  },
+  annEmpty: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderStyle: 'dashed',
+  },
+  annEmptyText: {
+    fontSize: 13,
+    color: '#9CA3AF',
+  },
 });
