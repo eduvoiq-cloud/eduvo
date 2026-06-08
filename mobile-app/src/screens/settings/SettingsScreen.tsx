@@ -15,8 +15,8 @@ import { useAuthStore } from '../../store/authStore';
 import { useChildStore } from '../../store/childStore';
 import { MainStackParamList } from '../../navigation/AppNavigator';
 
-const PRIVACY_URL = 'https://eduvo.in/privacy-policy';
-const TERMS_URL = 'https://eduvo.in/terms-of-service';
+const PRIVACY_URL = 'https://eduvo.vercel.app/privacy-policy';
+const TERMS_URL = 'https://eduvo.vercel.app/terms-of-service';
 
 // ── Row component ─────────────────────────────────────────────────────────────
 

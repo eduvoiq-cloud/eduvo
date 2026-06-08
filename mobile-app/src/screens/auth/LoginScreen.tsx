@@ -19,7 +19,7 @@ import apiClient from '../../api/client';
 const MAX_ATTEMPTS = 10;
 const LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
 const PRIMARY = '#3b82f6';
-const PRIVACY_URL = 'https://eduvo.in/privacy-policy';
+const PRIVACY_URL = 'https://eduvo.vercel.app/privacy-policy';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
