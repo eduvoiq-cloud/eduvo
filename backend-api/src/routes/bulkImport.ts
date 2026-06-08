@@ -400,7 +400,7 @@ router.post(
     // Fetch existing students for this school to check DB duplicates
     const { data: existingStudents, error: dbErr } = await supabaseAdmin
       .from('students')
-      .select('full_name, class_name, phone_number')
+      .select('full_name, phone_number')
       .eq('school_id', school_id)
       .eq('is_deleted', false);
 
@@ -408,13 +408,6 @@ router.post(
       sendError(res, 'Failed to check existing students.', 500);
       return;
     }
-
-    // Build a set of "full_name|class_name" for duplicate detection (name + class only)
-    const existingNameClassSet = new Set<string>(
-      (existingStudents ?? [])
-        .filter((s) => s.full_name && s.class_name)
-        .map((s) => `${String(s.full_name).trim().toLowerCase()}|${String(s.class_name).trim().toLowerCase()}`)
-    );
 
     // Build a map of phone_number -> student name for phone warning lookup
     const existingPhoneMap = new Map<string, string>(
@@ -424,7 +417,6 @@ router.post(
     );
 
     // Track name+class combos seen within this file for intra-file duplicate detection
-    const seenNameClassInFile = new Set<string>();
     const previewRows: PreviewRow[] = [];
 
     for (let i = 0; i < dataRows.length; i++) {
@@ -472,23 +464,11 @@ router.post(
       const { error: dobErr, parsed: parsedDob } = validateDateOfBirth(dateOfBirth);
       if (dobErr) errors.push(dobErr);
 
-      // Duplicate detection: name + class only
-      const nameClassKey = `${studentName.trim().toLowerCase()}|${className.trim().toLowerCase()}`;
-      const phoneStr     = parentPhone.trim();
+      // Duplicate detection: phone warning only (non-blocking)
+      const phoneStr = parentPhone.trim();
 
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
       let warning: string | null = null;
-
-      // Check for name+class duplicates within this file
-      if (studentName.trim() && className.trim()) {
-        if (seenNameClassInFile.has(nameClassKey)) {
-          errors.push('Duplicate student (same name + class) within this file');
-          status = 'duplicate';
-        } else if (existingNameClassSet.has(nameClassKey)) {
-          errors.push('Student with this name already exists in this class');
-          status = 'duplicate';
-        }
-      }
 
       if (status === 'valid' && errors.length > 0) {
         status = 'invalid';
@@ -498,17 +478,12 @@ router.post(
       if (status === 'valid' && phoneStr && /^\d{10}$/.test(phoneStr)) {
         const existingOwner = existingPhoneMap.get(phoneStr);
         if (existingOwner) {
-          // Find class of existing student for more context
-          const existingWithPhone = (existingStudents ?? []).find(
-            (s) => String(s.phone_number).trim() === phoneStr
-          );
-          const existingClass = existingWithPhone?.class_name ?? '';
-          warning = `Phone ${phoneStr} already linked to ${existingOwner}${existingClass ? ` (${existingClass})` : ''}. Import anyway?`;
+          warning = `Phone ${phoneStr} already linked to ${existingOwner}. Import anyway?`;
         }
       }
 
       if (status === 'valid') {
-        seenNameClassInFile.add(nameClassKey);
+        // nothing to track — no duplicate key checks on name
       }
 
       previewRows.push({
