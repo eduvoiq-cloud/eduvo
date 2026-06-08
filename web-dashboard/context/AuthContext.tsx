@@ -136,7 +136,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // do a hard redirect before rendering the dashboard. Using
         // window.location avoids the async Next.js App Router race condition
         // where router.push fires but the dashboard layout re-renders first.
-        if (freshUser.must_reset_password) {
+        // Only redirect if not already on the force-reset-password page to
+        // prevent an infinite reload loop.
+        if (freshUser.must_reset_password && !window.location.pathname.includes('force-reset-password')) {
           // Keep loading: true so nothing renders while we navigate away
           setState({ user: freshUser, token, loading: true });
           window.location.replace('/force-reset-password');

@@ -8,7 +8,10 @@ import { NextRequest, NextResponse } from 'next/server';
  *   - Wrong-role users → their correct dashboard
  */
 
-const PUBLIC_PATHS = ['/login', '/gate', '/forgot-password', '/reset-password', '/force-reset-password', '/delete-account', '/terms-of-service', '/privacy-policy'];
+const PUBLIC_PATHS = ['/login', '/gate', '/forgot-password', '/reset-password', '/delete-account', '/terms-of-service', '/privacy-policy'];
+
+// Paths that are always accessible regardless of auth state — never redirect away from these
+const ALWAYS_ALLOW_PATHS = ['/force-reset-password'];
 
 // Which path prefixes each role is allowed on
 const ROLE_PREFIXES: Record<string, string> = {
@@ -35,6 +38,13 @@ export function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Always allow these paths regardless of token — never redirect away from them.
+  // /force-reset-password must be reachable even with a token so bulk-imported
+  // teachers can set their password without hitting an infinite redirect loop.
+  if (ALWAYS_ALLOW_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
+    return NextResponse.next();
+  }
+
   const token = req.cookies.get('eduvo_token')?.value;
   const roleRaw = req.cookies.get('eduvo_role')?.value;
 
@@ -48,7 +58,7 @@ export function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Has token + on login page → redirect to dashboard
+  // Has token + on a login/public page → redirect to dashboard
   if (token && isPublic) {
     const role = roleRaw ?? 'teacher';
     const url = req.nextUrl.clone();
