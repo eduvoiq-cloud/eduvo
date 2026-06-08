@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useAuth } from '@/context/AuthContext';
-import { assignmentsApi, type TeacherAssignment } from '@/lib/api';
+import { type TeacherAssignment } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
@@ -816,11 +815,10 @@ function FilledCell({ entry, isDeleting, onEdit, onDelete }: FilledCellProps) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function TimetablePage() {
-  const { user } = useAuth();
-
   // ── Assignments / class-section-subject data ────────────────────────────────
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
+  const [allSubjects, setAllSubjects] = useState<SubjectOption[]>([]);
 
   // ── Filter state ────────────────────────────────────────────────────────────
   const [selectedClass, setSelectedClass] = useState('');
@@ -846,15 +844,37 @@ export default function TimetablePage() {
   // ── Print ref ───────────────────────────────────────────────────────────────
   const printRef = useRef<HTMLDivElement>(null);
 
-  // ── Load assignments ────────────────────────────────────────────────────────
+  // ── Load assignments + subjects ─────────────────────────────────────────────
   useEffect(() => {
     const token = getToken();
-    if (!token || !user?.school_id) return;
-    assignmentsApi.list(token, user.school_id)
-      .then((res) => setAssignments(res.data.filter((a) => a.teacher_id === user.id)))
-      .catch(() => {})
-      .finally(() => setLoadingAssignments(false));
-  }, [user]);
+    if (!token) return;
+
+    // Fetch teacher's class assignments
+    const classesPromise = fetch(`${BASE_URL}/api/teacher/my-classes`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.success && Array.isArray(json.data)) {
+          setAssignments(json.data as TeacherAssignment[]);
+        }
+      })
+      .catch(() => {});
+
+    // Fetch teacher's assigned subjects with real UUIDs
+    const subjectsPromise = fetch(`${BASE_URL}/api/teacher/subjects?assigned=true`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.success && Array.isArray(json.data)) {
+          setAllSubjects(json.data as SubjectOption[]);
+        }
+      })
+      .catch(() => {});
+
+    Promise.all([classesPromise, subjectsPromise]).finally(() => setLoadingAssignments(false));
+  }, []);
 
   // ── Derived dropdowns ───────────────────────────────────────────────────────
   const myClasses = [...new Set(assignments.map((a) => a.class_name))].sort();
@@ -863,11 +883,20 @@ export default function TimetablePage() {
   )].sort();
 
   // Subjects for the selected class+section (used in cell modal)
-  const subjectsForSelection: SubjectOption[] = [...new Map(
+  // Filter allSubjects (which have real UUIDs) to only subjects assigned to this class+section
+  const assignedSubjectNames = new Set(
     assignments
       .filter((a) => a.class_name === selectedClass && a.section === selectedSection)
-      .map((a) => [a.subject, { id: a.subject, name: a.subject }])
-  ).values()];
+      .map((a) => a.subject?.toLowerCase().trim())
+      .filter(Boolean)
+  );
+  const subjectsForSelection: SubjectOption[] = allSubjects.length > 0
+    ? allSubjects.filter((s) => assignedSubjectNames.has(s.name?.toLowerCase().trim()))
+    : [...new Map(
+        assignments
+          .filter((a) => a.class_name === selectedClass && a.section === selectedSection)
+          .map((a) => [a.subject, { id: a.subject, name: a.subject }])
+      ).values()];
 
   // ── Fetch uploaded timetable file ───────────────────────────────────────────
   const fetchUploadedFile = useCallback(async () => {

@@ -229,8 +229,9 @@ router.get(
       teacher_name: (r.users as { name: string } | null)?.name ?? null,
     }));
 
-    // Timetable rarely changes — cache for 1 hour to reduce server load
-    res.setHeader('Cache-Control', 'public, max-age=3600');
+    // Timetable rarely changes — but use no-cache so a pull-to-refresh always
+    // gets the latest data. CDN caching was causing stale timetables after updates.
+    res.setHeader('Cache-Control', 'no-store');
 
     sendSuccess(res, groupByDay(rows));
   }
@@ -748,6 +749,41 @@ router.post(
       .from(BUCKET)
       .getPublicUrl(storagePath);
 
+    // ── Replace old uploaded file ─────────────────────────────────────────────
+    // Delete any previous TIMETABLE_FILE_UPLOADED entries for this class/section
+    // so GET /api/timetable/file always returns exactly the current file.
+    if (className && section) {
+      try {
+        const { data: oldEntries } = await supabaseAdmin
+          .from('audit_logs')
+          .select('id, details')
+          .eq('action', 'TIMETABLE_FILE_UPLOADED')
+          .order('created_at', { ascending: false })
+          .limit(100);
+
+        const toDelete = (oldEntries ?? []).filter((row: { id: string; details: Record<string, unknown> }) => {
+          const d = row.details as Record<string, unknown>;
+          return d?.school_id === school_id && d?.class_name === className && d?.section === section;
+        });
+
+        if (toDelete.length > 0) {
+          // Delete old storage files
+          const oldPaths = toDelete
+            .map((r: { details: Record<string, unknown> }) => r.details?.storage_path as string)
+            .filter(Boolean);
+          if (oldPaths.length > 0) {
+            await supabaseAdmin.storage.from('timetable-uploads').remove(oldPaths);
+          }
+          // Delete old audit log entries
+          const oldIds = toDelete.map((r: { id: string }) => r.id);
+          await supabaseAdmin.from('audit_logs').delete().in('id', oldIds);
+        }
+      } catch (cleanupErr) {
+        console.error('[timetable/upload] Cleanup error:', cleanupErr);
+        // Don't fail the upload if cleanup fails
+      }
+    }
+
     await logAudit(userId, 'TIMETABLE_FILE_UPLOADED', {
       school_id,
       class_name: className ?? null,
@@ -759,7 +795,6 @@ router.post(
     });
 
     // ── Notify students in the class/section ──────────────────────────────────
-    let notifiedCount = 0;
     if (className && section) {
       try {
         // Fetch all active students in this class+section
@@ -893,6 +928,9 @@ router.get(
     const isImage = /\.(jpe?g|png|webp|heic)$/i.test(fileName ?? '') ||
       /\/(jpeg|jpg|png|webp|heic)$/i.test(publicUrl);
 
+    // Never cache — always return the latest uploaded file
+    res.setHeader('Cache-Control', 'no-store');
+
     sendSuccess(res, {
       public_url: publicUrl,
       file_name: fileName ?? null,
@@ -904,8 +942,6 @@ router.get(
     });
   }
 );
-
-// ── DELETE /api/timetable/file ────────────────────────────────────────────────
 /**
  * Delete an uploaded timetable file from storage and remove its audit log entry.
  * Auth: teacher who uploaded it (or schooladmin/superadmin).
