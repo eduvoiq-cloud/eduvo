@@ -981,6 +981,7 @@ router.post(
           assignments,
         },
         status,
+        warning: null,
         errors,
       });
     }
@@ -994,6 +995,7 @@ router.post(
       valid_rows:     validRows,
       invalid_rows:   invalidRows,
       duplicate_rows: duplicateRows,
+      warned_rows:    0,
       rows:           previewRows,
     };
 
