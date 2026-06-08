@@ -625,7 +625,7 @@ router.post('/teachers/assign', async (req: Request, res: Response) => {
       class:      normalizedClass,
       section:    normalizedSection,
       subject:    subjectName,
-      created_at: new Date().toISOString(),
+      // NOTE: no created_at — that column does not exist in teacher_assignments
     })
     .select()
     .single();

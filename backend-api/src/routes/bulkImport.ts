@@ -1124,7 +1124,7 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
             class:      a.class,      // keep legacy column in sync
             section:    (a.division ?? '').toUpperCase(),
             subject:    a.subject,
-            created_at: new Date().toISOString(),
+            // NOTE: no created_at — that column does not exist in teacher_assignments
           }));
 
         if (assignmentRows.length > 0) {
