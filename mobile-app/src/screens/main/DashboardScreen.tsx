@@ -285,6 +285,14 @@ export default function DashboardScreen() {
       const yearStart = `${new Date().getFullYear()}-01-01`;
       const yearEnd = `${new Date().getFullYear()}-12-31`;
 
+      // When a linked child is active we must use their student JWT for the
+      // announcements endpoint — the global apiClient carries the parent token
+      // which is rejected by authenticateStudent (it only accepts student JWTs).
+      const activeChildToken =
+        linkedChildren.length > 0
+          ? linkedChildren[activeChildIndex]?.token
+          : null;
+
       const [attHistRes, attTodayRes, hwRes, marksRes, annRes, notifCountRes] =
         await Promise.allSettled([
           apiClient.get('/api/attendance/history', {
@@ -296,7 +304,12 @@ export default function DashboardScreen() {
           // Homework pending count — use the dedicated student endpoint
           apiClient.get('/api/homework/pending-count'),
           apiClient.get('/api/marks'),
-          apiClient.get('/api/announcements/student'),
+          // Use child's student token so authenticateStudent accepts the request
+          apiClient.get('/api/announcements/student', {
+            headers: activeChildToken
+              ? { Authorization: `Bearer ${activeChildToken}` }
+              : undefined,
+          }),
           apiClient.get('/api/notifications', { params: { unread: true, limit: 1 } }),
         ]);
 
@@ -360,7 +373,7 @@ export default function DashboardScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeStudent?.id]);
+  }, [activeStudent?.id, linkedChildren, activeChildIndex]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
