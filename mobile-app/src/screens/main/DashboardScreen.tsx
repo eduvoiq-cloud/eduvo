@@ -55,7 +55,7 @@ interface DashboardData {
   homework: HomeworkSummary;
   nextPeriod: NextPeriod | null;
   recentMark: RecentMark | null;
-  announcement: Announcement | null;
+  announcements: Announcement[];
 }
 
 type MainNavProp = BottomTabNavigationProp<MainTabParamList>;
@@ -296,7 +296,7 @@ export default function DashboardScreen() {
       const yearStart = `${new Date().getFullYear()}-01-01`;
       const yearEnd = `${new Date().getFullYear()}-12-31`;
 
-      const [attHistRes, attTodayRes, hwRes, marksRes, timetableRes, notifRes] =
+      const [attHistRes, attTodayRes, hwRes, marksRes, timetableRes, annRes, notifCountRes] =
         await Promise.allSettled([
           apiClient.get('/api/attendance/history', {
             params: { student_id: activeStudent?.id, start_date: yearStart, end_date: yearEnd },
@@ -310,6 +310,7 @@ export default function DashboardScreen() {
           apiClient.get('/api/timetable/class', {
             params: { class: activeStudent?.class, section: activeStudent?.section },
           }),
+          apiClient.get('/api/announcements/student'),
           apiClient.get('/api/notifications', { params: { unread: true, limit: 1 } }),
         ]);
 
@@ -378,23 +379,21 @@ export default function DashboardScreen() {
         }
       }
 
-      // Announcement (use notifications as announcements)
-      let announcement: Announcement | null = null;
-      if (notifRes.status === 'fulfilled') {
-        const notifs: any[] = notifRes.value.data.data ?? [];
+      // Announcements for this student's class
+      let announcements: Announcement[] = [];
+      if (annRes.status === 'fulfilled') {
+        announcements = annRes.value.data.data ?? [];
+      }
+
+      // Notification badge count
+      if (notifCountRes.status === 'fulfilled') {
+        const notifs: any[] = notifCountRes.value.data.data ?? [];
         if (notifs.length > 0) {
-          announcement = {
-            id: notifs[0].id,
-            title: notifs[0].title ?? 'Notification',
-            message: notifs[0].message ?? notifs[0].body ?? '',
-            created_at: notifs[0].created_at,
-          };
-          // Count unread
-          setNotifCount(notifRes.value.data.meta?.total ?? notifs.length);
+          setNotifCount(notifCountRes.value.data.meta?.total ?? notifs.length);
         }
       }
 
-      setData({ attendance, homework, nextPeriod, recentMark, announcement });
+      setData({ attendance, homework, nextPeriod, recentMark, announcements });
     } catch (err) {
       console.warn('[Dashboard] fetchAll error:', err);
     } finally {
@@ -540,19 +539,23 @@ export default function DashboardScreen() {
         )}
 
         {/* Announcement banner */}
-        {data?.announcement && (
-          <View style={styles.announcementCard}>
-            <Text style={styles.announcementLabel}>📢 Latest Update</Text>
-            <Text style={styles.announcementTitle} numberOfLines={1}>
-              {data.announcement.title}
-            </Text>
-            <Text style={styles.announcementBody} numberOfLines={2}>
-              {data.announcement.message}
-            </Text>
-            <Text style={styles.announcementTime}>
-              {timeAgo(data.announcement.created_at)}
-            </Text>
-          </View>
+        {data?.announcements && data.announcements.length > 0 && (
+          <>
+            {data.announcements.slice(0, 5).map((ann) => (
+              <View key={ann.id} style={styles.announcementCard}>
+                <Text style={styles.announcementLabel}>📢 Announcement</Text>
+                <Text style={styles.announcementTitle} numberOfLines={2}>
+                  {ann.title}
+                </Text>
+                <Text style={styles.announcementBody} numberOfLines={3}>
+                  {ann.message}
+                </Text>
+                <Text style={styles.announcementTime}>
+                  {timeAgo(ann.created_at)}
+                </Text>
+              </View>
+            ))}
+          </>
         )}
       </ScrollView>
     </>
