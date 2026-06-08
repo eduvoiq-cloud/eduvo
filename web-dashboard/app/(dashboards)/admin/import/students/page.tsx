@@ -259,7 +259,7 @@ export default function ImportStudentsPage() {
 
   // ── Run the actual import ───────────────────────────────────────────────
 
-  async function handleImport() {
+  async function handleImport(skipWarned = false) {
     if (!preview?.import_session_id) return;
     const token = getToken();
     if (!token) return;
@@ -274,7 +274,10 @@ export default function ImportStudentsPage() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ import_session_id: preview.import_session_id }),
+        body: JSON.stringify({
+          import_session_id: preview.import_session_id,
+          skip_warned: skipWarned,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Import failed');
@@ -453,7 +456,14 @@ export default function ImportStudentsPage() {
                   No, Go Back
                 </button>
                 <button
-                  onClick={handleImport}
+                  onClick={() => handleImport(true)}
+                  disabled={importing}
+                  className="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-amber-400 text-amber-700 rounded-lg hover:bg-amber-50 transition-colors"
+                >
+                  Skip them, import rest
+                </button>
+                <button
+                  onClick={() => handleImport(false)}
                   disabled={importing}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors"
                 >

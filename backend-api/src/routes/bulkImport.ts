@@ -536,7 +536,7 @@ router.post(
 
 // ── POST /api/import/students/confirm ─────────────────────────────────────────
 router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
-  const { import_session_id } = req.body;
+  const { import_session_id, skip_warned } = req.body;
 
   if (!import_session_id || typeof import_session_id !== 'string') {
     sendError(res, 'import_session_id is required', 400);
@@ -559,7 +559,12 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
     return;
   }
 
-  const validRows = cached.rows.filter((r) => r.status === 'valid');
+  // If skip_warned=true, exclude rows that have a phone warning
+  const validRows = cached.rows.filter((r) => {
+    if (r.status !== 'valid') return false;
+    if (skip_warned && r.warning) return false;
+    return true;
+  });
   if (validRows.length === 0) {
     sendError(res, 'No valid rows to import.', 400);
     return;
