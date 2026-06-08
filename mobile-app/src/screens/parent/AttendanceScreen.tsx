@@ -186,7 +186,22 @@ export default function ParentAttendanceScreen() {
 
       const payload = res.data.data ?? {};
       setRecords(payload.records ?? []);
-      setSummary(payload.summary ?? null);
+
+      // Normalise summary: backend returns present_count/absent_count/total_days
+      // but the AttendanceSummary interface uses present/absent/total
+      const raw = payload.summary ?? null;
+      if (raw) {
+        setSummary({
+          total:      raw.total      ?? raw.total_days     ?? 0,
+          present:    raw.present    ?? raw.present_count  ?? 0,
+          absent:     raw.absent     ?? raw.absent_count   ?? 0,
+          late:       raw.late       ?? raw.late_count     ?? 0,
+          excused:    raw.excused    ?? raw.excused_count  ?? 0,
+          percentage: raw.percentage ?? 0,
+        });
+      } else {
+        setSummary(null);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load attendance';
       setError(msg);
