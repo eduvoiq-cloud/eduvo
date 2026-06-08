@@ -258,16 +258,6 @@ export default function ImportStudentsPage() {
     }
   }, [file]);
 
-  // ── Trigger confirm flow (check for phone warnings first) ──────────────
-
-  function handleConfirmClick() {
-    if (!preview) return;
-    if ((preview.warned_rows ?? 0) > 0) {
-      setShowPhoneConfirm(true);
-    } else {
-      setShowConfirm(true);
-    }
-  }
 
   // ── Run the actual import ───────────────────────────────────────────────
 
@@ -318,10 +308,19 @@ export default function ImportStudentsPage() {
     tab === 'all' ? true : r.status === tab
   ) ?? [];
 
-  // Count warned rows (valid rows that have a warning)
-  const warnedCount = preview?.warned_rows ?? 0;
+  // Count warned rows directly from row data (more reliable than API field)
+  const warnedCount = preview?.rows.filter((r) => r.status === 'valid' && r.warning).length ?? 0;
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  // ── Trigger confirm flow (check for phone warnings first) ──────────────
+
+  function handleConfirmClick() {
+    if (!preview) return;
+    if (warnedCount > 0) {
+      setShowPhoneConfirm(true);
+    } else {
+      setShowConfirm(true);
+    }
+  }
 
   return (
     <>
