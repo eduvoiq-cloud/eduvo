@@ -419,7 +419,7 @@ export default function DashboardScreen() {
     fetchAll();
   }, [fetchAll]);
 
-  const firstName = activeStudent?.name?.split(' ')[0] ?? 'there';
+  const firstName = activeStudent?.name ?? student?.name ?? '';
 
   const attendanceValue = data?.attendance
     ? `${data.attendance.percentage}%`
@@ -458,7 +458,7 @@ export default function DashboardScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Hello, {firstName} 👋</Text>
+            <Text style={styles.greeting}>Hello{firstName ? `, ${firstName}` : ''} 👋</Text>
             <Text style={styles.subGreeting}>
               {activeStudent?.class ? `Class ${activeStudent.class} ${activeStudent.section}` : ''}
             </Text>

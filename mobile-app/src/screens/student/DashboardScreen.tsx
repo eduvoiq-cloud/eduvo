@@ -252,7 +252,7 @@ export default function StudentDashboardScreen() {
     fetchAll();
   }, [fetchAll]);
 
-  const firstName = user?.name?.split(' ')[0] ?? 'there';
+  const firstName = user?.name ?? 'there';
   const avgMarks = data ? calcAvgMarks(data.recentMarks) : 0;
 
   // ── Render ──────────────────────────────────────────────────────────────────

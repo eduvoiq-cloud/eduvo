@@ -239,7 +239,7 @@ export default function ParentDashboardScreen() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  const firstName = user?.name?.split(' ')[0] ?? 'there';
+  const firstName = user?.name ?? 'there';
 
   return (
     <>
