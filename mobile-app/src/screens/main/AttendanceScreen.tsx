@@ -66,13 +66,6 @@ function formatDate(iso: string): string {
   });
 }
 
-function currentMonthRange(): { start: string; end: string } {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-  return { start, end };
-}
-
 // ── Month filter ──────────────────────────────────────────────────────────────
 
 const MONTHS = [
@@ -90,56 +83,64 @@ export default function AttendanceScreen() {
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth()); // 0-indexed
   const [selectedYear] = useState(now.getFullYear());
-  const [records, setRecords] = useState<AttendanceRecord[]>([]);
-  const [summary, setSummary] = useState<AttendanceSummary | null>(null);
+  // allRecords holds the full-year data; records holds the filtered monthly slice
+  const [allRecords, setAllRecords] = useState<AttendanceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
+  // Fetch the entire year in one call — monthly filtering happens client-side
   const fetchAttendance = useCallback(async () => {
+    if (!activeStudent?.id) {
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
-      const start = new Date(selectedYear, selectedMonth, 1).toISOString().slice(0, 10);
-      const end = new Date(selectedYear, selectedMonth + 1, 0).toISOString().slice(0, 10);
-
-      const [histRes, summaryRes] = await Promise.allSettled([
-        apiClient.get('/api/attendance/history', {
-          params: { student_id: activeStudent?.id, start_date: start, end_date: end },
-        }),
-        apiClient.get('/api/attendance/history', {
-          params: {
-            student_id: activeStudent?.id,
-            start_date: `${selectedYear}-01-01`,
-            end_date: `${selectedYear}-12-31`,
-          },
-        }),
-      ]);
-
-      if (histRes.status === 'fulfilled') {
-        const data = histRes.value.data.data;
-        setRecords(data?.records ?? data?.attendance ?? []);
-      }
-
-      if (summaryRes.status === 'fulfilled') {
-        const s = summaryRes.value.data.data?.summary;
-        if (s) {
-          setSummary({
-            present: s.present ?? 0,
-            absent: s.absent ?? 0,
-            late: s.late ?? 0,
-            total: s.total ?? 0,
-            percentage: s.percentage ?? 0,
-          });
-        }
-      }
+      const res = await apiClient.get('/api/attendance/history', {
+        params: {
+          student_id: activeStudent.id,
+          start_date: `${selectedYear}-01-01`,
+          end_date:   `${selectedYear}-12-31`,
+        },
+      });
+      const data = res.data?.data;
+      const fetched: AttendanceRecord[] = data?.records ?? data?.attendance ?? [];
+      setAllRecords(fetched);
     } catch (err) {
       console.warn('[Attendance] fetch error:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeStudent?.id, selectedMonth, selectedYear]);
+  }, [activeStudent?.id, selectedYear]);
 
-  useEffect(() => { fetchAttendance(); }, [fetchAttendance]);
+  useEffect(() => {
+    setLoading(true);
+    setAllRecords([]);
+    fetchAttendance();
+  }, [fetchAttendance]);
+
+  // Derive monthly records for the calendar
+  const records = allRecords.filter((r) => {
+    const [y, m] = r.date.split('-').map(Number);
+    return y === selectedYear && m === selectedMonth + 1;
+  });
+
+  // Derive yearly summary directly from allRecords — no separate API call needed
+  const summary: AttendanceSummary | null = allRecords.length > 0 ? (() => {
+    const present = allRecords.filter((r) => r.status === 'present').length;
+    const absent  = allRecords.filter((r) => r.status === 'absent').length;
+    const late    = allRecords.filter((r) => r.status === 'late').length;
+    const total   = allRecords.length;
+    return {
+      present,
+      absent,
+      late,
+      total,
+      percentage: total > 0 ? Math.round((present / total) * 100) : 0,
+    };
+  })() : null;
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -148,7 +149,7 @@ export default function AttendanceScreen() {
 
   // Build marked dates for calendar
   const markedDates: MarkedDates = {};
-  for (const rec of records) {
+  for (const rec of allRecords) {
     const color = statusColor(rec.status);
     markedDates[rec.date] = {
       marked: true,
@@ -160,7 +161,7 @@ export default function AttendanceScreen() {
     markedDates[selectedDate] = { selected: true, selectedColor: '#9CA3AF' };
   }
 
-  const selectedRecord = records.find((r) => r.date === selectedDate);
+  const selectedRecord = allRecords.find((r) => r.date === selectedDate);
 
   const calendarMonth = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-01`;
 
