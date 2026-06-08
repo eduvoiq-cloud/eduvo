@@ -294,6 +294,8 @@ router.get(
         )
       `)
       .eq('school_id', req.user!.school_id ?? '')
+      .eq('teacher_id', req.user!.id)
+      .eq('recipient_type', 'subject_teacher')
       .order('created_at', { ascending: false });
 
     if (status && ['pending', 'reviewed', 'resolved', 'all'].includes(status)) {
