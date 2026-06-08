@@ -313,8 +313,45 @@ export default function TeacherAnnouncementsPage() {
     <>
       <PageHeader
         title="Announcements"
-        description="Send announcements to your assigned classes"
+        description="Send announcements to your classes and view school notices"
       />
+
+      {/* ── From School Admin ──────────────────────────────────────────────── */}
+      {(loadingAdmin || adminAnnouncements.length > 0) && (
+        <div className="mb-8">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-base font-semibold text-gray-900">From School Admin</span>
+            {adminAnnouncements.length > 0 && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                {adminAnnouncements.length}
+              </span>
+            )}
+          </div>
+
+          {loadingAdmin ? (
+            <div className="space-y-3">
+              {[1, 2].map((i) => <CardSkeleton key={i} />)}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {adminAnnouncements.map((ann) => (
+                <div key={ann.id} className="bg-white rounded-xl border-l-4 border-l-blue-500 border border-blue-100 p-5">
+                  <div className="flex items-start gap-3">
+                    <span className="text-xl shrink-0 mt-0.5">📢</span>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-semibold text-gray-900 leading-snug mb-1">
+                        {ann.title}
+                      </h3>
+                      <p className="text-sm text-gray-600 mb-2">{ann.message}</p>
+                      <span className="text-xs text-gray-400">{timeAgo(ann.created_at)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Create Announcement ────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
@@ -481,45 +518,6 @@ export default function TeacherAnnouncementsPage() {
                 deleting={deletingId === ann.id}
                 onDelete={handleDelete}
               />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── School Admin Announcements ─────────────────────────────────────── */}
-      <div className="mt-8">
-        <h2 className="text-base font-semibold text-gray-900 mb-1">From School Admin</h2>
-        <p className="text-xs text-gray-500 mb-4">School-wide announcements sent to you by the school admin.</p>
-
-        {loadingAdmin ? (
-          <div className="space-y-3">
-            {[1, 2].map((i) => <CardSkeleton key={i} />)}
-          </div>
-        ) : adminAnnouncements.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center bg-white rounded-xl border border-gray-200">
-            <p className="text-sm text-gray-500">No school admin announcements yet</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {adminAnnouncements.map((ann) => (
-              <div key={ann.id} className="bg-white rounded-xl border border-blue-100 p-5 border-l-4 border-l-blue-500">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                        📢 School Admin
-                      </span>
-                    </div>
-                    <h3 className="text-sm font-semibold text-gray-900 leading-snug mb-1 mt-2">
-                      {ann.title}
-                    </h3>
-                    <p className="text-sm text-gray-600 line-clamp-2 mb-2">
-                      {ann.message}
-                    </p>
-                    <span className="text-xs text-gray-400">{timeAgo(ann.created_at)}</span>
-                  </div>
-                </div>
-              </div>
             ))}
           </div>
         )}
