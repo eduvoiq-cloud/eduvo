@@ -17,7 +17,7 @@ interface PreviewRow {
   row_number: number;
   data: {
     name: string;
-    roll_number: string;
+    roll_number: string | null;
     class: string;
     division: string;
     parent_name: string;
@@ -25,6 +25,7 @@ interface PreviewRow {
     parent_email: string;
   };
   status: 'valid' | 'invalid' | 'duplicate';
+  warning: string | null;
   errors: string[];
 }
 
@@ -33,6 +34,7 @@ interface PreviewResult {
   valid_rows: number;
   invalid_rows: number;
   duplicate_rows: number;
+  warned_rows: number;
   rows: PreviewRow[];
   import_session_id: string;
 }
@@ -46,21 +48,44 @@ interface ImportResult {
 // ── Column guide data ─────────────────────────────────────────────────────────
 
 const COLUMNS = [
-  { name: 'Student Name', required: true, note: 'Full name of the student' },
-  { name: 'Roll No', required: false, note: 'Unique roll number within the class (optional)' },
-  { name: 'Class', required: true, note: 'e.g. Grade 5, Class 10' },
-  { name: 'Division', required: true, note: 'Section/Division e.g. A, B' },
-  { name: 'Parent Name', required: false, note: 'Full name of parent/guardian' },
-  { name: 'Parent Phone', required: false, note: 'Phone number with country code' },
-  { name: 'Parent Email', required: false, note: 'Used to send parent invite' },
+  { name: 'Student Name',           required: true,  note: 'Full name of the student' },
+  { name: 'Roll No (Optional)',      required: false, note: 'Unique roll number within the class — leave blank if not used' },
+  { name: 'Class',                   required: true,  note: 'e.g. Grade 5, Class 10' },
+  { name: 'Division',                required: true,  note: 'Section/Division e.g. A, B' },
+  { name: 'Parent Name',             required: false, note: 'Full name of parent/guardian' },
+  { name: 'Parent Phone',            required: true,  note: '10-digit phone number — used as login credential' },
+  { name: 'Parent Email (Optional)', required: false, note: 'Used to send parent invite' },
 ];
 
 // ── Status badge ──────────────────────────────────────────────────────────────
 
-function StatusBadge({ status, errors }: { status: PreviewRow['status']; errors: string[] }) {
+function StatusBadge({
+  status,
+  warning,
+  errors,
+}: {
+  status: PreviewRow['status'];
+  warning: string | null;
+  errors: string[];
+}) {
+  // If valid but has a phone warning → show orange warning badge
+  if (status === 'valid' && warning) {
+    return (
+      <div className="relative group inline-block">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700 cursor-help">
+          <span className="w-1.5 h-1.5 rounded-full inline-block bg-orange-500" />
+          ⚠ Duplicate phone
+        </span>
+        <div className="absolute left-0 top-full mt-1 z-10 hidden group-hover:block w-72 bg-gray-900 text-white text-xs rounded-lg p-2 shadow-lg">
+          {warning}
+        </div>
+      </div>
+    );
+  }
+
   const map = {
-    valid: 'bg-green-100 text-green-700',
-    invalid: 'bg-red-100 text-red-700',
+    valid:     'bg-green-100 text-green-700',
+    invalid:   'bg-red-100 text-red-700',
     duplicate: 'bg-orange-100 text-orange-700',
   };
   const label = { valid: 'Valid', invalid: 'Invalid', duplicate: 'Duplicate' };
@@ -165,16 +190,17 @@ export default function ImportStudentsPage() {
   const router = useRouter();
 
   // ── State ───────────────────────────────────────────────────────────────
-  const [step, setStep] = useState<Step>('upload');
-  const [file, setFile] = useState<File | null>(null);
-  const [previewing, setPreviewing] = useState(false);
+  const [step, setStep]                     = useState<Step>('upload');
+  const [file, setFile]                     = useState<File | null>(null);
+  const [previewing, setPreviewing]         = useState(false);
   const [previewProgress, setPreviewProgress] = useState('');
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
-  const [tab, setTab] = useState<TabFilter>('all');
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<ImportResult | null>(null);
-  const [error, setError] = useState('');
+  const [preview, setPreview]               = useState<PreviewResult | null>(null);
+  const [tab, setTab]                       = useState<TabFilter>('all');
+  const [showConfirm, setShowConfirm]       = useState(false);
+  const [showPhoneConfirm, setShowPhoneConfirm] = useState(false);
+  const [importing, setImporting]           = useState(false);
+  const [importResult, setImportResult]     = useState<ImportResult | null>(null);
+  const [error, setError]                   = useState('');
 
   // ── Download template ───────────────────────────────────────────────────
 
@@ -232,13 +258,25 @@ export default function ImportStudentsPage() {
     }
   }, [file]);
 
-  // ── Confirm import ──────────────────────────────────────────────────────
+  // ── Trigger confirm flow (check for phone warnings first) ──────────────
+
+  function handleConfirmClick() {
+    if (!preview) return;
+    if ((preview.warned_rows ?? 0) > 0) {
+      setShowPhoneConfirm(true);
+    } else {
+      setShowConfirm(true);
+    }
+  }
+
+  // ── Run the actual import ───────────────────────────────────────────────
 
   async function handleImport() {
     if (!preview?.import_session_id) return;
     const token = getToken();
     if (!token) return;
     setShowConfirm(false);
+    setShowPhoneConfirm(false);
     setImporting(true);
     setError('');
 
@@ -279,6 +317,9 @@ export default function ImportStudentsPage() {
   const filteredRows = preview?.rows.filter((r) =>
     tab === 'all' ? true : r.status === tab
   ) ?? [];
+
+  // Count warned rows (valid rows that have a warning)
+  const warnedCount = preview?.warned_rows ?? 0;
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -390,7 +431,7 @@ export default function ImportStudentsPage() {
       {step === 'preview' && preview && (
         <div className="space-y-4">
           {/* Summary bar */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className={`grid gap-3 ${warnedCount > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
             <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center gap-3">
               <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
                 <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -399,9 +440,24 @@ export default function ImportStudentsPage() {
               </div>
               <div>
                 <p className="text-xl font-bold text-green-700">{preview.valid_rows}</p>
-                <p className="text-xs text-green-600">Valid rows ready to import</p>
+                <p className="text-xs text-green-600">Valid — ready to import</p>
               </div>
             </div>
+
+            {warnedCount > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3">
+                <div className="w-8 h-8 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-xl font-bold text-amber-700">{warnedCount}</p>
+                  <p className="text-xs text-amber-600">Phone warnings (will still import)</p>
+                </div>
+              </div>
+            )}
+
             <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
               <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
                 <svg className="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -410,9 +466,10 @@ export default function ImportStudentsPage() {
               </div>
               <div>
                 <p className="text-xl font-bold text-red-700">{preview.invalid_rows}</p>
-                <p className="text-xs text-red-600">Invalid rows (will be skipped)</p>
+                <p className="text-xs text-red-600">Invalid (will be skipped)</p>
               </div>
             </div>
+
             <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3">
               <div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
                 <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -421,7 +478,7 @@ export default function ImportStudentsPage() {
               </div>
               <div>
                 <p className="text-xl font-bold text-orange-700">{preview.duplicate_rows}</p>
-                <p className="text-xs text-orange-600">Duplicate rows (will be skipped)</p>
+                <p className="text-xs text-orange-600">Duplicates (will be skipped)</p>
               </div>
             </div>
           </div>
@@ -432,8 +489,8 @@ export default function ImportStudentsPage() {
             <div className="flex border-b border-gray-100 px-4 pt-4 gap-1">
               {(['all', 'valid', 'invalid', 'duplicate'] as TabFilter[]).map((t) => {
                 const count =
-                  t === 'all' ? preview.total_rows
-                  : t === 'valid' ? preview.valid_rows
+                  t === 'all'       ? preview.total_rows
+                  : t === 'valid'   ? preview.valid_rows
                   : t === 'invalid' ? preview.invalid_rows
                   : preview.duplicate_rows;
                 const active = tab === t;
@@ -461,7 +518,7 @@ export default function ImportStudentsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    {['Row #', 'Student Name', 'Roll No', 'Class', 'Division', 'Parent Name', 'Parent Phone', 'Status', 'Errors'].map((h) => (
+                    {['Row #', 'Student Name', 'Roll No', 'Class', 'Division', 'Parent Name', 'Parent Phone', 'Status', 'Warning', 'Errors'].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -469,12 +526,17 @@ export default function ImportStudentsPage() {
                 <tbody className="divide-y divide-gray-50">
                   {filteredRows.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="text-center py-10 text-sm text-gray-400">No rows in this category</td>
+                      <td colSpan={10} className="text-center py-10 text-sm text-gray-400">No rows in this category</td>
                     </tr>
                   ) : filteredRows.map((row) => (
-                    <tr key={row.row_number} className={`hover:bg-gray-50 transition-colors ${
-                      row.status !== 'valid' ? 'bg-red-50/30' : ''
-                    }`}>
+                    <tr
+                      key={row.row_number}
+                      className={`hover:bg-gray-50 transition-colors ${
+                        row.status !== 'valid'    ? 'bg-red-50/30'
+                        : row.warning             ? 'bg-amber-50/40'
+                        : ''
+                      }`}
+                    >
                       <td className="px-4 py-3 text-gray-500 font-mono text-xs">{row.row_number}</td>
                       <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{row.data.name || '—'}</td>
                       <td className="px-4 py-3 text-gray-600">{row.data.roll_number || '—'}</td>
@@ -483,7 +545,21 @@ export default function ImportStudentsPage() {
                       <td className="px-4 py-3 text-gray-600">{row.data.parent_name || '—'}</td>
                       <td className="px-4 py-3 text-gray-600">{row.data.parent_phone || '—'}</td>
                       <td className="px-4 py-3">
-                        <StatusBadge status={row.status} errors={row.errors} />
+                        <StatusBadge status={row.status} warning={row.warning} errors={row.errors} />
+                      </td>
+                      <td className="px-4 py-3 max-w-xs">
+                        {row.warning ? (
+                          <div className="relative group inline-block">
+                            <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded cursor-help truncate max-w-[180px] block">
+                              ⚠ Phone already in use
+                            </span>
+                            <div className="absolute left-0 top-full mt-1 z-10 hidden group-hover:block w-72 bg-gray-900 text-white text-xs rounded-lg p-2 shadow-lg">
+                              {row.warning}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 max-w-xs">
                         {row.errors.length > 0 ? (
@@ -501,14 +577,22 @@ export default function ImportStudentsPage() {
             </div>
           </div>
 
-          {/* Action bar */}
+          {/* Bottom summary + action bar */}
           <div className="bg-white rounded-xl border border-gray-200 px-6 py-4 flex items-center justify-between gap-4">
-            <p className="text-xs text-orange-600 flex items-center gap-1.5">
-              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              Invalid and duplicate rows will be skipped automatically
-            </p>
+            <div className="text-xs text-gray-500 space-y-0.5">
+              <p>
+                <span className="text-green-700 font-semibold">{preview.valid_rows} valid</span>
+                {warnedCount > 0 && (
+                  <span className="text-amber-700 font-semibold">, {warnedCount} with warnings (will still be imported)</span>
+                )}
+                {preview.duplicate_rows > 0 && (
+                  <span className="text-orange-600">, {preview.duplicate_rows} duplicate{preview.duplicate_rows !== 1 ? 's' : ''} (will be skipped)</span>
+                )}
+                {preview.invalid_rows > 0 && (
+                  <span className="text-red-600">, {preview.invalid_rows} invalid (will be skipped)</span>
+                )}
+              </p>
+            </div>
             <div className="flex items-center gap-3">
               <button
                 onClick={handleReset}
@@ -517,7 +601,7 @@ export default function ImportStudentsPage() {
                 Cancel
               </button>
               <button
-                onClick={() => setShowConfirm(true)}
+                onClick={handleConfirmClick}
                 disabled={preview.valid_rows === 0 || importing}
                 className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors"
               >
@@ -581,7 +665,44 @@ export default function ImportStudentsPage() {
         </div>
       )}
 
-      {/* ── Confirmation modal ─────────────────────────────────────────── */}
+      {/* ── Phone warning confirmation modal ──────────────────────────── */}
+      <Modal
+        open={showPhoneConfirm}
+        onClose={() => setShowPhoneConfirm(false)}
+        title="Phone Numbers Already in Use"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <p className="text-sm text-amber-800">
+              <span className="font-semibold">{warnedCount} student{warnedCount !== 1 ? 's' : ''}</span> have phone numbers already linked in the system.
+              These might be siblings sharing a parent number. Import them anyway?
+            </p>
+          </div>
+          <p className="text-xs text-gray-500">
+            Selecting &quot;Yes, Import All&quot; will include these students. Their parent phone may already be used to log in for another student.
+          </p>
+          <div className="flex justify-end gap-3 pt-1">
+            <button
+              onClick={() => setShowPhoneConfirm(false)}
+              className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Go Back
+            </button>
+            <button
+              onClick={handleImport}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+            >
+              Yes, Import All
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Standard confirmation modal ────────────────────────────────── */}
       <Modal
         open={showConfirm}
         onClose={() => setShowConfirm(false)}

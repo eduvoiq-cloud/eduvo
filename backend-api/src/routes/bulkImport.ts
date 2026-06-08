@@ -134,6 +134,7 @@ interface PreviewRow {
   row_number: number;
   data: Record<string, unknown>;
   status: 'valid' | 'invalid' | 'duplicate';
+  warning: string | null;
   errors: string[];
 }
 
@@ -142,6 +143,7 @@ interface PreviewResponse {
   valid_rows: number;
   invalid_rows: number;
   duplicate_rows: number;
+  warned_rows: number;
   rows: PreviewRow[];
 }
 
@@ -330,17 +332,18 @@ router.get('/students/template', requireRole('superadmin', 'schooladmin'), templ
   // Header row
   ws.addRow([
     'Student Name',
-    'Roll Number',
+    'Roll No (Optional)',
     'Class',
     'Division',
     'Parent Name',
     'Parent Phone',
+    'Parent Email (Optional)',
     'Date of Birth (DD/MM/YYYY)',
   ]);
 
   // Example rows
-  ws.addRow(['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', '15/08/2010']);
-  ws.addRow(['Alice Smith', 'R002', '10', 'B', 'Bob Smith', '9876543211', '22/03/2011']);
+  ws.addRow(['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', 'jane@example.com', '15/08/2010']);
+  ws.addRow(['Alice Smith', '', '10', 'B', 'Bob Smith', '9876543211', '', '22/03/2011']);
 
   const buffer = await wb.xlsx.writeBuffer();
 
@@ -394,10 +397,10 @@ router.post(
       return;
     }
 
-    // Fetch existing roll numbers for this school to check DB duplicates
+    // Fetch existing students for this school to check DB duplicates
     const { data: existingStudents, error: dbErr } = await supabaseAdmin
       .from('students')
-      .select('roll_number, class_name, phone_number')
+      .select('full_name, class_name, phone_number')
       .eq('school_id', school_id)
       .eq('is_deleted', false);
 
@@ -406,37 +409,37 @@ router.post(
       return;
     }
 
-    // Build a set of "roll_number|class_name" for fast lookup
-    const existingSet = new Set<string>(
+    // Build a set of "full_name|class_name" for duplicate detection (name + class only)
+    const existingNameClassSet = new Set<string>(
       (existingStudents ?? [])
-        .filter((s) => s.roll_number && s.class_name)
-        .map((s) => `${String(s.roll_number).toLowerCase()}|${String(s.class_name).toLowerCase()}`)
+        .filter((s) => s.full_name && s.class_name)
+        .map((s) => `${String(s.full_name).trim().toLowerCase()}|${String(s.class_name).trim().toLowerCase()}`)
     );
 
-    // Build a set of existing phone numbers for duplicate check
-    const existingPhones = new Set<string>(
+    // Build a map of phone_number -> student name for phone warning lookup
+    const existingPhoneMap = new Map<string, string>(
       (existingStudents ?? [])
         .filter((s) => s.phone_number)
-        .map((s) => String(s.phone_number).trim())
+        .map((s) => [String(s.phone_number).trim(), String(s.full_name ?? '').trim()])
     );
 
-    // Track roll numbers and phones seen within this file for intra-file duplicate detection
-    const seenInFile = new Set<string>();
-    const seenPhonesInFile = new Set<string>();
+    // Track name+class combos seen within this file for intra-file duplicate detection
+    const seenNameClassInFile = new Set<string>();
     const previewRows: PreviewRow[] = [];
 
     for (let i = 0; i < dataRows.length; i++) {
       const row = dataRows[i];
       const rowNumber = i + 2; // Excel row number (header is row 1)
 
-      // Columns: Student Name | Roll Number | Class | Division | Parent Name | Parent Phone | Date of Birth
+      // Columns: Student Name | Roll No (Optional) | Class | Division | Parent Name | Parent Phone | Parent Email (Optional) | Date of Birth
       const studentName = cellToString(row[0]);
       const rollNumber  = cellToString(row[1]);
       const className   = cellToString(row[2]);
       const division    = cellToString(row[3]);
       const parentName  = cellToString(row[4]);
       const parentPhone = cellToString(row[5]);
-      const dateOfBirth = cellToString(row[6]);
+      const parentEmail = cellToString(row[6]);
+      const dateOfBirth = cellToString(row[7]);
 
       const errors: string[] = [];
 
@@ -444,6 +447,7 @@ router.post(
       const nameErr = validateStudentName(studentName);
       if (nameErr) errors.push(nameErr);
 
+      // Roll number is OPTIONAL — only validate format if provided, never block on it
       const rollErr = validateRollNumber(rollNumber);
       if (rollErr) errors.push(rollErr);
 
@@ -456,41 +460,33 @@ router.post(
       const parentNameErr = validateParentName(parentName);
       if (parentNameErr) errors.push(parentNameErr);
 
-      // Parent Phone is now REQUIRED (login phone)
+      // Parent Phone is REQUIRED (login phone)
       const phoneErr = validateLoginPhone(parentPhone);
       if (phoneErr) errors.push(phoneErr);
+
+      // Parent Email is OPTIONAL
+      const parentEmailErr = validateParentEmail(parentEmail);
+      if (parentEmailErr) errors.push(parentEmailErr);
 
       // Date of Birth is OPTIONAL
       const { error: dobErr, parsed: parsedDob } = validateDateOfBirth(dateOfBirth);
       if (dobErr) errors.push(dobErr);
 
-      // Normalize for duplicate checks
-      const rollStr  = rollNumber.trim().toLowerCase();
-      const classStr = className.trim().toLowerCase();
-      const key      = rollStr ? `${rollStr}|${classStr}` : null;
-      const phoneStr = parentPhone.trim();
+      // Duplicate detection: name + class only
+      const nameClassKey = `${studentName.trim().toLowerCase()}|${className.trim().toLowerCase()}`;
+      const phoneStr     = parentPhone.trim();
 
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
+      let warning: string | null = null;
 
-      // Check for roll number duplicates (only when roll number is provided)
-      if (key) {
-        if (seenInFile.has(key)) {
-          errors.push('Duplicate roll number within this file');
+      // Check for name+class duplicates within this file
+      if (studentName.trim() && className.trim()) {
+        if (seenNameClassInFile.has(nameClassKey)) {
+          errors.push('Duplicate student (same name + class) within this file');
           status = 'duplicate';
-        } else if (existingSet.has(key)) {
-          errors.push('Roll number already exists in database for this class');
+        } else if (existingNameClassSet.has(nameClassKey)) {
+          errors.push('Student with this name already exists in this class');
           status = 'duplicate';
-        }
-      }
-
-      // Check for phone number duplicates (only if phone is valid)
-      if (phoneStr && /^\d{10}$/.test(phoneStr)) {
-        if (seenPhonesInFile.has(phoneStr)) {
-          errors.push('Duplicate phone number within this file');
-          if (status === 'valid') status = 'duplicate';
-        } else if (existingPhones.has(phoneStr)) {
-          errors.push('Phone number already registered to another student');
-          if (status === 'valid') status = 'duplicate';
         }
       }
 
@@ -498,36 +494,52 @@ router.post(
         status = 'invalid';
       }
 
+      // Phone warning (non-blocking): only for rows that are valid
+      if (status === 'valid' && phoneStr && /^\d{10}$/.test(phoneStr)) {
+        const existingOwner = existingPhoneMap.get(phoneStr);
+        if (existingOwner) {
+          // Find class of existing student for more context
+          const existingWithPhone = (existingStudents ?? []).find(
+            (s) => String(s.phone_number).trim() === phoneStr
+          );
+          const existingClass = existingWithPhone?.class_name ?? '';
+          warning = `Phone ${phoneStr} already linked to ${existingOwner}${existingClass ? ` (${existingClass})` : ''}. Import anyway?`;
+        }
+      }
+
       if (status === 'valid') {
-        if (key) seenInFile.add(key);
-        if (phoneStr) seenPhonesInFile.add(phoneStr);
+        seenNameClassInFile.add(nameClassKey);
       }
 
       previewRows.push({
         row_number: rowNumber,
         data: {
           name:          studentName.trim(),
-          roll_number:   rollNumber.trim(),
+          roll_number:   rollNumber.trim() || null,  // null if empty
           class:         className.trim(),
           division:      division.trim().toUpperCase(),
           parent_name:   parentName.trim(),
           parent_phone:  phoneStr,
+          parent_email:  parentEmail.trim(),
           date_of_birth: parsedDob ?? dateOfBirth.trim(), // ISO if valid, raw if not
         },
         status,
+        warning,
         errors,
       });
     }
 
-    const validRows      = previewRows.filter((r) => r.status === 'valid').length;
-    const invalidRows    = previewRows.filter((r) => r.status === 'invalid').length;
-    const duplicateRows  = previewRows.filter((r) => r.status === 'duplicate').length;
+    const validRows     = previewRows.filter((r) => r.status === 'valid').length;
+    const invalidRows   = previewRows.filter((r) => r.status === 'invalid').length;
+    const duplicateRows = previewRows.filter((r) => r.status === 'duplicate').length;
+    const warnedRows    = previewRows.filter((r) => r.status === 'valid' && r.warning).length;
 
     const preview: PreviewResponse = {
       total_rows:     previewRows.length,
       valid_rows:     validRows,
       invalid_rows:   invalidRows,
       duplicate_rows: duplicateRows,
+      warned_rows:    warnedRows,
       rows:           previewRows,
     };
 
@@ -594,11 +606,12 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
   for (const row of validRows) {
     const data = row.data as {
       name:          string;
-      roll_number:   string;
+      roll_number:   string | null;
       class:         string;
       division:      string;
       parent_name:   string;
       parent_phone:  string;
+      parent_email:  string;
       date_of_birth: string; // YYYY-MM-DD (already parsed in preview)
     };
 
@@ -623,7 +636,7 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
       class_name:     data.class,
       class:          data.class,     // legacy NOT NULL column in live DB
       section:        data.division,
-      roll_number:    data.roll_number,
+      roll_number:    data.roll_number || null,  // null if not provided
       phone_number:   phone,
       phone:          phone,          // keep legacy phone column in sync
       date_of_birth:  data.date_of_birth || null, // optional — null if not provided
@@ -665,7 +678,7 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
       school_id:    cached.school_id,
       class:        data.class,
       section:      data.division,
-      roll_number:  data.roll_number,
+      roll_number:  data.roll_number ?? null,
     });
   }
 
