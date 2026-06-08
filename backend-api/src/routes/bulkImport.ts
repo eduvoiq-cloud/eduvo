@@ -773,11 +773,13 @@ router.post(
     }
 
     // Fetch existing teacher emails to check duplicates
+    // Exclude soft-deleted teachers so re-importing them after removal works correctly
     const { data: existingTeachers, error: dbErr } = await supabaseAdmin
       .from('users')
       .select('email')
       .eq('role', 'teacher')
-      .eq('school_id', school_id);
+      .eq('school_id', school_id)
+      .neq('is_deleted', true);
 
     if (dbErr) {
       sendError(res, 'Failed to check existing teachers.', 500);
@@ -1088,13 +1090,15 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
       const structuredAssignments = data.assignments ?? [];
 
       if (structuredAssignments.length > 0) {
+        // Require class + subject; division/section may be empty for some formats
         const assignmentRows = structuredAssignments
-          .filter((a) => a.class && a.division && a.subject)
+          .filter((a) => a.class && a.subject)
           .map((a) => ({
             teacher_id: userId,
             school_id:  cached.school_id,
             class_name: a.class,
-            section:    a.division.toUpperCase(),
+            class:      a.class,      // keep legacy column in sync
+            section:    (a.division ?? '').toUpperCase(),
             subject:    a.subject,
             created_at: new Date().toISOString(),
           }));
