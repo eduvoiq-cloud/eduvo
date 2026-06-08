@@ -4,7 +4,6 @@ import { useState, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
-import Modal from '@/components/Modal';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
@@ -196,7 +195,6 @@ export default function ImportStudentsPage() {
   const [previewProgress, setPreviewProgress] = useState('');
   const [preview, setPreview]               = useState<PreviewResult | null>(null);
   const [tab, setTab]                       = useState<TabFilter>('all');
-  const [showConfirm, setShowConfirm]       = useState(false);
   const [showPhoneConfirm, setShowPhoneConfirm] = useState(false);
   const [importing, setImporting]           = useState(false);
   const [importResult, setImportResult]     = useState<ImportResult | null>(null);
@@ -265,7 +263,6 @@ export default function ImportStudentsPage() {
     if (!preview?.import_session_id) return;
     const token = getToken();
     if (!token) return;
-    setShowConfirm(false);
     setShowPhoneConfirm(false);
     setImporting(true);
     setError('');
@@ -577,9 +574,49 @@ export default function ImportStudentsPage() {
           </div>
 
           {/* Bottom summary + action bar */}
-          <div className="bg-white rounded-xl border border-gray-200 px-6 py-4 flex items-center justify-between gap-4">
-            <div className="text-xs text-gray-500 space-y-0.5">
-              <p>
+          {showPhoneConfirm ? (
+            /* ── Phone warning inline confirmation ── */
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-xl px-6 py-5">
+              <div className="flex items-start gap-3 mb-4">
+                <svg className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-semibold text-amber-900">
+                    {warnedCount} student{warnedCount !== 1 ? 's have' : ' has'} a phone number already linked in the system.
+                  </p>
+                  <p className="text-sm text-amber-800 mt-1">
+                    These might be siblings sharing a parent number. Import them anyway?
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 justify-end">
+                <button
+                  onClick={() => setShowPhoneConfirm(false)}
+                  className="px-4 py-2 text-sm font-medium text-amber-800 border border-amber-300 bg-white rounded-lg hover:bg-amber-50 transition-colors"
+                >
+                  No, Go Back
+                </button>
+                <button
+                  onClick={handleImport}
+                  disabled={importing}
+                  className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  {importing ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Importing…
+                    </>
+                  ) : (
+                    'Yes, Import All'
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* ── Normal action bar ── */
+            <div className="bg-white rounded-xl border border-gray-200 px-6 py-4 flex items-center justify-between gap-4">
+              <div className="text-xs text-gray-500">
                 <span className="text-green-700 font-semibold">{preview.valid_rows} valid</span>
                 {warnedCount > 0 && (
                   <span className="text-amber-700 font-semibold">, {warnedCount} with warnings (will still be imported)</span>
@@ -590,31 +627,31 @@ export default function ImportStudentsPage() {
                 {preview.invalid_rows > 0 && (
                   <span className="text-red-600">, {preview.invalid_rows} invalid (will be skipped)</span>
                 )}
-              </p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleReset}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleConfirmClick}
+                  disabled={preview.valid_rows === 0 || importing}
+                  className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  {importing ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Importing…
+                    </>
+                  ) : (
+                    `Import ${preview.valid_rows} Valid Student${preview.valid_rows !== 1 ? 's' : ''}`
+                  )}
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleReset}
-                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmClick}
-                disabled={preview.valid_rows === 0 || importing}
-                className="inline-flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg transition-colors"
-              >
-                {importing ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Importing…
-                  </>
-                ) : (
-                  `Import ${preview.valid_rows} Valid Student${preview.valid_rows !== 1 ? 's' : ''}`
-                )}
-              </button>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -664,76 +701,7 @@ export default function ImportStudentsPage() {
         </div>
       )}
 
-      {/* ── Phone warning confirmation modal ──────────────────────────── */}
-      <Modal
-        open={showPhoneConfirm}
-        onClose={() => setShowPhoneConfirm(false)}
-        title="Phone Numbers Already in Use"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-            <svg className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <p className="text-sm text-amber-800">
-              <span className="font-semibold">{warnedCount} student{warnedCount !== 1 ? 's' : ''}</span> have phone numbers already linked in the system.
-              These might be siblings sharing a parent number. Import them anyway?
-            </p>
-          </div>
-          <p className="text-xs text-gray-500">
-            Selecting &quot;Yes, Import All&quot; will include these students. Their parent phone may already be used to log in for another student.
-          </p>
-          <div className="flex justify-end gap-3 pt-1">
-            <button
-              onClick={() => setShowPhoneConfirm(false)}
-              className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              Go Back
-            </button>
-            <button
-              onClick={handleImport}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-            >
-              Yes, Import All
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* ── Standard confirmation modal ────────────────────────────────── */}
-      <Modal
-        open={showConfirm}
-        onClose={() => setShowConfirm(false)}
-        title="Confirm Import"
-        size="sm"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-700">
-            Import <span className="font-semibold text-gray-900">{preview?.valid_rows} student{preview?.valid_rows !== 1 ? 's' : ''}</span>?
-            This cannot be undone.
-          </p>
-          {(preview?.invalid_rows ?? 0) + (preview?.duplicate_rows ?? 0) > 0 && (
-            <p className="text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
-              {(preview?.invalid_rows ?? 0) + (preview?.duplicate_rows ?? 0)} invalid/duplicate rows will be skipped automatically.
-            </p>
-          )}
-          <div className="flex justify-end gap-3 pt-1">
-            <button
-              onClick={() => setShowConfirm(false)}
-              className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleImport}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
-            >
-              Confirm Import
-            </button>
-          </div>
-        </div>
-      </Modal>
+      {/* modals removed — confirmation is now inline */}
     </>
   );
 }
