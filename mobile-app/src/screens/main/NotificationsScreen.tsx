@@ -3,12 +3,15 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
+  SectionList,
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
   StatusBar,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuthStore } from '../../store/authStore';
+import { useChildStore } from '../../store/childStore';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -16,11 +19,26 @@ import apiClient from '../../api/client';
 interface NotificationItem {
   id: string;
   title: string;
-  message: string;
+  body: string;       // normalised by backend (was 'message' in DB)
   type: string;
   is_read: boolean;
   created_at: string;
+  _kind: 'notification';
 }
+
+interface AnnouncementItem {
+  id: string;
+  title: string;
+  message: string;
+  created_at: string;
+  _kind: 'announcement';
+  is_seen: boolean;   // local state — true once user has opened this screen
+}
+
+type FeedItem = NotificationItem | AnnouncementItem;
+
+// Key used in AsyncStorage to persist seen announcement IDs
+const SEEN_ANN_KEY = 'seen_announcement_ids';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -38,48 +56,88 @@ function timeAgo(iso: string): string {
 
 function notifIcon(type: string): string {
   switch (type) {
-    case 'attendance':   return '📅';
-    case 'marks':        return '📊';
-    case 'homework':     return '📚';
-    case 'test':         return '📝';
-    case 'fee':          return '💰';
-    case 'complaint':    return '📋';
-    case 'announcement': return '📢';
-    default:             return '🔔';
+    case 'attendance':    return '📅';
+    case 'marks':         return '📊';
+    case 'homework':      return '📚';
+    case 'test':          return '📝';
+    case 'fee':
+    case 'fee_reminder':  return '💰';
+    case 'complaint':     return '📋';
+    case 'announcement':  return '📢';
+    default:              return '🔔';
   }
 }
 
-// ── Notification item ─────────────────────────────────────────────────────────
+async function loadSeenIds(): Promise<Set<string>> {
+  try {
+    const raw = await AsyncStorage.getItem(SEEN_ANN_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
 
-function NotifItem({
+async function saveSeenIds(ids: Set<string>): Promise<void> {
+  try {
+    await AsyncStorage.setItem(SEEN_ANN_KEY, JSON.stringify(Array.from(ids)));
+  } catch {}
+}
+
+// ── Feed item row ─────────────────────────────────────────────────────────────
+
+function FeedRow({
   item,
-  onPress,
+  onMarkRead,
 }: {
-  item: NotificationItem;
-  onPress: (id: string) => void;
+  item: FeedItem;
+  onMarkRead: (id: string) => void;
 }) {
+  const isUnread =
+    item._kind === 'notification' ? !item.is_read : !item.is_seen;
+
+  const icon =
+    item._kind === 'announcement' ? '📢' : notifIcon(item.type);
+
+  const body =
+    item._kind === 'announcement' ? item.message : item.body;
+
+  const handlePress = () => {
+    if (item._kind === 'notification' && !item.is_read) {
+      onMarkRead(item.id);
+    }
+    // Announcements are auto-marked seen when the screen opens; tap does nothing extra
+  };
+
   return (
     <TouchableOpacity
-      style={[styles.item, !item.is_read && styles.itemUnread]}
-      onPress={() => onPress(item.id)}
-      activeOpacity={0.75}
+      style={[styles.item, isUnread && styles.itemUnread]}
+      onPress={handlePress}
+      activeOpacity={isUnread ? 0.75 : 1}
       accessibilityRole="button"
-      accessibilityLabel={`${item.title}. ${item.is_read ? 'Read' : 'Unread'}`}
+      accessibilityLabel={`${item.title}. ${isUnread ? 'Unread' : 'Read'}`}
     >
       <View style={styles.iconWrapper}>
-        <Text style={styles.icon}>{notifIcon(item.type)}</Text>
-        {!item.is_read && <View style={styles.unreadDot} />}
+        <Text style={styles.icon}>{icon}</Text>
+        {isUnread && <View style={styles.unreadDot} />}
       </View>
       <View style={styles.body}>
         <View style={styles.titleRow}>
-          <Text style={[styles.title, !item.is_read && styles.titleUnread]} numberOfLines={1}>
+          <Text
+            style={[styles.title, isUnread && styles.titleUnread]}
+            numberOfLines={1}
+          >
             {item.title}
           </Text>
           <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
         </View>
         <Text style={styles.message} numberOfLines={2}>
-          {item.message}
+          {body}
         </Text>
+        {item._kind === 'announcement' && (
+          <View style={styles.annBadge}>
+            <Text style={styles.annBadgeText}>Announcement</Text>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -88,74 +146,150 @@ function NotifItem({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function NotificationsScreen() {
+  const student = useAuthStore((s) => s.student);
+  const { linkedChildren, activeChildIndex } = useChildStore();
+
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
 
-  const fetchNotifications = useCallback(async () => {
+  const activeChildToken =
+    linkedChildren.length > 0 ? linkedChildren[activeChildIndex]?.token : null;
+
+  // ── Fetch both feeds ────────────────────────────────────────────────────────
+
+  const fetchAll = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/notifications');
-      setNotifications(response.data.data ?? []);
+      const seenIds = await loadSeenIds();
+
+      const [notifRes, annRes] = await Promise.allSettled([
+        apiClient.get('/api/notifications'),
+        apiClient.get('/api/announcements/student', {
+          headers: activeChildToken
+            ? { Authorization: `Bearer ${activeChildToken}` }
+            : undefined,
+        }),
+      ]);
+
+      if (notifRes.status === 'fulfilled') {
+        const raw: any[] = notifRes.value.data.data ?? [];
+        setNotifications(
+          raw.map((n) => ({
+            id: n.id,
+            title: n.title,
+            body: n.body ?? n.message ?? '',
+            type: n.type ?? 'reminder',
+            is_read: n.is_read,
+            created_at: n.created_at,
+            _kind: 'notification',
+          }))
+        );
+      }
+
+      if (annRes.status === 'fulfilled') {
+        const raw: any[] = annRes.value.data.data ?? [];
+        const items: AnnouncementItem[] = raw.map((a) => ({
+          id: a.id,
+          title: a.title,
+          message: a.message,
+          created_at: a.created_at,
+          _kind: 'announcement',
+          is_seen: seenIds.has(a.id),
+        }));
+        setAnnouncements(items);
+
+        // Mark all current announcements as seen now that the screen is open
+        const newSeenIds = new Set(seenIds);
+        raw.forEach((a) => newSeenIds.add(a.id));
+        await saveSeenIds(newSeenIds);
+
+        // Update local state to reflect seen
+        setAnnouncements(items.map((a) => ({ ...a, is_seen: true })));
+      }
     } catch (err) {
-      console.warn('[Notifications] fetch error:', err);
+      console.warn('[Notifications] fetchAll error:', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [activeChildToken]);
 
-  useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
+  useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchNotifications();
-  }, [fetchNotifications]);
+    fetchAll();
+  }, [fetchAll]);
 
-  const handleMarkRead = async (id: string) => {
-    // Optimistic update
+  // ── Mark single notification read ───────────────────────────────────────────
+
+  const handleMarkRead = useCallback(async (id: string) => {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
     );
     try {
       await apiClient.patch(`/api/notifications/${id}/read`);
     } catch {
-      // Revert on failure
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, is_read: false } : n))
       );
     }
-  };
+  }, []);
 
-  const handleMarkAllRead = async () => {
+  // ── Mark all notifications read ─────────────────────────────────────────────
+
+  const handleMarkAllRead = useCallback(async () => {
     setMarkingAll(true);
     try {
-      await apiClient.patch('/api/notifications/read-all');
+      await apiClient.put('/api/notifications/read-all');
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     } catch (err) {
       console.warn('[Notifications] mark all read error:', err);
     } finally {
       setMarkingAll(false);
     }
-  };
+  }, []);
 
-  const unreadCount = notifications.filter((n) => !n.is_read).length;
+  // ── Build unified sections list ─────────────────────────────────────────────
+
+  const unreadNotifCount = notifications.filter((n) => !n.is_read).length;
+  const hasUnread = unreadNotifCount > 0;
+
+  // Sort each group newest first, then combine into sections
+  const sortedNotifs = [...notifications].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+  const sortedAnns = [...announcements].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+
+  const sections: Array<{ title: string; data: FeedItem[] }> = [];
+  if (sortedAnns.length > 0) {
+    sections.push({ title: '📢 Announcements', data: sortedAnns });
+  }
+  if (sortedNotifs.length > 0) {
+    sections.push({ title: '🔔 Notifications', data: sortedNotifs });
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <>
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
-      <FlatList
+      <SectionList
         style={styles.container}
         contentContainerStyle={styles.content}
-        data={notifications}
-        keyExtractor={(item) => item.id}
+        sections={sections}
+        keyExtractor={(item) => `${item._kind}-${item.id}`}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1D4ED8" />
         }
         ListHeaderComponent={
           <View style={styles.header}>
             <Text style={styles.screenTitle}>Notifications</Text>
-            {unreadCount > 0 && (
+            {hasUnread && (
               <TouchableOpacity
                 style={[styles.markAllBtn, markingAll && styles.markAllBtnDisabled]}
                 onPress={handleMarkAllRead}
@@ -172,8 +306,13 @@ export default function NotificationsScreen() {
             )}
           </View>
         }
+        renderSectionHeader={({ section }) => (
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{section.title}</Text>
+          </View>
+        )}
         renderItem={({ item }) => (
-          <NotifItem item={item} onPress={handleMarkRead} />
+          <FeedRow item={item} onMarkRead={handleMarkRead} />
         )}
         ListEmptyComponent={
           loading ? (
@@ -183,10 +322,11 @@ export default function NotificationsScreen() {
           ) : (
             <View style={styles.emptyState}>
               <Text style={styles.emptyIcon}>🔔</Text>
-              <Text style={styles.emptyText}>No notifications yet.</Text>
+              <Text style={styles.emptyText}>Nothing here yet.</Text>
             </View>
           )
         }
+        stickySectionHeadersEnabled={false}
       />
     </>
   );
@@ -197,6 +337,7 @@ export default function NotificationsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   content: { paddingBottom: 48 },
+
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -216,6 +357,21 @@ const styles = StyleSheet.create({
   },
   markAllBtnDisabled: { opacity: 0.6 },
   markAllText: { fontSize: 13, color: '#1D4ED8', fontWeight: '600' },
+
+  sectionHeader: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 6,
+    backgroundColor: '#F9FAFB',
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
   item: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -226,6 +382,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
   },
   itemUnread: { backgroundColor: '#F0F9FF' },
+
   iconWrapper: { position: 'relative', marginRight: 14, marginTop: 2 },
   icon: { fontSize: 22 },
   unreadDot: {
@@ -237,6 +394,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#1D4ED8',
   },
+
   body: { flex: 1 },
   titleRow: {
     flexDirection: 'row',
@@ -248,7 +406,18 @@ const styles = StyleSheet.create({
   titleUnread: { fontWeight: '700', color: '#111827' },
   time: { fontSize: 11, color: '#9CA3AF', flexShrink: 0 },
   message: { fontSize: 13, color: '#6B7280', lineHeight: 18 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60 },
+
+  annBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    backgroundColor: '#DBEAFE',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  annBadgeText: { fontSize: 11, color: '#1D4ED8', fontWeight: '600' },
+
+  centered: { paddingTop: 60, alignItems: 'center' },
   emptyState: { alignItems: 'center', paddingTop: 60 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyText: { fontSize: 15, color: '#9CA3AF' },

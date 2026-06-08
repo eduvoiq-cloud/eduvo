@@ -10,6 +10,7 @@ import {
   Modal,
   ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, CommonActions, useFocusEffect } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuthStore } from '../../store/authStore';
@@ -240,11 +241,11 @@ export default function DashboardScreen() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [notifCount, setNotifCount] = useState(0);
-  const [annCount, setAnnCount] = useState(0);
+  const [notifCount, setNotifCount] = useState(0);   // unread notifications
+  const [annUnseenCount, setAnnUnseenCount] = useState(0); // unseen announcements
 
-  // Total unseen items driving the bell badge
-  const totalUnread = notifCount + annCount;
+  // Bell badge = unread notifications + unseen announcements
+  const totalUnread = notifCount + annUnseenCount;
 
   // Active student: if linked children exist, use active child; else use logged-in student
   const activeStudent =
@@ -314,7 +315,7 @@ export default function DashboardScreen() {
               ? { Authorization: `Bearer ${activeChildToken}` }
               : undefined,
           }),
-          apiClient.get('/api/notifications', { params: { unread: true, limit: 1 } }),
+          apiClient.get('/api/notifications', { params: { unread_only: 'true' } }),
         ]);
 
       // Attendance summary
@@ -360,18 +361,21 @@ export default function DashboardScreen() {
       let announcements: Announcement[] = [];
       if (annRes.status === 'fulfilled') {
         announcements = annRes.value.data.data ?? [];
-        // Track announcement count for the bell badge
-        setAnnCount(announcements.length);
+        // Count announcements the user hasn't seen yet (seen IDs stored locally)
+        try {
+          const raw = await AsyncStorage.getItem('seen_announcement_ids');
+          const seenIds: Set<string> = raw ? new Set(JSON.parse(raw)) : new Set();
+          const unseen = announcements.filter((a) => !seenIds.has(a.id));
+          setAnnUnseenCount(unseen.length);
+        } catch {
+          setAnnUnseenCount(0);
+        }
       }
 
-      // Notification badge count (unread notifications)
+      // Notification badge count — only truly unread notifications
       if (notifCountRes.status === 'fulfilled') {
         const notifs: any[] = notifCountRes.value.data.data ?? [];
-        if (notifs.length > 0) {
-          setNotifCount(notifCountRes.value.data.meta?.total ?? notifs.length);
-        } else {
-          setNotifCount(0);
-        }
+        setNotifCount(notifs.length);
       }
 
       setData({ attendance, homework, recentMark, announcements });    } catch (err) {
@@ -384,21 +388,30 @@ export default function DashboardScreen() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Re-fetch notification count whenever the screen is focused
-  // so the bell badge reflects reads done on the Notifications screen.
+  // Re-fetch counts whenever Home is focused so the bell reflects
+  // reads/views done on the Notifications or Announcements screens.
   useFocusEffect(
     useCallback(() => {
       const fetchCounts = async () => {
         try {
-          const res = await apiClient.get('/api/notifications', { params: { unread: true, limit: 1 } });
-          const notifs: any[] = res.data.data ?? [];
-          setNotifCount(notifs.length > 0 ? (res.data.meta?.total ?? notifs.length) : 0);
+          // Unread notifications
+          const notifRes = await apiClient.get('/api/notifications', { params: { unread_only: 'true' } });
+          const notifs: any[] = notifRes.data.data ?? [];
+          setNotifCount(notifs.length);
+
+          // Unseen announcements — compare current list against stored seen IDs
+          if (data?.announcements) {
+            const raw = await AsyncStorage.getItem('seen_announcement_ids');
+            const seenIds: Set<string> = raw ? new Set(JSON.parse(raw)) : new Set();
+            const unseen = data.announcements.filter((a) => !seenIds.has(a.id));
+            setAnnUnseenCount(unseen.length);
+          }
         } catch {
-          // Silently ignore — counts just won't update
+          // Silently ignore
         }
       };
       fetchCounts();
-    }, [])
+    }, [data?.announcements])
   );
 
   const onRefresh = useCallback(() => {
@@ -456,10 +469,10 @@ export default function DashboardScreen() {
             accessibilityRole="button"
             accessibilityLabel={`Notifications${totalUnread > 0 ? `, ${totalUnread} unread` : ''}`}
           >
-            <Text style={[styles.bell, totalUnread > 0 && styles.bellActive]}>🔔</Text>
+            <Text style={styles.bell}>🔔</Text>
             {totalUnread > 0 && (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{totalUnread > 9 ? '9+' : totalUnread}</Text>
+                <Text style={styles.badgeText}>{totalUnread > 99 ? '99+' : totalUnread}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -599,7 +612,6 @@ const styles = StyleSheet.create({
   subGreeting: { fontSize: 13, color: '#6B7280', marginTop: 3 },
   bellWrapper: { position: 'relative', padding: 4 },
   bell: { fontSize: 24 },
-  bellActive: { /* pulse handled via bellWrapper background below */ },
   bellWrapperActive: {
     backgroundColor: '#FEF9C3',
     borderRadius: 20,
