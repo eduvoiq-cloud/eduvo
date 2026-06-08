@@ -454,7 +454,10 @@ router.post('/staff/change-password', authenticate, async (req: Request, res: Re
   const { new_password } = parsed.data;
   const staffUser = req.user!;
 
-  // Update password in Supabase Auth (service-role key bypasses email confirmation)
+  // Update password in Supabase Auth (service-role key bypasses email confirmation).
+  // NOTE: Supabase invalidates all existing sessions when a password is changed via
+  // admin.updateUserById — so we re-sign-in immediately to get a fresh session that
+  // the frontend can swap in without forcing a manual re-login.
   const { error: authErr } = await supabaseAdmin.auth.admin.updateUserById(
     staffUser.id,
     { password: new_password }
@@ -477,7 +480,27 @@ router.post('/staff/change-password', authenticate, async (req: Request, res: Re
   }
 
   await logAudit(staffUser.id, 'STAFF_PASSWORD_CHANGED', { user_id: staffUser.id });
-  sendSuccess(res, null, 'Password changed successfully');
+
+  // Re-authenticate with the new password so we can return a fresh session token.
+  // The old token is now dead (Supabase revokes all sessions on password change).
+  // If this sign-in fails for any reason, the client will just be redirected to /login.
+  const { data: newSession, error: signInErr } = await supabase.auth.signInWithPassword({
+    email: staffUser.email,
+    password: new_password,
+  });
+
+  if (signInErr || !newSession.session) {
+    // Password was changed but we couldn't get a fresh token — client must re-login
+    sendSuccess(res, { requires_relogin: true }, 'Password changed successfully. Please sign in again.');
+    return;
+  }
+
+  sendSuccess(res, {
+    requires_relogin: false,
+    token: newSession.session.access_token,
+    refresh_token: newSession.session.refresh_token,
+    expires_at: newSession.session.expires_at,
+  }, 'Password changed successfully');
 });
 
 // ── POST /api/auth/staff/forgot-password ──────────────────────────────────────

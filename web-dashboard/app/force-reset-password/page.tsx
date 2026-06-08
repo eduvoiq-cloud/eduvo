@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { authApi } from '@/lib/api';
-import { getToken, saveSession } from '@/lib/session';
+import { getToken, saveSession, clearSession } from '@/lib/session';
 import { dashboardPath } from '@/lib/session';
 
 // ── Password visibility toggle icons ──────────────────────────────────────────
@@ -63,14 +63,21 @@ export default function ForceResetPasswordPage() {
 
     setSubmitting(true);
     try {
-      await authApi.changePassword(token, newPassword);
+      const res = await authApi.changePassword(token, newPassword);
+      const data = res.data;
 
-      // Update the cached session — clear the must_reset_password flag
-      const updatedUser = { ...user, must_reset_password: false };
-      saveSession(token, updatedUser);
-
-      // Navigate to the appropriate dashboard
-      router.push(dashboardPath(user.role));
+      if (data && !data.requires_relogin && data.token) {
+        // Server returned a fresh session — update localStorage so the next
+        // /api/auth/me call uses the new valid token (Supabase revokes all
+        // sessions on password change, so the old token is now dead).
+        const updatedUser = { ...user, must_reset_password: false };
+        saveSession(data.token, updatedUser, data.refresh_token, data.expires_at);
+        router.push(dashboardPath(user.role));
+      } else {
+        // Fallback: server couldn't issue a new token — send to login
+        clearSession();
+        router.push('/login?message=password_changed');
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to update password. Please try again.');
     } finally {
