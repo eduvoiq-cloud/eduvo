@@ -126,7 +126,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const freshUser: UserProfile = res.data.user;
         // Persist the refreshed profile so future loads are up-to-date
         saveSession(token, freshUser, refreshToken ?? undefined, expiresAt ?? undefined);
-        setState({ user: freshUser, token, loading: false });
 
         // Schedule a proactive refresh if we have the needed info
         if (expiresAt && refreshToken) {
@@ -134,10 +133,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         // If this is a first-login teacher who hasn't reset their password,
-        // redirect them before they can access any dashboard page.
+        // do a hard redirect before rendering the dashboard. Using
+        // window.location avoids the async Next.js App Router race condition
+        // where router.push fires but the dashboard layout re-renders first.
         if (freshUser.must_reset_password) {
-          router.push('/force-reset-password');
+          // Keep loading: true so nothing renders while we navigate away
+          setState({ user: freshUser, token, loading: true });
+          window.location.replace('/force-reset-password');
+          return;
         }
+
+        setState({ user: freshUser, token, loading: false });
       })
       .catch((err: unknown) => {
         // If the server explicitly rejected the token (401/403), try to refresh
@@ -187,9 +193,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       scheduleRefresh(expires_at, refresh_token, user);
     }
 
-    // Force password reset before going to dashboard
+    // Force password reset before going to dashboard.
+    // Use a hard redirect (window.location) to avoid the Next.js App Router
+    // async navigation race where the dashboard layout renders first and
+    // gets stuck in a spinner loop.
     if (res.data.must_reset_password || user.must_reset_password) {
-      router.push('/force-reset-password');
+      window.location.replace('/force-reset-password');
     } else {
       router.push(dashboardPath(user.role));
     }

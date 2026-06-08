@@ -27,7 +27,9 @@ export default function DashboardLayout({
       return;
     }
     if (user.must_reset_password) {
-      router.replace('/force-reset-password');
+      // Hard redirect — avoids the async App Router race that leaves the
+      // spinner rendering indefinitely instead of navigating away.
+      window.location.replace('/force-reset-password');
     }
   }, [loading, user, router]);
 
