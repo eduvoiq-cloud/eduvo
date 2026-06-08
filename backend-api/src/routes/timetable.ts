@@ -825,7 +825,7 @@ router.post(
  * Auth: any authenticated user (staff or student) of the same school.
  *
  * Query params: class, section
- * Response: { public_url, file_name, uploaded_at, is_image }
+ * Response: { public_url, file_name, uploaded_at, is_image, storage_path, audit_log_id, uploader_id }
  */
 router.get(
   '/file',
@@ -858,7 +858,7 @@ router.get(
     // Query audit_logs for the most recent TIMETABLE_FILE_UPLOADED for this class+section+school
     const { data, error } = await supabaseAdmin
       .from('audit_logs')
-      .select('details, created_at')
+      .select('id, user_id, details, created_at')
       .eq('action', 'TIMETABLE_FILE_UPLOADED')
       .order('created_at', { ascending: false })
       .limit(50); // fetch a batch to filter by class+section in JS
@@ -869,7 +869,7 @@ router.get(
     }
 
     // Find the first (most recent) entry matching this school + class + section
-    const match = (data ?? []).find((row: { details: Record<string, unknown>; created_at: string }) => {
+    const match = (data ?? []).find((row: { id: string; user_id: string; details: Record<string, unknown>; created_at: string }) => {
       const d = row.details as Record<string, unknown>;
       return (
         d?.school_id === school_id &&
@@ -887,6 +887,7 @@ router.get(
     const details = match.details as Record<string, unknown>;
     const publicUrl = details.public_url as string;
     const fileName = details.file_name as string | undefined;
+    const storagePath = details.storage_path as string | undefined;
 
     // Determine if the file is an image (so the app can render it inline vs. open PDF)
     const isImage = /\.(jpe?g|png|webp|heic)$/i.test(fileName ?? '') ||
@@ -897,7 +898,111 @@ router.get(
       file_name: fileName ?? null,
       uploaded_at: match.created_at as string,
       is_image: isImage,
+      storage_path: storagePath ?? null,
+      audit_log_id: match.id as string,
+      uploader_id: match.user_id as string,
     });
+  }
+);
+
+// ── DELETE /api/timetable/file ────────────────────────────────────────────────
+/**
+ * Delete an uploaded timetable file from storage and remove its audit log entry.
+ * Auth: teacher who uploaded it (or schooladmin/superadmin).
+ *
+ * Query params: class, section
+ */
+router.delete(
+  '/file',
+  authenticate,
+  requireRole('superadmin', 'schooladmin', 'teacher'),
+  async (req: Request, res: Response) => {
+    const { class: className, section } = req.query as Record<string, string>;
+
+    if (!className || !section) {
+      sendError(res, 'class and section are required', 400);
+      return;
+    }
+
+    const userId = req.user!.id;
+    const userRole = req.user!.role;
+    const school_id = req.user!.school_id;
+
+    if (!school_id) {
+      sendError(res, 'Your account is not linked to a school', 403);
+      return;
+    }
+
+    // Find the most recent uploaded file for this class+section
+    const { data, error } = await supabaseAdmin
+      .from('audit_logs')
+      .select('id, user_id, details, created_at')
+      .eq('action', 'TIMETABLE_FILE_UPLOADED')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      sendError(res, error.message, 500);
+      return;
+    }
+
+    const match = (data ?? []).find((row: { id: string; user_id: string; details: Record<string, unknown>; created_at: string }) => {
+      const d = row.details as Record<string, unknown>;
+      return (
+        d?.school_id === school_id &&
+        d?.class_name === className &&
+        d?.section === section &&
+        d?.public_url
+      );
+    });
+
+    if (!match) {
+      sendError(res, 'No uploaded timetable file found for this class/section', 404);
+      return;
+    }
+
+    // Teachers can only delete files they uploaded
+    if (userRole === 'teacher' && match.user_id !== userId) {
+      sendError(res, 'You can only delete timetable files you uploaded', 403);
+      return;
+    }
+
+    const details = match.details as Record<string, unknown>;
+    const storagePath = details.storage_path as string | undefined;
+
+    // Delete from Supabase storage
+    if (storagePath) {
+      const BUCKET = 'timetable-uploads';
+      const { error: storageErr } = await supabaseAdmin.storage
+        .from(BUCKET)
+        .remove([storagePath]);
+
+      if (storageErr) {
+        console.error('[timetable/file DELETE] Storage error:', storageErr.message);
+        // Don't fail the whole operation — the audit log can still be removed
+      }
+    }
+
+    // Remove the audit log entry so the file no longer appears
+    const { error: deleteErr } = await supabaseAdmin
+      .from('audit_logs')
+      .delete()
+      .eq('id', match.id);
+
+    if (deleteErr) {
+      sendError(res, deleteErr.message, 500);
+      return;
+    }
+
+    await logAudit(userId, 'TIMETABLE_FILE_DELETED', {
+      school_id,
+      class_name: className,
+      section,
+      deleted_file: details.file_name ?? null,
+      storage_path: storagePath ?? null,
+    });
+
+    sendSuccess(res, { deleted: true }, 'Timetable file deleted successfully');
   }
 );
 

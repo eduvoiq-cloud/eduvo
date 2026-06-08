@@ -8,6 +8,90 @@ import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
 import FormField, { inputClass } from '@/components/FormField';
 
+// ── Uploaded File Banner ──────────────────────────────────────────────────────
+
+interface UploadedFile {
+  public_url: string;
+  file_name: string | null;
+  uploaded_at: string;
+  is_image: boolean;
+  storage_path: string | null;
+  audit_log_id: string;
+  uploader_id: string;
+}
+
+interface UploadedFileBannerProps {
+  file: UploadedFile;
+  onDelete: () => void;
+  deleting: boolean;
+}
+
+function UploadedFileBanner({ file, onDelete, deleting }: UploadedFileBannerProps) {
+  const isPdf = !file.is_image;
+  const uploadedDate = new Date(file.uploaded_at).toLocaleString();
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl mb-4 print:hidden">
+      {/* File icon */}
+      <div className="shrink-0">
+        {isPdf ? (
+          <svg className="w-8 h-8 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6zm-1 1.5L18.5 9H13V3.5zM8 17v-1h8v1H8zm0-3v-1h8v1H8zm0-3V10h5v1H8z" />
+          </svg>
+        ) : (
+          <svg className="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+        )}
+      </div>
+
+      {/* File info */}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-blue-800 truncate">
+          {file.file_name ?? 'Uploaded timetable'}
+        </p>
+        <p className="text-xs text-blue-600 mt-0.5">Uploaded {uploadedDate}</p>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-2 shrink-0">
+        <a
+          href={file.public_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-white hover:bg-blue-50 border border-blue-200 rounded-lg transition-colors"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+          </svg>
+          View
+        </a>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={deleting}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-white hover:bg-red-50 border border-red-200 rounded-lg transition-colors disabled:opacity-50"
+          aria-label="Delete uploaded timetable file"
+        >
+          {deleting ? (
+            <span className="w-3.5 h-3.5 border-2 border-red-400 border-t-transparent rounded-full animate-spin inline-block" />
+          ) : (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          )}
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Upload Timetable Modal ────────────────────────────────────────────────────
 
 interface UploadTimetableModalProps {
@@ -15,9 +99,10 @@ interface UploadTimetableModalProps {
   onClose: () => void;
   selectedClass: string;
   selectedSection: string;
+  onUploaded?: () => void;
 }
 
-function UploadTimetableModal({ open, onClose, selectedClass, selectedSection }: UploadTimetableModalProps) {
+function UploadTimetableModal({ open, onClose, selectedClass, selectedSection, onUploaded }: UploadTimetableModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -87,6 +172,7 @@ function UploadTimetableModal({ open, onClose, selectedClass, selectedSection }:
         throw new Error(json.message ?? `Upload failed (${res.status})`);
       }
       setUploadStatus('success');
+      onUploaded?.();
     } catch (e: unknown) {
       setErrorMsg(e instanceof Error ? e.message : 'Upload failed.');
       setUploadStatus('error');
@@ -749,6 +835,10 @@ export default function TimetablePage() {
   const [timetableLoaded, setTimetableLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
 
+  // ── Uploaded file state ─────────────────────────────────────────────────────
+  const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
+  const [deletingFile, setDeletingFile] = useState(false);
+
   // ── Modals ──────────────────────────────────────────────────────────────────
   const [addSlotOpen, setAddSlotOpen] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -778,6 +868,23 @@ export default function TimetablePage() {
       .filter((a) => a.class_name === selectedClass && a.section === selectedSection)
       .map((a) => [a.subject, { id: a.subject, name: a.subject }])
   ).values()];
+
+  // ── Fetch uploaded timetable file ───────────────────────────────────────────
+  const fetchUploadedFile = useCallback(async () => {
+    if (!selectedClass || !selectedSection) return;
+    const token = getToken();
+    if (!token) return;
+    try {
+      const res = await fetch(
+        `${BASE_URL}/api/timetable/file?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await res.json();
+      setUploadedFile(json.data ?? null);
+    } catch {
+      setUploadedFile(null);
+    }
+  }, [selectedClass, selectedSection]);
 
   // ── Load timetable ──────────────────────────────────────────────────────────
   const loadTimetable = useCallback(async () => {
@@ -828,7 +935,33 @@ export default function TimetablePage() {
     } finally {
       setLoadingTimetable(false);
     }
-  }, [selectedClass, selectedSection]);
+
+    // Also fetch the uploaded file for this class/section
+    fetchUploadedFile();
+  }, [selectedClass, selectedSection, fetchUploadedFile]);
+
+  // ── Delete uploaded timetable file ──────────────────────────────────────────
+  async function handleDeleteFile() {
+    if (!selectedClass || !selectedSection) return;
+    const token = getToken();
+    if (!token) return;
+    setDeletingFile(true);
+    try {
+      const res = await fetch(
+        `${BASE_URL}/api/timetable/file?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`,
+        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.message ?? 'Failed to delete file.');
+      }
+      setUploadedFile(null);
+    } catch {
+      // silently ignore — could show a toast here
+    } finally {
+      setDeletingFile(false);
+    }
+  }
 
   // ── Handle cell saved ───────────────────────────────────────────────────────
   function handleCellSaved(entry: TimetableEntry) {
@@ -880,6 +1013,7 @@ export default function TimetablePage() {
               setSelectedSection('');
               setTimetableLoaded(false);
               setSlots([]);
+              setUploadedFile(null);
               setTimetable({ monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [] });
             }}
           >
@@ -899,6 +1033,7 @@ export default function TimetablePage() {
               setSelectedSection(e.target.value);
               setTimetableLoaded(false);
               setSlots([]);
+              setUploadedFile(null);
               setTimetable({ monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [] });
             }}
           >
@@ -970,6 +1105,15 @@ export default function TimetablePage() {
         </div>
       )}
 
+      {/* ── Uploaded file banner ─────────────────────────────────────────────── */}
+      {uploadedFile && (
+        <UploadedFileBanner
+          file={uploadedFile}
+          onDelete={handleDeleteFile}
+          deleting={deletingFile}
+        />
+      )}
+
       {/* ── Grid area ───────────────────────────────────────────────────────── */}
       <div ref={printRef}>
         {/* Print header (only visible when printing) */}
@@ -1017,6 +1161,7 @@ export default function TimetablePage() {
         onClose={() => setUploadOpen(false)}
         selectedClass={selectedClass}
         selectedSection={selectedSection}
+        onUploaded={fetchUploadedFile}
       />
 
       {/* ── Print styles ─────────────────────────────────────────────────────── */}
