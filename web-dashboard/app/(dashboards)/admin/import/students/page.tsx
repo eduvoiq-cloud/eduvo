@@ -315,7 +315,7 @@ export default function ImportStudentsPage() {
     if (warnedCount > 0) {
       setShowPhoneConfirm(true);
     } else {
-      setShowConfirm(true);
+      handleImport();
     }
   }
 
