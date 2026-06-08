@@ -34,6 +34,14 @@ interface AnnouncementRecord {
   created_at: string;
 }
 
+interface AdminAnnouncementRecord {
+  id: string;
+  title: string;
+  message: string;
+  target_audience: string;
+  created_at: string;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function timeAgo(isoString: string): string {
@@ -89,6 +97,10 @@ export default function TeacherAnnouncementsPage() {
   const [listError, setListError] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState('');
+
+  // ── Admin announcements (school-wide) ───────────────────────────────────────
+  const [adminAnnouncements, setAdminAnnouncements] = useState<AdminAnnouncementRecord[]>([]);
+  const [loadingAdmin, setLoadingAdmin] = useState(true);
 
   // ── Derived class options ───────────────────────────────────────────────────
 
@@ -163,6 +175,21 @@ export default function TeacherAnnouncementsPage() {
   useEffect(() => {
     fetchAnnouncements();
   }, [fetchAnnouncements]);
+
+  // ── Load school admin announcements ─────────────────────────────────────────
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) return;
+    setLoadingAdmin(true);
+    fetch(`${BASE_URL}/api/announcements/school`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((json) => setAdminAnnouncements(json.data ?? []))
+      .catch(() => {})
+      .finally(() => setLoadingAdmin(false));
+  }, []);
 
   // ── Select all toggle ───────────────────────────────────────────────────────
 
@@ -454,6 +481,45 @@ export default function TeacherAnnouncementsPage() {
                 deleting={deletingId === ann.id}
                 onDelete={handleDelete}
               />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── School Admin Announcements ─────────────────────────────────────── */}
+      <div className="mt-8">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">From School Admin</h2>
+        <p className="text-xs text-gray-500 mb-4">School-wide announcements sent to you by the school admin.</p>
+
+        {loadingAdmin ? (
+          <div className="space-y-3">
+            {[1, 2].map((i) => <CardSkeleton key={i} />)}
+          </div>
+        ) : adminAnnouncements.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center bg-white rounded-xl border border-gray-200">
+            <p className="text-sm text-gray-500">No school admin announcements yet</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {adminAnnouncements.map((ann) => (
+              <div key={ann.id} className="bg-white rounded-xl border border-blue-100 p-5 border-l-4 border-l-blue-500">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                        📢 School Admin
+                      </span>
+                    </div>
+                    <h3 className="text-sm font-semibold text-gray-900 leading-snug mb-1 mt-2">
+                      {ann.title}
+                    </h3>
+                    <p className="text-sm text-gray-600 line-clamp-2 mb-2">
+                      {ann.message}
+                    </p>
+                    <span className="text-xs text-gray-400">{timeAgo(ann.created_at)}</span>
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}

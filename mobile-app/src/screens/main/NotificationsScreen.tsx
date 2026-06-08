@@ -11,7 +11,6 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuthStore } from '../../store/authStore';
-import { useChildStore } from '../../store/childStore';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -147,16 +146,12 @@ function FeedRow({
 
 export default function NotificationsScreen() {
   const student = useAuthStore((s) => s.student);
-  const { linkedChildren, activeChildIndex } = useChildStore();
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
-
-  const activeChildToken =
-    linkedChildren.length > 0 ? linkedChildren[activeChildIndex]?.token : null;
 
   // ── Fetch both feeds ────────────────────────────────────────────────────────
 
@@ -166,11 +161,7 @@ export default function NotificationsScreen() {
 
       const [notifRes, annRes] = await Promise.allSettled([
         apiClient.get('/api/notifications'),
-        apiClient.get('/api/announcements/student', {
-          headers: activeChildToken
-            ? { Authorization: `Bearer ${activeChildToken}` }
-            : undefined,
-        }),
+        apiClient.get('/api/announcements/student'),
       ]);
 
       if (notifRes.status === 'fulfilled') {
@@ -214,7 +205,7 @@ export default function NotificationsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeChildToken]);
+  }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 

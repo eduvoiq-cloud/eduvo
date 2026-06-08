@@ -12,7 +12,6 @@ import {
   ScrollView,
 } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
-import { useChildStore } from '../../store/childStore';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -203,26 +202,15 @@ function AnnouncementItem({
 
 export default function AnnouncementsScreen() {
   const student = useAuthStore((s) => s.student);
-  const { linkedChildren, activeChildIndex } = useChildStore();
 
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<Announcement | null>(null);
 
-  // Use the active child's token when browsing as a linked child
-  const activeChildToken =
-    linkedChildren.length > 0
-      ? linkedChildren[activeChildIndex]?.token
-      : null;
-
   const fetchAnnouncements = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/announcements/student', {
-        headers: activeChildToken
-          ? { Authorization: `Bearer ${activeChildToken}` }
-          : undefined,
-      });
+      const response = await apiClient.get('/api/announcements/student');
       setAnnouncements(response.data.data ?? []);
     } catch (err) {
       console.warn('[Announcements] fetch error:', err);
@@ -230,7 +218,7 @@ export default function AnnouncementsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [activeChildToken]);
+  }, []);
 
   useEffect(() => {
     fetchAnnouncements();

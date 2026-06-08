@@ -31,6 +31,13 @@ const teacherAnnouncementSchema = z.object({
   school_id: z.string().uuid().optional(),
 });
 
+// audience: 'everyone' | 'teachers' | 'students'
+const adminAnnouncementSchema = z.object({
+  title: z.string().min(1).max(200),
+  message: z.string().min(1).max(2000),
+  audience: z.enum(['everyone', 'teachers', 'students']).default('everyone'),
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function logAudit(
@@ -181,12 +188,163 @@ router.post('/teacher', requireRole('teacher'), async (req: Request, res: Respon
   );
 });
 
+// ── POST /api/announcements/admin ────────────────────────────────────────────
+/**
+ * School admin sends a school-wide announcement.
+ * Stored in the announcements table with sender_role='schooladmin'.
+ * audience field controls who can see it:
+ *   'everyone'  → all students, parents, teachers of this school
+ *   'teachers'  → only teachers
+ *   'parents'   → only parents
+ *   'students'  → only students
+ * Uses sender_role + target_audience columns for filtering on the read path.
+ * Also sends FCM push notifications to the relevant users.
+ */
+router.post('/admin', requireRole('schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const parsed = adminAnnouncementSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { title, message, audience } = parsed.data;
+  const adminId = req.user!.id;
+  const schoolId = req.user!.school_id;
+
+  if (!schoolId) {
+    sendError(res, 'Your account is not linked to a school', 403);
+    return;
+  }
+
+  // Insert announcement record
+  const { data: inserted, error: insertErr } = await supabaseAdmin
+    .from('announcements')
+    .insert({
+      title,
+      message,
+      school_id: schoolId,
+      created_by: adminId,
+      sender_role: 'schooladmin',
+      target_audience: audience,
+      target_classes: null, // admin announcements are not class-specific
+      created_at: new Date().toISOString(),
+    })
+    .select()
+    .single();
+
+  if (insertErr) {
+    sendError(res, insertErr.message, 500);
+    return;
+  }
+
+  // Collect recipient IDs for FCM push
+  const recipientIdSet = new Set<string>();
+
+  // Fetch teachers in this school
+  if (audience === 'everyone' || audience === 'teachers') {
+    const { data: teachers } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .eq('school_id', schoolId)
+      .eq('role', 'teacher');
+    for (const t of teachers ?? []) recipientIdSet.add(t.id);
+  }
+
+  // Count students for display (students use student tokens, not FCM via users table)
+  const { count: studentCount } = await supabaseAdmin
+    .from('students')
+    .select('id', { count: 'exact', head: true })
+    .eq('school_id', schoolId)
+    .neq('is_deleted', true);
+
+  const { count: teacherCount } = await supabaseAdmin
+    .from('users')
+    .select('id', { count: 'exact', head: true })
+    .eq('school_id', schoolId)
+    .eq('role', 'teacher');
+
+  await logAudit(adminId, 'ADMIN_ANNOUNCEMENT_SENT', {
+    announcement_id: inserted?.id,
+    title,
+    audience,
+    school_id: schoolId,
+  });
+
+  // Fire-and-forget FCM push to teacher recipients
+  const recipientIds = Array.from(recipientIdSet);
+  if (recipientIds.length > 0) {
+    setImmediate(() => {
+      (async () => {
+        try {
+          const tokens = await getTokensForUsers(recipientIds);
+          if (tokens.length > 0) {
+            const { successCount, failureCount } = await sendPushMulticast(
+              tokens,
+              `Announcement: ${title}`,
+              message
+            );
+            console.log(
+              `[FCM] Admin announcement push — sent: ${successCount}, failed: ${failureCount}`
+            );
+          }
+        } catch (err) {
+          console.error('[FCM] Failed to send admin announcement push:', err);
+        }
+      })();
+    });
+  }
+
+  const totalReachable =
+    audience === 'everyone'  ? (studentCount ?? 0) + (teacherCount ?? 0)
+    : audience === 'teachers' ? (teacherCount ?? 0)
+    : audience === 'students' ? (studentCount ?? 0)
+    : 0;
+
+  sendSuccess(
+    res,
+    { announcement: inserted, audience, recipient_count: totalReachable },
+    `Announcement sent to ${totalReachable} recipient${totalReachable !== 1 ? 's' : ''}`,
+    201
+  );
+});
+
+// ── GET /api/announcements/school ────────────────────────────────────────────
+/**
+ * Returns admin (school-wide) announcements for the authenticated staff member's school.
+ * Used by teachers to see announcements from their school admin.
+ * Returns only announcements with sender_role='schooladmin'.
+ */
+router.get('/school', requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id;
+
+  if (!schoolId) {
+    sendError(res, 'Your account is not linked to a school', 403);
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('announcements')
+    .select('id, title, message, target_audience, created_by, created_at, sender_role')
+    .eq('school_id', schoolId)
+    .eq('sender_role', 'schooladmin')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (error) {
+    sendError(res, error.message, 500);
+    return;
+  }
+
+  sendSuccess(res, data ?? []);
+});
+
 // ── GET /api/announcements/student ───────────────────────────────────────────
 /**
- * Returns announcements targeted at the logged-in student's class + section.
- * Uses the authenticateStudent middleware so req.student is available.
- * Filters by school_id and checks whether target_classes JSON array contains
- * an entry matching the student's class_name and section (case-insensitive).
+ * Returns announcements visible to the logged-in student.
+ * Includes:
+ *   1. Teacher announcements where target_classes matches the student's class+section.
+ *   2. Admin school-wide announcements (sender_role='schooladmin') targeted at
+ *      'everyone' or 'students'.
  *
  * NOTE: this route lives on studentRouter (no global `authenticate` guard)
  * so that student JWTs are accepted. `authenticateStudent` handles auth.
@@ -203,33 +361,33 @@ studentRouter.get(
 
     const { class_name, section, school_id } = student;
 
-    if (!class_name || !section) {
-      // Student has no class assigned — return empty list gracefully
-      sendSuccess(res, []);
-      return;
-    }
-
-    // Fetch all announcements for this school, then filter in JS for
-    // target_classes containment (avoids complex JSONB GIN index requirement).
-    // For schools with large announcement volumes this could be paginated,
-    // but a LIMIT of 50 keeps it snappy for now.
+    // Fetch all announcements for this school
     const { data, error } = await supabaseAdmin
       .from('announcements')
-      .select('id, title, message, target_classes, created_by, created_at')
+      .select('id, title, message, target_classes, sender_role, target_audience, created_by, created_at')
       .eq('school_id', school_id)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(100);
 
     if (error) {
       sendError(res, error.message, 500);
       return;
     }
 
-    // Filter to only those announcements that target this student's class+section
-    const studentClass   = class_name.trim().toLowerCase();
-    const studentSection = section.trim().toLowerCase();
+    const studentClass   = (class_name ?? '').trim().toLowerCase();
+    const studentSection = (section ?? '').trim().toLowerCase();
 
-    const relevant = (data ?? []).filter((ann: { target_classes?: Array<{ class: string; section: string }> }) => {
+    const relevant = (data ?? []).filter((ann: {
+      sender_role?: string;
+      target_audience?: string;
+      target_classes?: Array<{ class: string; section: string }>;
+    }) => {
+      // Admin announcements: visible if audience targets everyone or students
+      if (ann.sender_role === 'schooladmin') {
+        const aud = ann.target_audience ?? 'everyone';
+        return aud === 'everyone' || aud === 'students';
+      }      // Teacher announcements: match by class+section (skip if student has no class)
+      if (!studentClass || !studentSection) return false;
       const targets: Array<{ class: string; section: string }> = ann.target_classes ?? [];
       return targets.some(
         (t) =>
