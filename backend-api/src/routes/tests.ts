@@ -1176,6 +1176,131 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
   });
 });
 
+// ── GET /api/tests/results/by-test/:test_id ──────────────────────────────────
+/**
+ * Student fetches results for their most recent completed attempt on a test,
+ * without needing to know the attempt_id upfront.
+ * Used by the mobile app when navigating to a completed test from the list.
+ */
+router.get('/results/by-test/:test_id', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  const { test_id } = req.params;
+  const studentId = req.student!.id;
+
+  // Find the student's submitted attempt for this test
+  const { data: attempt, error: aErr } = await supabaseAdmin
+    .from('test_attempts')
+    .select('id, test_id, mcq_score, total_score, is_submitted, submitted_at, started_at')
+    .eq('test_id', test_id)
+    .eq('student_id', studentId)
+    .eq('is_submitted', true)
+    .order('submitted_at', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (aErr || !attempt) { sendError(res, 'No completed attempt found for this test', 404); return; }
+
+  const attempt_id = attempt.id;
+
+  // Fetch answers
+  const { data: answers, error: ansErr } = await supabaseAdmin
+    .from('student_answers')
+    .select('question_id, selected_option, theory_answer, is_correct, marks_awarded')
+    .eq('attempt_id', attempt_id);
+
+  if (ansErr) { sendError(res, ansErr.message, 500); return; }
+
+  const questionIds = (answers ?? []).map((a: { question_id: string }) => a.question_id);
+
+  type QuestionDetail = {
+    id: string;
+    question_text: string;
+    question_type: string;
+    option_a: string | null;
+    option_b: string | null;
+    option_c: string | null;
+    option_d: string | null;
+    correct_option: string | null;
+    marks: number;
+  };
+
+  const questionMap = new Map<string, QuestionDetail>();
+
+  if (questionIds.length > 0) {
+    const { data: tqData } = await supabaseAdmin
+      .from('test_questions')
+      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+      .in('id', questionIds);
+
+    for (const q of (tqData ?? []) as QuestionDetail[]) {
+      questionMap.set(q.id, q);
+    }
+
+    const missing = questionIds.filter((id: string) => !questionMap.has(id));
+    if (missing.length > 0) {
+      const { data: qData } = await supabaseAdmin
+        .from('questions')
+        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+        .in('id', missing);
+
+      for (const q of (qData ?? []) as QuestionDetail[]) {
+        questionMap.set(q.id, q);
+      }
+    }
+  }
+
+  type AnswerRow = {
+    question_id: string;
+    selected_option: string | null;
+    theory_answer: string | null;
+    is_correct: boolean | null;
+    marks_awarded: number | null;
+  };
+
+  const formattedAnswers = (answers as AnswerRow[] ?? []).map((ans) => {
+    const q = questionMap.get(ans.question_id);
+    if (q?.question_type === 'mcq') {
+      const isCorrect = ans.is_correct === true;
+      return {
+        question_id: ans.question_id,
+        question_text: q.question_text,
+        question_type: 'mcq',
+        option_a: q.option_a,
+        option_b: q.option_b,
+        option_c: q.option_c,
+        option_d: q.option_d,
+        selected_option: ans.selected_option,
+        correct_option: !isCorrect ? q.correct_option : null,
+        is_correct: ans.is_correct,
+        marks: q.marks,
+        marks_awarded: ans.marks_awarded,
+      };
+    }
+    return {
+      question_id: ans.question_id,
+      question_text: q?.question_text ?? '',
+      question_type: 'theory',
+      theory_answer: ans.theory_answer,
+      marks: q?.marks ?? 0,
+      marks_awarded: ans.marks_awarded !== null ? ans.marks_awarded : 'pending',
+    };
+  });
+
+  const hasUnmarkedTheory = formattedAnswers.some(
+    (a) => a.question_type === 'theory' && a.marks_awarded === 'pending'
+  );
+
+  sendSuccess(res, {
+    attempt_id,
+    test_id: attempt.test_id,
+    started_at: attempt.started_at,
+    submitted_at: attempt.submitted_at,
+    mcq_score: attempt.mcq_score,
+    total_score: hasUnmarkedTheory ? null : attempt.total_score,
+    total_score_pending: hasUnmarkedTheory,
+    answers: formattedAnswers,
+  });
+});
+
 // ── Compatibility routes for frontend testsApi ────────────────────────────────
 // The frontend calls GET /api/tests and POST /api/tests with a different
 // schema than the student-facing routes above. These shim routes bridge the gap.
