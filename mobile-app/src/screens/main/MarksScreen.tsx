@@ -29,6 +29,8 @@ interface TestRecord {
   id: string;
   title: string;
   date: string;
+  subject?: string | null;
+  subject_id?: string | null;
   term?: string | null;
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
   mcq_score?: number | null;
@@ -100,6 +102,29 @@ function buildSubjectSummaries(marks: MarkRecord[]): SubjectSummary[] {
     });
   });
   return summaries;
+}
+
+/** Convert completed tests (with scores) into synthetic MarkRecords for subject summaries. */
+function testsToMarkRecords(tests: TestRecord[]): MarkRecord[] {
+  const result: MarkRecord[] = [];
+  for (const t of tests) {
+    const subject = t.subject?.trim();
+    if (!subject) continue;
+    const score = t.total_score ?? t.mcq_score;
+    if (score === null || score === undefined || t.total_score_pending) continue;
+    const max = t.max_score ?? 100;
+    result.push({
+      id: `test-${t.id}`,
+      subject,
+      score,
+      max_score: max,
+      term: t.term ?? 'All',
+      exam_type: 'class_test',
+      notes: null,
+      created_at: t.date,
+    });
+  }
+  return result;
 }
 
 // ── Trend arrow ───────────────────────────────────────────────────────────────
@@ -510,7 +535,13 @@ export default function MarksScreen() {
     });
   }, [completedTests, termFilter]);
 
-  const summaries = useMemo(() => buildSubjectSummaries(filteredMarks), [filteredMarks]);
+  const summaries = useMemo(() => {
+    // Merge teacher-entered marks with completed test results (by subject)
+    const testMarks = testsToMarkRecords(filteredTests);
+    // Combine: teacher marks take precedence, tests fill gaps
+    const combined = [...filteredMarks, ...testMarks];
+    return buildSubjectSummaries(combined);
+  }, [filteredMarks, filteredTests]);
   const sortedSummaries = useMemo(
     () => [...summaries].sort((a, b) => b.average - a.average),
     [summaries]

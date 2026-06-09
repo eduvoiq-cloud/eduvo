@@ -331,6 +331,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .select(`
       id, title, subject_id, date, term, time_limit_minutes,
       available_from, available_until,
+      subject:subjects(name),
       questions:test_questions(count)
     `)
     .eq('school_id', studentRecord.school_id)
@@ -340,19 +341,26 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
 
   if (tErr) { sendError(res, tErr.message, 500); return; }
 
-  const result = (tests ?? []).map((t: Record<string, unknown>) => ({
-    id: t.id as string,
-    title: t.title,
-    subject_id: t.subject_id,
-    date: t.date,
-    term: t.term ?? null,
-    time_limit_minutes: t.time_limit_minutes,
-    available_from: t.available_from ?? null,
-    available_until: t.available_until ?? null,
-    question_count: Array.isArray(t.questions)
-      ? (t.questions as Array<{ count: number }>)[0]?.count ?? 0
-      : 0,
-  }));
+  const result = (tests ?? []).map((t: Record<string, unknown>) => {
+    const subjectData = t.subject as { name: string } | Array<{ name: string }> | null;
+    const subjectName = Array.isArray(subjectData)
+      ? (subjectData[0]?.name ?? null)
+      : (subjectData?.name ?? null);
+    return {
+      id: t.id as string,
+      title: t.title,
+      subject_id: t.subject_id,
+      subject: subjectName,
+      date: t.date,
+      term: t.term ?? null,
+      time_limit_minutes: t.time_limit_minutes,
+      available_from: t.available_from ?? null,
+      available_until: t.available_until ?? null,
+      question_count: Array.isArray(t.questions)
+        ? (t.questions as Array<{ count: number }>)[0]?.count ?? 0
+        : 0,
+    };
+  });
 
   if (result.length === 0) {
     sendSuccess(res, []);
