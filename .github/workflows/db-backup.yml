@@ -1,0 +1,68 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    # Runs every day at 02:00 UTC (adjust to your preferred time)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allows you to trigger a manual backup anytime from the Actions tab
+
+jobs:
+  backup:
+    name: Dump & Upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Install PostgreSQL client tools ──────────────────────────────────
+      - name: Install pg_dump
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client
+
+      # ── 2. Run pg_dump against Supabase ─────────────────────────────────────
+      # Supabase exposes a direct Postgres connection on port 5432.
+      # We dump only the `public` schema (your app data).
+      # The dump is compressed with gzip to keep artifact size small.
+      - name: Dump database
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+          FILENAME="eduvo-backup-${TIMESTAMP}.sql.gz"
+
+          pg_dump \
+            --host=db.gkbqltztadukfbknnqqd.supabase.co \
+            --port=5432 \
+            --username=postgres \
+            --dbname=postgres \
+            --schema=public \
+            --no-owner \
+            --no-acl \
+            --format=plain \
+          | gzip > "$FILENAME"
+
+          echo "BACKUP_FILE=$FILENAME" >> $GITHUB_ENV
+          echo "Backup created: $FILENAME ($(du -sh $FILENAME | cut -f1))"
+
+      # ── 3. Upload as a GitHub Actions artifact ───────────────────────────────
+      # Retained for 90 days. Download from:
+      # GitHub → Actions → select the run → Artifacts section.
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BACKUP_FILE }}
+          path: ${{ env.BACKUP_FILE }}
+          retention-days: 90
+          if-no-files-found: error
+
+      # ── 4. Confirm success ───────────────────────────────────────────────────
+      - name: Print summary
+        run: |
+          echo "✅ Backup complete: ${{ env.BACKUP_FILE }}"
+          echo "Retained for 90 days in GitHub Actions artifacts."
+          echo ""
+          echo "To restore:"
+          echo "  1. Download the artifact from GitHub Actions"
+          echo "  2. gunzip eduvo-backup-*.sql.gz"
+          echo "  3. psql -h db.gkbqltztadukfbknnqqd.supabase.co -U postgres -d postgres < eduvo-backup-*.sql"
