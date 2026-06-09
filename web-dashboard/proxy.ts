@@ -29,10 +29,11 @@ const ROLE_DASHBOARDS: Record<string, string> = {
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Let Next.js internals and static files through
+  // Let Next.js internals, static files, and Sentry tunnel through
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api') ||
+    pathname.startsWith('/monitoring') ||
     pathname.includes('.')
   ) {
     return NextResponse.next();
