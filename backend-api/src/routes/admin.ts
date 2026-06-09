@@ -375,6 +375,21 @@ router.put('/students/:id', async (req: Request, res: Response) => {
   const existing = await getStudentInSchool(req.params.id as string, schoolId);
   if (!existing) { sendError(res, 'Student not found', 404); return; }
 
+  // ── Optimistic locking: detect concurrent edits ───────────────────────────
+  const clientUpdatedAt = req.body.updated_at as string | undefined;
+  if (clientUpdatedAt && existing.updated_at) {
+    const existingTs = new Date(existing.updated_at as string).getTime();
+    const clientTs   = new Date(clientUpdatedAt).getTime();
+    if (existingTs !== clientTs) {
+      sendError(
+        res,
+        'This record was modified by someone else. Please refresh and try again.',
+        409
+      );
+      return;
+    }
+  }
+
   const updates: Record<string, unknown> = {};
   if (parsed.data.name)         updates.full_name  = parsed.data.name;
   if (parsed.data.class)        updates.class_name = parsed.data.class;

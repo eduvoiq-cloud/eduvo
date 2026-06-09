@@ -197,9 +197,10 @@ export default function SchoolAdminDashboard() {
           const students: Student[] = (Array.isArray(rawStudents)
             ? rawStudents
             : (rawStudents as unknown as { data: Student[] })?.data ?? []) as Student[];
-          const teachers: Teacher[] = teachersRes.data ?? [];
+          const teachers: Teacher[] = (teachersRes.data as unknown as {data: Teacher[]}).data ?? teachersRes.data as unknown as Teacher[] ?? [];
           const complaints: Complaint[] = complaintsRes.data ?? [];
-          const fees: FeeRecord[] = feesRes.data ?? [];
+          const feesRaw = (feesRes.data as unknown as {data: FeeRecord[]}).data ?? feesRes.data as unknown as FeeRecord[] ?? [];
+          const fees: FeeRecord[] = Array.isArray(feesRaw) ? feesRaw : [];
           const tests: Test[] = testsRes.data ?? [];
 
           // Attendance % — use today-count endpoint data if available

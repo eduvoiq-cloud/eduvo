@@ -431,9 +431,12 @@ function StudentsPageInner() {
     const token = getToken();
     if (!token) return;
     try {
-      const feesRes = await feesApi.list(token).catch(() => ({ data: [] as FeeRecord[] }));
+      const feesRes = await feesApi.list(token).catch(() => ({ data: { data: [] as FeeRecord[] } }));
+      const feesData: FeeRecord[] = (feesRes.data as unknown as { data: FeeRecord[] }).data
+        ?? (feesRes.data as unknown as FeeRecord[])
+        ?? [];
       const map: Record<string, FeeRecord> = {};
-      for (const f of feesRes.data ?? []) map[f.student_id] = f;
+      for (const f of feesData) map[f.student_id] = f;
       setFeeMap(map);
     } catch { /* swallow */ }
   }, []);

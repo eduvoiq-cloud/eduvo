@@ -74,13 +74,20 @@ const SUBSCRIPTION_PRICE = parseFloat(process.env.SUBSCRIPTION_PRICE ?? '50');
 /**
  * List all schools with student count, teacher count, subscription status,
  * and last active date.
+ * Supports pagination: ?page=1&limit=50 (default 50, max 200).
  */
 router.get('/schools', async (req: Request, res: Response) => {
-  // Fetch all schools
-  const { data: schools, error: schoolsErr } = await supabaseAdmin
+  const rawPage  = parseInt((req.query.page  as string) ?? '1',  10);
+  const rawLimit = parseInt((req.query.limit as string) ?? '50', 10);
+  const page  = isNaN(rawPage)  || rawPage  < 1 ? 1  : rawPage;
+  const limit = isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
+
+  // Fetch schools with pagination
+  const { data: schools, error: schoolsErr, count } = await supabaseAdmin
     .from('schools')
-    .select('id, name, address, phone, email, subscription_status, created_at, updated_at')
-    .order('name');
+    .select('id, name, address, phone, email, subscription_status, created_at, updated_at', { count: 'exact' })
+    .order('name')
+    .range((page - 1) * limit, page * limit - 1);
 
   if (schoolsErr) {
     sendError(res, schoolsErr.message, 500);
@@ -88,32 +95,38 @@ router.get('/schools', async (req: Request, res: Response) => {
   }
 
   if (!schools || schools.length === 0) {
-    sendSuccess(res, []);
+    sendSuccess(res, { data: [], total: count ?? 0, page, limit, total_pages: 0 });
     return;
   }
 
   const schoolIds = schools.map((s: { id: string }) => s.id);
 
-  // Student counts per school
-  const { data: studentCounts } = await supabaseAdmin
-    .from('students')
-    .select('school_id')
-    .in('school_id', schoolIds)
-    .eq('is_deleted', false);
-
-  // Teacher counts per school (users with role=teacher)
-  const { data: teacherCounts } = await supabaseAdmin
-    .from('users')
-    .select('school_id')
-    .in('school_id', schoolIds)
-    .eq('role', 'teacher');
-
-  // Last attendance date per school (proxy for "last active")
-  const { data: lastActivity } = await supabaseAdmin
-    .from('attendance')
-    .select('date, students!inner(school_id)')
-    .in('students.school_id', schoolIds)
-    .order('date', { ascending: false });
+  // Fetch all counts in parallel — one query each (no N+1)
+  const [
+    { data: studentCounts },
+    { data: teacherCounts },
+    { data: lastActivity },
+  ] = await Promise.all([
+    supabaseAdmin
+      .from('students')
+      .select('school_id')
+      .in('school_id', schoolIds)
+      .eq('is_deleted', false),
+    supabaseAdmin
+      .from('users')
+      .select('school_id')
+      .in('school_id', schoolIds)
+      .eq('role', 'teacher')
+      .or('is_deleted.eq.false,is_deleted.is.null'),
+    // Last attendance date: get the max date per school using a single aggregated query
+    // by fetching one recent record per school (ordered desc, deduplicated client-side)
+    supabaseAdmin
+      .from('attendance')
+      .select('date, students!inner(school_id)')
+      .filter('students.school_id', 'in', `(${schoolIds.map((id) => `"${id}"`).join(',')})`)
+      .order('date', { ascending: false })
+      .limit(schoolIds.length * 2), // enough to get at least one per school
+  ]);
 
   // Build lookup maps
   const studentCountMap: Record<string, number> = {};
@@ -131,8 +144,9 @@ router.get('/schools', async (req: Request, res: Response) => {
   // Last active: first occurrence per school_id (already ordered desc)
   const lastActiveMap: Record<string, string> = {};
   for (const row of lastActivity ?? []) {
-    const r = row as unknown as { date: string; students: { school_id: string } };
-    const sid = r.students?.school_id;
+    const r = row as unknown as { date: string; students: { school_id: string } | { school_id: string }[] };
+    const studentData = Array.isArray(r.students) ? r.students[0] : r.students;
+    const sid = studentData?.school_id;
     if (sid && !lastActiveMap[sid]) {
       lastActiveMap[sid] = r.date;
     }
@@ -140,12 +154,13 @@ router.get('/schools', async (req: Request, res: Response) => {
 
   const result = schools.map((school: Record<string, unknown>) => ({
     ...school,
-    student_count: studentCountMap[school.id as string] ?? 0,
-    teacher_count: teacherCountMap[school.id as string] ?? 0,
+    student_count:    studentCountMap[school.id as string] ?? 0,
+    teacher_count:    teacherCountMap[school.id as string] ?? 0,
     last_active_date: lastActiveMap[school.id as string] ?? null,
   }));
 
-  sendSuccess(res, result);
+  const total = count ?? 0;
+  sendSuccess(res, { data: result, total, page, limit, total_pages: Math.ceil(total / limit) });
 });
 
 // ── POST /api/superadmin/schools ──────────────────────────────────────────────

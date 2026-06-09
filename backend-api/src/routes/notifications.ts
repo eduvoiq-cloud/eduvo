@@ -51,32 +51,48 @@ function normaliseRow(row: Record<string, unknown>) {
 /**
  * GET /api/notifications
  * Returns notifications for the authenticated user, sorted newest first.
+ * Supports pagination: ?page=1&limit=50 (default limit 50, max 200).
  * Query param: unread_only=true  -> only return unread notifications.
  */
 router.get('/', async (req: Request, res: Response) => {
   const unreadOnly = req.query.unread_only === 'true';
+
+  // Pagination
+  const rawPage  = parseInt((req.query.page  as string) ?? '1',  10);
+  const rawLimit = parseInt((req.query.limit as string) ?? '50', 10);
+  const page  = isNaN(rawPage)  || rawPage  < 1 ? 1  : rawPage;
+  const limit = isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
 
   // Support both student tokens (req.student) and staff tokens (req.user)
   const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
 
   let query = supabaseAdmin
     .from('notifications')
-    .select('id, title, message, is_read, created_at, type')
+    .select('id, title, message, is_read, created_at, type', { count: 'exact' })
     .eq('recipient_id', recipientId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
 
   if (unreadOnly) {
     query = query.eq('is_read', false);
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
 
   if (error) {
     sendError(res, error.message, 500);
     return;
   }
 
-  sendSuccess(res, (data ?? []).map(normaliseRow));
+  const total = count ?? 0;
+  sendSuccess(res, {
+    data: (data ?? []).map(normaliseRow),
+    total,
+    page,
+    limit,
+    total_pages: Math.ceil(total / limit),
+    unread_count: total,
+  });
 });
 
 /**

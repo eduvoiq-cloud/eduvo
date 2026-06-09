@@ -544,7 +544,10 @@ export default function FeesPage() {
         term: term || undefined,
         academic_year: academicYear || undefined,
       });
-      setFeeRecords(res.data);
+      const feeData: FeeRecord[] = (res.data as unknown as {data: FeeRecord[]}).data
+        ?? res.data as unknown as FeeRecord[]
+        ?? [];
+      setFeeRecords(feeData);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load fee records');
     } finally {

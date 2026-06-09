@@ -614,14 +614,16 @@ router.put('/attendance/correct', async (req: Request, res: Response) => {
 
   if (!existing) { sendError(res, 'Attendance record not found', 404); return; }
 
-  // Verify the student belongs to teacher's school
+  // Verify the student belongs to teacher's school — always check school_id
+  // regardless of role to prevent cross-school attendance manipulation.
   const { data: student } = await supabaseAdmin
     .from('students')
-    .select('id, full_name, school_id, parent_id')
+    .select('id, full_name, school_id, parent_id, class_name, section')
     .eq('id', existing.student_id)
+    .eq('school_id', req.user!.school_id ?? '')
     .single();
 
-  if (!student || student.school_id !== req.user!.school_id) {
+  if (!student) {
     sendError(res, 'Access denied', 403);
     return;
   }

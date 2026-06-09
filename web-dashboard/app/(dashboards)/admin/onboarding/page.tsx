@@ -101,8 +101,8 @@ export default function OnboardingPage() {
         studentsApi.list(token, user.school_id),
         assignmentsApi.list(token, user.school_id),
       ]);
-      setTeachers(teachersRes.data ?? []);
-      setTeacherCount((teachersRes.data ?? []).length);
+      setTeachers(teachersRes.data.data ?? teachersRes.data as unknown as Teacher[]);
+      setTeacherCount((teachersRes.data.data ?? teachersRes.data as unknown as Teacher[]).length);
       setStudentCount(((studentsRes.data as unknown as { length: number }) ?? []).length);
       setAssignments(assignmentsRes.data ?? []);
     } catch {

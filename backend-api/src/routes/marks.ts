@@ -45,10 +45,17 @@ async function logAudit(
 router.get('/', async (req: Request, res: Response) => {
   const { student_id, subject, term } = req.query as Record<string, string>;
 
+  // Pagination support: ?page=1&limit=100 (default 100, max 500 for marks)
+  const rawPage  = parseInt((req.query.page  as string) ?? '1',   10);
+  const rawLimit = parseInt((req.query.limit as string) ?? '100', 10);
+  const page  = isNaN(rawPage)  || rawPage  < 1 ? 1   : rawPage;
+  const limit = isNaN(rawLimit) || rawLimit < 1 ? 100 : Math.min(rawLimit, 500);
+
   let query = supabaseAdmin
     .from('marks')
-    .select('*, students(full_name)')
-    .order('created_at', { ascending: false });
+    .select('*, students!inner(full_name, school_id)', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range((page - 1) * limit, page * limit - 1);
 
   if (subject) query = query.eq('subject', subject);
 
@@ -73,32 +80,21 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Teachers and school admins are scoped to their own school
+    // Teachers and school admins: use a server-side join to scope by school_id
+    // This avoids fetching all student IDs first (N+1 pattern).
     if (role === 'teacher' || role === 'schooladmin') {
       const schoolId = req.user!.school_id;
       if (!schoolId) {
         sendError(res, 'Your account is not linked to a school', 403);
         return;
       }
-      // Only fetch marks for students in the teacher's school
-      const { data: schoolStudents } = await supabaseAdmin
-        .from('students')
-        .select('id')
-        .eq('school_id', schoolId)
-        .eq('is_deleted', false);
-      const schoolStudentIds = (schoolStudents ?? []).map((s: { id: string }) => s.id);
-      if (schoolStudentIds.length === 0) {
-        sendSuccess(res, []);
-        return;
-      }
-      query = query.in('student_id', schoolStudentIds);
+      // Use the inner join on students to filter by school_id directly in DB
+      query = query.eq('students.school_id', schoolId);
       if (student_id) query = query.eq('student_id', student_id);
-    } else if (role !== 'superadmin') {
+    } else if (role === 'superadmin') {
       if (student_id) query = query.eq('student_id', student_id);
-    }
-
-    // Logged-in as student role via staff token (legacy) — filter to own marks
-    if (role === 'student') {
+    } else if (role === 'student') {
+      // Legacy: staff token with student role — look up via user_id
       const { data: studentRecord } = await supabaseAdmin
         .from('students')
         .select('id')
@@ -109,31 +105,34 @@ router.get('/', async (req: Request, res: Response) => {
       if (studentRecord) {
         query = query.eq('student_id', studentRecord.id);
       } else {
-        sendSuccess(res, []);
+        sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
         return;
       }
-    }
-
-    // Parents can only see their children's marks
-    if (role === 'parent') {
+    } else if (role === 'parent') {
+      // Parents can only see their children's marks
       const { data: children } = await supabaseAdmin
         .from('students')
         .select('id')
         .eq('parent_id', req.user!.id);
 
       const childIds = (children ?? []).map((c: { id: string }) => c.id);
+      if (childIds.length === 0) {
+        sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
+        return;
+      }
       query = query.in('student_id', childIds);
     }
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
 
   if (error) {
     sendError(res, error.message, 500);
     return;
   }
 
-  sendSuccess(res, data);
+  const total = count ?? 0;
+  sendSuccess(res, { data: data ?? [], total, page, limit, total_pages: Math.ceil(total / limit) });
 });
 
 /** POST /api/marks — schooladmin, teacher */
@@ -205,7 +204,7 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
   // Fetch the existing mark and verify the student belongs to the requesting user's school
   const { data: existing } = await supabaseAdmin
     .from('marks')
-    .select('id, max_score, student_id, students!inner(school_id)')
+    .select('id, max_score, updated_at, student_id, students!inner(school_id)')
     .eq('id', req.params.id)
     .maybeSingle();
 
@@ -231,9 +230,28 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
     }
   }
 
+  // ── Optimistic locking: if client sends updated_at, check it hasn't changed ──
+  // This prevents two admins overwriting each other's changes simultaneously.
+  const clientUpdatedAt = req.body.updated_at as string | undefined;
+  if (clientUpdatedAt && (existing as { updated_at?: string }).updated_at) {
+    const existingTs = new Date((existing as { updated_at: string }).updated_at).getTime();
+    const clientTs   = new Date(clientUpdatedAt).getTime();
+    if (existingTs !== clientTs) {
+      sendError(
+        res,
+        'This record was modified by someone else. Please refresh and try again.',
+        409
+      );
+      return;
+    }
+  }
+
+  // Strip updated_at from the user-supplied payload — the DB trigger manages it
+  const { updated_at: _strip, ...safeUpdate } = parsed.data as typeof parsed.data & { updated_at?: string };
+
   const { data, error } = await supabaseAdmin
     .from('marks')
-    .update(parsed.data)
+    .update(safeUpdate)
     .eq('id', req.params.id)
     .select()
     .single();

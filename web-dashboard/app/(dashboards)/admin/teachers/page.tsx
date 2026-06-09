@@ -90,7 +90,7 @@ function TeachersPageInner() {
         usersApi.list(token, { role: 'teacher', school_id: schoolId }),
         assignmentsApi.list(token, schoolId),
       ]);
-      setTeachers(tRes.data);
+      setTeachers(tRes.data.data ?? tRes.data as unknown as Teacher[]);
       setAssignments(aRes.data);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load teachers');

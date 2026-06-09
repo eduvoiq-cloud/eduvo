@@ -581,15 +581,22 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
   const errors: string[] = [];
   let importedCount = 0;
 
+  // ── Process in batches of 50 to avoid request timeout ────────────────────
+  // Each row needs a bcrypt hash + DB insert + SMS, so batching prevents
+  // the HTTP connection from being dropped on large imports (500+ students).
+  const BATCH_SIZE = 50;
+
+  for (let batchStart = 0; batchStart < validRows.length; batchStart += BATCH_SIZE) {
+    const batch = validRows.slice(batchStart, batchStart + BATCH_SIZE);
+
   // ── Insert students one-by-one so we can send SMS per student ────────────────
   // (Bulk insert is skipped here because each row needs a bcrypt hash + SMS)
-  for (const row of validRows) {
+  for (const row of batch) {
     const data = row.data as {
       name:          string;
       roll_number:   string | null;
       class:         string;
       division:      string;
-      parent_name:   string;
       parent_phone:  string;
       parent_email:  string;
       date_of_birth: string; // YYYY-MM-DD (already parsed in preview)
@@ -660,6 +667,8 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
       section:      data.division,
       roll_number:  data.roll_number ?? null,
     });
+  }
+  // end batch loop
   }
 
   // Summary audit log

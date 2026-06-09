@@ -122,12 +122,17 @@ router.get(
 
     const allMarks: MarkRow[] = marks ?? [];
 
-    // ── Fetch attendance ────────────────────────────────────────────────────
+    // ── Fetch attendance (last 180 days only for performance) ──────────────
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 180);
+    const cutoffStr = cutoffDate.toISOString().slice(0, 10);
 
     const { data: attendanceRows, error: attErr } = await supabaseAdmin
       .from('attendance')
       .select('status')
-      .eq('student_id', student_id);
+      .eq('student_id', student_id)
+      .gte('date', cutoffStr);
 
     if (attErr) {
       sendError(res, attErr.message, 500);

@@ -402,9 +402,22 @@ export const authApi = {
 
 // ── Superadmin endpoints ──────────────────────────────────────────────────────
 
+export interface PaginatedSchools {
+  data: School[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
 export const superadminApi = {
-  listSchools: (token: string) =>
-    request<School[]>('/api/superadmin/schools', { method: 'GET' }, token),
+  listSchools: (token: string, params?: { page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<PaginatedSchools>(`/api/superadmin/schools${query}`, { method: 'GET' }, token);
+  },
 
   createSchool: (token: string, payload: { name: string; address: string; phone: string; email: string }) =>
     request<School>('/api/superadmin/schools', {
@@ -537,13 +550,23 @@ export const studentsApi = {
 
 // ── Users endpoints (teachers, etc.) ─────────────────────────────────────────
 
+export interface PaginatedUsers {
+  data: Teacher[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
 export const usersApi = {
-  list: (token: string, params?: { role?: string; school_id?: string }) => {
+  list: (token: string, params?: { role?: string; school_id?: string; page?: number; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.role) qs.set('role', params.role);
     if (params?.school_id) qs.set('school_id', params.school_id);
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
     const query = qs.toString() ? `?${qs.toString()}` : '';
-    return request<Teacher[]>(`/api/users${query}`, { method: 'GET' }, token);
+    return request<PaginatedUsers>(`/api/users${query}`, { method: 'GET' }, token);
   },
 
   remove: (token: string, id: string) =>
@@ -573,11 +596,26 @@ export const assignmentsApi = {
     request<null>(`/api/assignments/${id}`, { method: 'DELETE' }, token),
 };
 
-// ── Notifications endpoints ───────────────────────────────────────────────────
+// ── Notifications API ──────────────────────────────────────────────────────
+
+export interface PaginatedNotifications {
+  data: Notification[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+  unread_count: number;
+}
 
 export const notificationsApi = {
-  list: (token: string) =>
-    request<Notification[]>('/api/notifications', { method: 'GET' }, token),
+  list: (token: string, params?: { unread_only?: boolean; page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.unread_only) qs.set('unread_only', 'true');
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<PaginatedNotifications>(`/api/notifications${query}`, { method: 'GET' }, token);
+  },
 
   send: (
     token: string,
@@ -694,13 +732,15 @@ export const marksViewApi = {
 // ── Marks endpoints ───────────────────────────────────────────────────────────
 
 export const marksApi = {
-  list: (token: string, params?: { student_id?: string; subject?: string; term?: string }) => {
+  list: (token: string, params?: { student_id?: string; subject?: string; term?: string; page?: number; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.student_id) qs.set('student_id', params.student_id);
     if (params?.subject) qs.set('subject', params.subject);
     if (params?.term) qs.set('term', params.term);
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
     const query = qs.toString() ? `?${qs.toString()}` : '';
-    return request<Mark[]>(`/api/marks${query}`, { method: 'GET' }, token);
+    return request<{ data: Mark[]; total: number; page: number; limit: number; total_pages: number }>(`/api/marks${query}`, { method: 'GET' }, token);
   },
 
   create: (token: string, payload: Omit<Mark, 'id' | 'recorded_by' | 'created_at'>) =>
@@ -743,15 +783,25 @@ export const attendanceApi = {
 
 // ── Fees endpoints ────────────────────────────────────────────────────────────
 
+export interface PaginatedFees {
+  data: FeeRecord[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
 export const feesApi = {
-  list: (token: string, params?: { class_name?: string; section?: string; term?: string; academic_year?: string }) => {
+  list: (token: string, params?: { class_name?: string; section?: string; term?: string; academic_year?: string; page?: number; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.class_name) qs.set('class_name', params.class_name);
     if (params?.section) qs.set('section', params.section);
     if (params?.term) qs.set('term', params.term);
     if (params?.academic_year) qs.set('academic_year', params.academic_year);
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
     const query = qs.toString() ? `?${qs.toString()}` : '';
-    return request<FeeRecord[]>(`/api/fees${query}`, { method: 'GET' }, token);
+    return request<PaginatedFees>(`/api/fees${query}`, { method: 'GET' }, token);
   },
 
   updatePayment: (

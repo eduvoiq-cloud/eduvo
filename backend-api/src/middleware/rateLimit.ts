@@ -3,14 +3,16 @@ import type { Request } from 'express';
 
 /**
  * Global rate limit — applied to every route in the app.
- * 100 requests per minute per IP.
+ * 300 requests per minute per IP (supports ~10k concurrent users at 1 req/2s each).
+ * In production, Railway sits behind a load balancer so we trust the X-Forwarded-For
+ * header — the `validate: false` flag suppresses the express-rate-limit warning.
  */
 export const globalRateLimit = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 100,
+  max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: false,
+  validate: false, // suppresses "trust proxy" warning; Railway handles the proxy
   message: {
     success: false,
     message: 'Too many requests. Please try again later.',

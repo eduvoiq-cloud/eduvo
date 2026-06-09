@@ -133,16 +133,24 @@ router.post('/fcm-token', async (req: Request, res: Response) => {
 /**
  * GET /api/users
  * List users, optionally filtered by role and/or school_id.
+ * Supports pagination: ?page=1&limit=50 (default 50, max 200).
  * schooladmin can only see users in their own school.
  */
 router.get('/', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
   const { role, school_id } = req.query as Record<string, string>;
 
+  // Pagination
+  const rawPage  = parseInt((req.query.page  as string) ?? '1',  10);
+  const rawLimit = parseInt((req.query.limit as string) ?? '50', 10);
+  const page  = isNaN(rawPage)  || rawPage  < 1 ? 1  : rawPage;
+  const limit = isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
+
   let query = supabaseAdmin
     .from('users')
-    .select('id, name, email, role, school_id, created_at')
+    .select('id, name, email, role, school_id, created_at', { count: 'exact' })
     .or('is_deleted.eq.false,is_deleted.is.null')
-    .order('name');
+    .order('name')
+    .range((page - 1) * limit, page * limit - 1);
 
   // schooladmin is always scoped to their own school
   if (req.user!.role === 'schooladmin') {
@@ -155,14 +163,15 @@ router.get('/', requireRole('superadmin', 'schooladmin'), async (req: Request, r
     query = query.eq('role', role);
   }
 
-  const { data, error } = await query;
+  const { data, error, count } = await query;
 
   if (error) {
     sendError(res, error.message, 500);
     return;
   }
 
-  sendSuccess(res, data);
+  const total = count ?? 0;
+  sendSuccess(res, { data: data ?? [], total, page, limit, total_pages: Math.ceil(total / limit) });
 });
 
 /**

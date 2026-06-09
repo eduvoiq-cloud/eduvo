@@ -195,6 +195,11 @@ async function startServer() {
 
   const app = express();
 
+  // ── Trust Railway/Vercel reverse proxy for correct IP in rate limiters ──────
+  // Without this, req.ip is always the proxy's IP — rate limits would apply to
+  // all users equally instead of per-client.
+  app.set('trust proxy', 1);
+
   // ── Resolve port: prefer env var, then 3001 → 3002 → 3003 ──────────────────
   const envPort = process.env.PORT ? parseInt(process.env.PORT, 10) : null;
   const portCandidates = envPort ? [envPort] : [3001, 3002, 3003];
@@ -247,7 +252,9 @@ async function startServer() {
   );
 
   // ── Body parsing ─────────────────────────────────────────────────────────────
-  app.use(express.json());
+  // 2MB limit to support bulk operations (attendance arrays, test questions, etc.)
+  app.use(express.json({ limit: '2mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
   // ── Global rate limit (applies to every route) ───────────────────────────────
   app.use(globalRateLimit);

@@ -90,23 +90,36 @@ async function logAudit(userId: string, action: string, details: Record<string, 
 /**
  * GET /api/fees?class_name=&section=&term=&academic_year=
  * Returns fee records for students in the teacher's school.
+ * Supports pagination: ?page=1&limit=50 (default limit 50, max 200).
  * Teachers are scoped to their assigned classes.
  */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const { class_name, section, term, academic_year } = req.query as Record<string, string>;
 
-  // Build student filter
+  // Pagination
+  const rawPage  = parseInt((req.query.page  as string) ?? '1',  10);
+  const rawLimit = parseInt((req.query.limit as string) ?? '50', 10);
+  const page  = isNaN(rawPage)  || rawPage  < 1 ? 1  : rawPage;
+  const limit = isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
+
+  // Build student filter with pagination
   let studentQuery = supabaseAdmin
     .from('students')
-    .select('id, full_name, class_name, section, school_id')
-    .eq('school_id', req.user!.school_id ?? '');
+    .select('id, full_name, class_name, section, school_id', { count: 'exact' })
+    .eq('school_id', req.user!.school_id ?? '')
+    .eq('is_deleted', false)
+    .order('full_name')
+    .range((page - 1) * limit, page * limit - 1);
 
   if (class_name) studentQuery = studentQuery.ilike('class_name', class_name.trim());
   if (section) studentQuery = studentQuery.ilike('section', section.trim());
 
-  const { data: students, error: sErr } = await studentQuery;
+  const { data: students, error: sErr, count } = await studentQuery;
   if (sErr) { sendError(res, sErr.message, 500); return; }
-  if (!students || students.length === 0) { sendSuccess(res, []); return; }
+  if (!students || students.length === 0) {
+    sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
+    return;
+  }
 
   const studentIds = students.map((s: { id: string }) => s.id);
 
@@ -160,7 +173,8 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
     };
   });
 
-  sendSuccess(res, result);
+  const total = count ?? 0;
+  sendSuccess(res, { data: result, total, page, limit, total_pages: Math.ceil(total / limit) });
 });
 
 /**
@@ -343,47 +357,80 @@ router.post('/class-bulk', requireRole('superadmin', 'schooladmin', 'teacher'), 
 
   const effectiveTerm = term ?? 'General';
   const effectiveYear = academic_year ?? new Date().getFullYear().toString();
+
+  // Fetch existing fee records for all students in one query (avoid N+1)
+  const { data: existingFees, error: feeFetchErr } = await supabaseAdmin
+    .from('student_fees')
+    .select('id, student_id, amount_paid')
+    .in('student_id', students.map((s: { id: string }) => s.id))
+    .eq('term', effectiveTerm)
+    .eq('academic_year', effectiveYear);
+
+  if (feeFetchErr) { sendError(res, feeFetchErr.message, 500); return; }
+
+  const existingMap = new Map(
+    (existingFees ?? []).map((f: { student_id: string; id: string; amount_paid: number }) => [
+      f.student_id,
+      f,
+    ])
+  );
+
   let updated = 0;
   let inserted = 0;
 
-  // Process each student — update if fee record exists, insert if not
-  for (const student of students) {
-    const { data: existing } = await supabaseAdmin
-      .from('student_fees')
-      .select('id, amount_paid')
-      .eq('student_id', student.id)
-      .eq('term', effectiveTerm)
-      .eq('academic_year', effectiveYear)
-      .maybeSingle();
+  // Build update and insert lists
+  const toUpdate: Array<{ id: string; total_fee_amount: number; fee_paid: boolean }> = [];
+  const toInsert: Array<{
+    student_id: string; term: string; academic_year: string;
+    total_fee_amount: number; amount_paid: number; fee_paid: boolean; updated_by: string;
+  }> = [];
 
-    const amountPaid = (existing as { amount_paid?: number } | null)?.amount_paid ?? 0;
+  for (const student of students as Array<{ id: string; full_name: string }>) {
+    const existing = existingMap.get(student.id) as { id: string; amount_paid: number } | undefined;
+    const amountPaid = existing?.amount_paid ?? 0;
     const feePaid = amountPaid >= total_fee_amount && total_fee_amount > 0;
 
     if (existing) {
-      await supabaseAdmin
-        .from('student_fees')
-        .update({
-          total_fee_amount,
-          fee_paid: feePaid,
+      toUpdate.push({ id: existing.id, total_fee_amount, fee_paid: feePaid });
+    } else {
+      toInsert.push({
+        student_id: student.id,
+        term: effectiveTerm,
+        academic_year: effectiveYear,
+        total_fee_amount,
+        amount_paid: 0,
+        fee_paid: false,
+        updated_by: req.user!.id,
+      });
+    }
+  }
+
+  // Batch insert new records (one query)
+  if (toInsert.length > 0) {
+    const { error: insertErr } = await supabaseAdmin
+      .from('student_fees')
+      .insert(toInsert);
+    if (insertErr) { sendError(res, insertErr.message, 500); return; }
+    inserted = toInsert.length;
+  }
+
+  // Batch updates: process in groups of 100 using upsert to avoid N+1
+  for (let i = 0; i < toUpdate.length; i += 100) {
+    const batch = toUpdate.slice(i, i + 100);
+    const { error: updateErr } = await supabaseAdmin
+      .from('student_fees')
+      .upsert(
+        batch.map((r) => ({
+          id: r.id,
+          total_fee_amount: r.total_fee_amount,
+          fee_paid: r.fee_paid,
           updated_by: req.user!.id,
           updated_at: new Date().toISOString(),
-        })
-        .eq('id', (existing as { id: string }).id);
-      updated++;
-    } else {
-      await supabaseAdmin
-        .from('student_fees')
-        .insert({
-          student_id: student.id,
-          term: effectiveTerm,
-          academic_year: effectiveYear,
-          total_fee_amount,
-          amount_paid: 0,
-          fee_paid: false,
-          updated_by: req.user!.id,
-        });
-      inserted++;
-    }
+        })),
+        { onConflict: 'id' }
+      );
+    if (updateErr) { sendError(res, updateErr.message, 500); return; }
+    updated += batch.length;
   }
 
   await logAudit(req.user!.id, 'FEE_BULK_SET', {
