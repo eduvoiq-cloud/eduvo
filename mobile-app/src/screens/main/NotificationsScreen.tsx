@@ -36,9 +36,6 @@ interface AnnouncementItem {
 
 type FeedItem = NotificationItem | AnnouncementItem;
 
-// Key used in AsyncStorage to persist seen announcement IDs
-const SEEN_ANN_KEY = 'seen_announcement_ids';
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function timeAgo(iso: string): string {
@@ -65,21 +62,6 @@ function notifIcon(type: string): string {
     case 'announcement':  return '📢';
     default:              return '🔔';
   }
-}
-
-async function loadSeenIds(): Promise<Set<string>> {
-  try {
-    const raw = await AsyncStorage.getItem(SEEN_ANN_KEY);
-    return raw ? new Set(JSON.parse(raw)) : new Set();
-  } catch {
-    return new Set();
-  }
-}
-
-async function saveSeenIds(ids: Set<string>): Promise<void> {
-  try {
-    await AsyncStorage.setItem(SEEN_ANN_KEY, JSON.stringify(Array.from(ids)));
-  } catch {}
 }
 
 // ── Feed item row ─────────────────────────────────────────────────────────────
@@ -157,8 +139,6 @@ export default function NotificationsScreen() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const seenIds = await loadSeenIds();
-
       const [notifRes, annRes] = await Promise.allSettled([
         apiClient.get('/api/notifications'),
         apiClient.get('/api/announcements/student'),
@@ -187,17 +167,13 @@ export default function NotificationsScreen() {
           message: a.message,
           created_at: a.created_at,
           _kind: 'announcement',
-          is_seen: seenIds.has(a.id),
+          is_seen: true, // all are considered seen once this screen is opened
         }));
         setAnnouncements(items);
 
-        // Mark all current announcements as seen now that the screen is open
-        const newSeenIds = new Set(seenIds);
-        raw.forEach((a) => newSeenIds.add(a.id));
-        await saveSeenIds(newSeenIds);
-
-        // Update local state to reflect seen
-        setAnnouncements(items.map((a) => ({ ...a, is_seen: true })));
+        // Record the time the user opened this screen so the Dashboard badge
+        // only lights up for announcements that arrive AFTER this visit.
+        await AsyncStorage.setItem('notifications_last_viewed_at', new Date().toISOString());
       }
     } catch (err) {
       console.warn('[Notifications] fetchAll error:', err);

@@ -62,6 +62,8 @@ function todayISO(): string {
 
 function timeAgo(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
+  // Handle slight clock skew between device and server (treat up to -30s as "now")
+  if (diff < 60000) return 'Just now';
   const mins = Math.floor(diff / 60000);
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
@@ -363,11 +365,13 @@ export default function DashboardScreen() {
       let announcements: Announcement[] = [];
       if (annRes.status === 'fulfilled') {
         announcements = annRes.value.data.data ?? [];
-        // Count announcements the user hasn't seen yet (seen IDs stored locally)
+        // Count announcements newer than the last time user opened the Notifications screen
         try {
-          const raw = await AsyncStorage.getItem('seen_announcement_ids');
-          const seenIds: Set<string> = raw ? new Set(JSON.parse(raw)) : new Set();
-          const unseen = announcements.filter((a) => !seenIds.has(a.id));
+          const lastViewedRaw = await AsyncStorage.getItem('notifications_last_viewed_at');
+          const lastViewed = lastViewedRaw ? new Date(lastViewedRaw).getTime() : 0;
+          const unseen = announcements.filter(
+            (a) => new Date(a.created_at).getTime() > lastViewed
+          );
           setAnnUnseenCount(unseen.length);
         } catch {
           setAnnUnseenCount(0);
@@ -429,11 +433,13 @@ export default function DashboardScreen() {
           const notifs: any[] = notifRes.data.data ?? [];
           setNotifCount(notifs.length);
 
-          // Unseen announcements — compare current list against stored seen IDs
+          // Unseen announcements — count those newer than last Notifications screen visit
           if (data?.announcements) {
-            const raw = await AsyncStorage.getItem('seen_announcement_ids');
-            const seenIds: Set<string> = raw ? new Set(JSON.parse(raw)) : new Set();
-            const unseen = data.announcements.filter((a) => !seenIds.has(a.id));
+            const lastViewedRaw = await AsyncStorage.getItem('notifications_last_viewed_at');
+            const lastViewed = lastViewedRaw ? new Date(lastViewedRaw).getTime() : 0;
+            const unseen = data.announcements.filter(
+              (a) => new Date(a.created_at).getTime() > lastViewed
+            );
             setAnnUnseenCount(unseen.length);
           }
         } catch {
