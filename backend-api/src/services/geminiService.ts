@@ -163,6 +163,9 @@ export async function generateQuestions(
     school_id,
   } = params;
 
+  const t_gs0 = performance.now();
+  console.log('[PERF:gemini] generateQuestions — entered');
+
   // Rate-limit check
   const allowed = await checkDailyLimit(teacher_id, school_id);
   if (!allowed) {
@@ -181,9 +184,16 @@ export async function generateQuestions(
     theory_count
   );
 
+  const t_gs1_promptBuilt = performance.now();
+  console.log(`[PERF:gemini] Prompt hash built (incl. daily-limit DB check): ${((t_gs1_promptBuilt - t_gs0) / 1000).toFixed(3)}s`);
+
   // Return cached result if fresh
   const cached = await getCachedResult(promptHash);
+  const t_gs2_cacheChecked = performance.now();
+  console.log(`[PERF:gemini] Cache DB lookup: ${((t_gs2_cacheChecked - t_gs1_promptBuilt) / 1000).toFixed(3)}s`);
+
   if (cached) {
+    console.log('[PERF:gemini] Cache HIT — returning cached result');
     return JSON.parse(cached) as GeneratedContent;
   }
 
@@ -228,9 +238,12 @@ Return this exact JSON structure:
   ]
 }`;
 
+  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  console.log(`[PERF:gemini] Using model: ${modelId}`);
+
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: modelId,
     systemInstruction,
   });
 
@@ -257,7 +270,15 @@ Return this exact JSON structure:
     ];
   }
 
+  const t_gs3_geminiCallStart = performance.now();
+  console.log(`[PERF:gemini] Prompt constructed, calling Gemini API (content-type: ${extraction.type})...`);
+
   const result = await model.generateContent({ contents: [{ role: "user", parts: requestParts }] });
+
+  const t_gs4_geminiCallDone = performance.now();
+  const tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
+  console.log(`[PERF:gemini] Gemini API responded: ${((t_gs4_geminiCallDone - t_gs3_geminiCallStart) / 1000).toFixed(3)}s | tokens used: ${tokensUsed}`);
+
   const responseText = result.response.text().trim();
 
   // Parse JSON — strip accidental markdown fences
@@ -272,8 +293,7 @@ Return this exact JSON structure:
     throw new Error("AI returned invalid format, please retry");
   }
 
-  const tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
-
+  const t_gs5_dbSaveStart = performance.now();
   await saveUsageRecord({
     user_id: teacher_id,
     school_id,
@@ -282,6 +302,16 @@ Return this exact JSON structure:
     prompt_hash: promptHash,
     cached_result: JSON.stringify(parsed),
   });
+  const t_gs6_dbSaveDone = performance.now();
+  console.log(`[PERF:gemini] Usage record saved to DB: ${((t_gs6_dbSaveDone - t_gs5_dbSaveStart) / 1000).toFixed(3)}s`);
+
+  console.log(`[PERF:gemini] ── generateQuestions internal breakdown ──────────`);
+  console.log(`[PERF:gemini]   Daily-limit check + hash build: ${((t_gs1_promptBuilt - t_gs0) / 1000).toFixed(3)}s`);
+  console.log(`[PERF:gemini]   Cache DB lookup:                ${((t_gs2_cacheChecked - t_gs1_promptBuilt) / 1000).toFixed(3)}s`);
+  console.log(`[PERF:gemini]   Gemini API call (TTFB+stream):  ${((t_gs4_geminiCallDone - t_gs3_geminiCallStart) / 1000).toFixed(3)}s`);
+  console.log(`[PERF:gemini]   DB save (usage record):         ${((t_gs6_dbSaveDone - t_gs5_dbSaveStart) / 1000).toFixed(3)}s`);
+  console.log(`[PERF:gemini]   Total inside generateQuestions: ${((t_gs6_dbSaveDone - t_gs0) / 1000).toFixed(3)}s`);
+  console.log(`[PERF:gemini] ─────────────────────────────────────────────────`);
 
   return parsed;
 }

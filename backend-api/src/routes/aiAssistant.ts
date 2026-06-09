@@ -245,6 +245,148 @@ router.post(
   }
 );
 
+// ── POST /api/ai/generate-stream ─────────────────────────────────────────────
+/**
+ * Streaming version of /generate.
+ * Uses Server-Sent Events to push progress messages while Gemini is thinking,
+ * then sends the final questions as the last event.
+ * All validation, rate-limit, and cache logic is identical to /generate.
+ */
+router.post(
+  '/generate-stream',
+  generateRateLimit,
+  async (req: Request, res: Response) => {
+    const t0_requestReceived = performance.now();
+    console.log('[PERF] /api/ai/generate-stream — request received');
+
+    // ── Validation ────────────────────────────────────────────────────────────
+    const schema = z.object({
+      extraction_id: z.string().uuid('extraction_id must be a valid UUID'),
+      subject: z.string().min(1).max(50),
+      class_level: z.string().min(1).max(20),
+      difficulty: z.enum(['easy', 'medium', 'hard']),
+      mcq_count: z.number().int().min(1).max(30),
+      theory_count: z.number().int().min(0).max(10),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      sendValidationError(res, parsed.error.flatten());
+      return;
+    }
+
+    const { extraction_id, subject, class_level, difficulty, mcq_count, theory_count } = parsed.data;
+    const safeSubject    = sanitise(subject);
+    const safeClassLevel = sanitise(class_level);
+
+    const extraction = getExtraction(extraction_id);
+    if (!extraction) {
+      sendError(res, 'extraction_id not found or has expired (10-minute limit). Please re-upload your file.', 404);
+      return;
+    }
+
+    if (extraction.teacher_id !== req.user!.id) {
+      sendError(res, 'Access denied to this extraction.', 403);
+      return;
+    }
+
+    const teacherId = req.user!.id;
+    const schoolId  = req.user!.school_id ?? '';
+
+    // ── Open SSE stream ───────────────────────────────────────────────────────
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    function sendEvent(data: Record<string, unknown>): void {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
+
+    sendEvent({ stage: 'Checking quota...' });
+
+    // ── Daily limit check ─────────────────────────────────────────────────────
+    const allowed = await checkDailyLimit(teacherId, schoolId);
+    if (!allowed) {
+      sendEvent({ error: `Daily limit of ${MAX_DAILY_GENERATIONS} generations reached. Resets tomorrow.` });
+      res.end();
+      return;
+    }
+
+    // ── Prompt-hash cache check ───────────────────────────────────────────────
+    const promptHash = crypto
+      .createHash('md5')
+      .update(extraction.extraction.data + safeSubject + safeClassLevel + difficulty + mcq_count + theory_count)
+      .digest('hex');
+
+    const cachedResult = await getCachedResult(promptHash);
+    if (cachedResult) {
+      sendEvent({ stage: 'Loaded from cache.' });
+      await logAudit(teacherId, 'AI_GENERATE_CACHED', { extraction_id, prompt_hash: promptHash, subject: safeSubject, class_level: safeClassLevel, difficulty, mcq_count, theory_count });
+      const t_total = performance.now();
+      console.log(`[PERF] /generate-stream (cache hit): ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+      sendEvent({ done: true, cached: true, ...JSON.parse(cachedResult) });
+      res.end();
+      return;
+    }
+
+    // ── Stage messages while Gemini works ─────────────────────────────────────
+    sendEvent({ stage: 'Generating questions...' });
+
+    // Schedule the remaining stage messages at realistic intervals
+    const stageTimers: ReturnType<typeof setTimeout>[] = [];
+    stageTimers.push(setTimeout(() => sendEvent({ stage: 'Creating answer key...' }),   4000));
+    stageTimers.push(setTimeout(() => sendEvent({ stage: 'Formatting paper...'    }),   8000));
+    stageTimers.push(setTimeout(() => sendEvent({ stage: 'Almost done...'          }),  12000));
+
+    // ── Call Gemini ───────────────────────────────────────────────────────────
+    const t3 = performance.now();
+    let questions;
+    try {
+      questions = await generateQuestions({
+        extraction: extraction.extraction,
+        subject: safeSubject,
+        class_level: safeClassLevel,
+        difficulty,
+        mcq_count,
+        theory_count,
+        teacher_id: teacherId,
+        school_id:  schoolId,
+      });
+    } catch (err) {
+      stageTimers.forEach(clearTimeout);
+      const message = err instanceof Error ? err.message : 'AI generation failed';
+      console.error('[generate-stream] Gemini error:', message);
+      sendEvent({ error: message });
+      res.end();
+      return;
+    }
+
+    stageTimers.forEach(clearTimeout);
+    const t4 = performance.now();
+    console.log(`[PERF] /generate-stream Gemini call: ${((t4 - t3) / 1000).toFixed(3)}s`);
+
+    // ── Audit log ─────────────────────────────────────────────────────────────
+    await logAudit(teacherId, 'AI_GENERATE_SUCCESS', {
+      extraction_id,
+      prompt_hash: promptHash,
+      subject: safeSubject,
+      class_level: safeClassLevel,
+      difficulty,
+      mcq_count,
+      theory_count,
+      mcq_generated:    questions.mcq_questions.length,
+      theory_generated: questions.theory_questions.length,
+    });
+
+    const t_total = performance.now();
+    console.log(`[PERF] /generate-stream TOTAL: ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+
+    sendEvent({ done: true, cached: false, ...questions });
+    res.end();
+  }
+);
+
 // ── POST /api/ai/generate ─────────────────────────────────────────────────────
 /**
  * Generates MCQ and theory questions from a previously extracted text.
@@ -254,6 +396,10 @@ router.post(
   '/generate',
   generateRateLimit,
   async (req: Request, res: Response) => {
+    // ── Step 1: Request received ───────────────────────────────────────────────
+    const t0_requestReceived = performance.now();
+    console.log('[PERF] /api/ai/generate — request received');
+
     // ── Validation ────────────────────────────────────────────────────────────
     const schema = z.object({
       extraction_id: z.string().uuid('extraction_id must be a valid UUID'),
@@ -303,6 +449,10 @@ router.post(
     const teacherId = req.user!.id;
     const schoolId = req.user!.school_id ?? '';
 
+    // ── Step 2: Prompt construction ───────────────────────────────────────────
+    const t1_promptStart = performance.now();
+    console.log(`[PERF] Step 1 → Step 2 (validation + cache lookup): ${((t1_promptStart - t0_requestReceived) / 1000).toFixed(3)}s`);
+
     // ── Daily limit check ─────────────────────────────────────────────────────
     const allowed = await checkDailyLimit(teacherId, schoolId);
     if (!allowed) {
@@ -328,6 +478,9 @@ router.post(
       .digest('hex');
 
     const cachedResult = await getCachedResult(promptHash);
+    const t2_promptDone = performance.now();
+    console.log(`[PERF] Step 2 (prompt construction + DB limit/cache checks): ${((t2_promptDone - t1_promptStart) / 1000).toFixed(3)}s`);
+
     if (cachedResult) {
       // Return cached result — no Gemini API call needed
       await logAudit(teacherId, 'AI_GENERATE_CACHED', {
@@ -340,6 +493,9 @@ router.post(
         theory_count,
       });
 
+      const t_total = performance.now();
+      console.log(`[PERF] Total (cache hit): ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+
       sendSuccess(
         res,
         { ...JSON.parse(cachedResult), cached: true },
@@ -348,7 +504,10 @@ router.post(
       return;
     }
 
-    // ── Call Gemini ───────────────────────────────────────────────────────────
+    // ── Step 3: Gemini API call ───────────────────────────────────────────────
+    const t3_geminiStart = performance.now();
+    console.log('[PERF] Step 3 — calling Gemini API...');
+
     let questions;
     try {
       questions = await generateQuestions({
@@ -374,7 +533,11 @@ router.post(
       return;
     }
 
-    // ── Log usage for abuse detection ─────────────────────────────────────────
+    const t4_geminiDone = performance.now();
+    console.log(`[PERF] Step 3 (Gemini API response): ${((t4_geminiDone - t3_geminiStart) / 1000).toFixed(3)}s`);
+
+    // ── Step 4: Audit log (post-generation DB write) ──────────────────────────
+    const t5_auditStart = performance.now();
     await logAudit(teacherId, 'AI_GENERATE_SUCCESS', {
       extraction_id,
       prompt_hash: promptHash,
@@ -386,6 +549,19 @@ router.post(
       mcq_generated: questions.mcq_questions.length,
       theory_generated: questions.theory_questions.length,
     });
+    const t6_auditDone = performance.now();
+    console.log(`[PERF] Step 4 (audit log DB write): ${((t6_auditDone - t5_auditStart) / 1000).toFixed(3)}s`);
+
+    // ── Step 5: Total ─────────────────────────────────────────────────────────
+    const t_total = performance.now();
+    console.log(`[PERF] ─────────────────────────────────────────────────────`);
+    console.log(`[PERF] TIMING BREAKDOWN for /api/ai/generate:`);
+    console.log(`[PERF]   Step 1 — request received → validation:     ${((t1_promptStart - t0_requestReceived) / 1000).toFixed(3)}s`);
+    console.log(`[PERF]   Step 2 — prompt construction + DB checks:   ${((t2_promptDone - t1_promptStart) / 1000).toFixed(3)}s`);
+    console.log(`[PERF]   Step 3 — Gemini API response time:          ${((t4_geminiDone - t3_geminiStart) / 1000).toFixed(3)}s`);
+    console.log(`[PERF]   Step 4 — audit log DB write:                ${((t6_auditDone - t5_auditStart) / 1000).toFixed(3)}s`);
+    console.log(`[PERF]   TOTAL response time:                        ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+    console.log(`[PERF] ─────────────────────────────────────────────────────`);
 
     sendSuccess(res, { ...questions, cached: false }, 'Questions generated successfully');
   }
@@ -397,6 +573,9 @@ router.post(
  * This is the final step after the teacher reviews and edits the generated questions.
  */
 router.post('/save-test', async (req: Request, res: Response) => {
+  const t_sv0 = performance.now();
+  console.log('[PERF] /api/ai/save-test — request received');
+
   // ── Validation ────────────────────────────────────────────────────────────
   const mcqSchema = z.object({
     question: z.string().min(1),
@@ -479,6 +658,10 @@ router.post('/save-test', async (req: Request, res: Response) => {
     created_at: new Date().toISOString(),
   };
 
+  const t_sv1_dbSaveStart = performance.now();
+  console.log(`[PERF] /save-test validation done: ${((t_sv1_dbSaveStart - t_sv0) / 1000).toFixed(3)}s`);
+  console.log('[PERF] /save-test — inserting test record into DB...');
+
   // Try with extended columns first
   let test: Record<string, unknown> | null = null;
   let testErr: { message: string } | null = null;
@@ -511,6 +694,9 @@ router.post('/save-test', async (req: Request, res: Response) => {
     sendError(res, testErr?.message ?? 'Failed to create test', 500);
     return;
   }
+
+  const t_sv2_testInsertDone = performance.now();
+  console.log(`[PERF] /save-test — test record inserted: ${((t_sv2_testInsertDone - t_sv1_dbSaveStart) / 1000).toFixed(3)}s`);
 
   // ── Build question rows ───────────────────────────────────────────────────
   // Use the same column names as the working POST /api/tests compatibility route:
@@ -549,6 +735,8 @@ router.post('/save-test', async (req: Request, res: Response) => {
   }
 
   // ── Insert questions ──────────────────────────────────────────────────────
+  const t_sv3_questionsInsertStart = performance.now();
+  console.log(`[PERF] /save-test — inserting ${questionRows.length} question rows...`);
   const { error: qErr } = await supabaseAdmin.from('test_questions').insert(questionRows);
 
   if (qErr) {
@@ -557,6 +745,9 @@ router.post('/save-test', async (req: Request, res: Response) => {
     sendError(res, 'Failed to save questions. Test creation rolled back.', 500);
     return;
   }
+
+  const t_sv4_questionsInsertDone = performance.now();
+  console.log(`[PERF] /save-test — questions inserted: ${((t_sv4_questionsInsertDone - t_sv3_questionsInsertStart) / 1000).toFixed(3)}s`);
 
   // ── Audit log ─────────────────────────────────────────────────────────────
   await logAudit(teacherId, 'AI_TEST_SAVED', {
@@ -576,6 +767,15 @@ router.post('/save-test', async (req: Request, res: Response) => {
     'Test saved successfully',
     201
   );
+
+  const t_sv_total = performance.now();
+  console.log(`[PERF] ─────────────────────────────────────────────────────`);
+  console.log(`[PERF] TIMING BREAKDOWN for /api/ai/save-test:`);
+  console.log(`[PERF]   Validation:                  ${((t_sv1_dbSaveStart - t_sv0) / 1000).toFixed(3)}s`);
+  console.log(`[PERF]   DB save — test record:        ${((t_sv2_testInsertDone - t_sv1_dbSaveStart) / 1000).toFixed(3)}s`);
+  console.log(`[PERF]   DB save — ${questionRows.length} questions:  ${((t_sv4_questionsInsertDone - t_sv3_questionsInsertStart) / 1000).toFixed(3)}s`);
+  console.log(`[PERF]   TOTAL save-test response:     ${((t_sv_total - t_sv0) / 1000).toFixed(3)}s`);
+  console.log(`[PERF] ─────────────────────────────────────────────────────`);
 });
 
 // ── GET /api/ai/usage ─────────────────────────────────────────────────────────

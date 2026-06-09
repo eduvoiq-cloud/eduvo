@@ -26,7 +26,11 @@ const securityHeaders = [
       "default-src 'self'",
       // Next.js requires 'unsafe-inline' for its inline styles/scripts in dev;
       // in production these are hashed but we use 'unsafe-inline' as a safe baseline.
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      // 'unsafe-eval' is only needed in dev for fast refresh; remove it in production.
+      // If you add nonce-based CSP later, remove 'unsafe-inline' too.
+      process.env.NODE_ENV === 'development'
+        ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+        : "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https:",
       "font-src 'self'",

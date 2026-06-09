@@ -25,9 +25,11 @@ export function saveSession(
   localStorage.setItem(USER_KEY, JSON.stringify(user));
   if (refreshToken) localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
   if (expiresAt !== undefined) localStorage.setItem(EXPIRES_AT_KEY, String(expiresAt));
-  // Mirror in cookies for middleware (not HttpOnly — edge middleware reads them)
-  document.cookie = `${COOKIE_NAME}=${token}; path=/; SameSite=Lax`;
-  document.cookie = `eduvo_role=${user.role}; path=/; SameSite=Lax`;
+  // Mirror in cookies for middleware (not HttpOnly — edge middleware reads them).
+  // Add Secure flag in production so the cookie is only sent over HTTPS.
+  const securePart = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${COOKIE_NAME}=${token}; path=/; SameSite=Lax${securePart}`;
+  document.cookie = `eduvo_role=${user.role}; path=/; SameSite=Lax${securePart}`;
 }
 
 // ── Read ──────────────────────────────────────────────────────────────────────
@@ -70,8 +72,9 @@ export function clearSession(): void {
   localStorage.removeItem(EXPIRES_AT_KEY);
   localStorage.removeItem(USER_KEY);
   // Expire both cookies
-  document.cookie = `${COOKIE_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
-  document.cookie = `eduvo_role=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+  const securePart = window.location.protocol === 'https:' ? '; Secure' : '';
+  document.cookie = `${COOKIE_NAME}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT${securePart}`;
+  document.cookie = `eduvo_role=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT${securePart}`;
 }
 
 // ── Role → dashboard path ─────────────────────────────────────────────────────

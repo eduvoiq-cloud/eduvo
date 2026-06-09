@@ -241,6 +241,7 @@ export default function AIAssistantPage() {
   const [theoryCount, setTheoryCount] = useState(5);
   const [usage, setUsage] = useState<UsageInfo | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [generateStage, setGenerateStage] = useState('');
   const [generateError, setGenerateError] = useState('');
 
   // ── Step 3: Review ──────────────────────────────────────────────────────────
@@ -389,13 +390,14 @@ export default function AIAssistantPage() {
   async function handleGenerate() {
     if (!extractionId) return;
     setGenerateError('');
+    setGenerateStage('');
     setGenerating(true);
 
     const token = getToken();
     if (!token) { setGenerating(false); setGenerateError('Session expired.'); return; }
 
     try {
-      const res = await fetch(`${BASE_URL}/api/ai/generate`, {
+      const res = await fetch(`${BASE_URL}/api/ai/generate-stream`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -408,39 +410,80 @@ export default function AIAssistantPage() {
         }),
       });
 
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message ?? 'Generation failed');
+      if (!res.ok || !res.body) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as { message?: string }).message ?? 'Generation failed');
+      }
 
-      const data = json.data;
+      // Read SSE stream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      // Map API response to draft format with local IDs
-      const newMcqs: MCQDraft[] = (data.mcq_questions ?? []).map((q: Record<string, unknown>, i: number) => ({
-        id: `mcq-${Date.now()}-${i}`,
-        question: String(q.question ?? ''),
-        option_a: String(q.option_a ?? ''),
-        option_b: String(q.option_b ?? ''),
-        option_c: String(q.option_c ?? ''),
-        option_d: String(q.option_d ?? ''),
-        correct_option: (q.correct_option as 'a' | 'b' | 'c' | 'd') ?? 'a',
-        marks: Number(q.marks) || 1,
-      }));
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      const newTheory: TheoryDraft[] = (data.theory_questions ?? []).map((q: Record<string, unknown>, i: number) => ({
-        id: `theory-${Date.now()}-${i}`,
-        question: String(q.question ?? ''),
-        expected_answer: String(q.expected_answer ?? ''),
-        marks: Number(q.marks) || 5,
-      }));
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
 
-      setMcqQuestions(newMcqs);
-      setTheoryQuestions(newTheory);
-      setHasGenerated(true);
-      setHasUnsaved(true);
-      await fetchUsage();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+
+          let event: Record<string, unknown>;
+          try { event = JSON.parse(raw); } catch { continue; }
+
+          if (event.error) {
+            throw new Error(String(event.error));
+          }
+
+          if (event.stage) {
+            setGenerateStage(String(event.stage));
+          }
+
+          if (event.done) {
+            const data = event as { mcq_questions?: unknown[]; theory_questions?: unknown[] };
+
+            const newMcqs: MCQDraft[] = (data.mcq_questions ?? []).map((q, i) => {
+              const r = q as Record<string, unknown>;
+              return {
+                id: `mcq-${Date.now()}-${i}`,
+                question: String(r.question ?? ''),
+                option_a: String(r.option_a ?? ''),
+                option_b: String(r.option_b ?? ''),
+                option_c: String(r.option_c ?? ''),
+                option_d: String(r.option_d ?? ''),
+                correct_option: (r.correct_option as 'a' | 'b' | 'c' | 'd') ?? 'a',
+                marks: Number(r.marks) || 1,
+              };
+            });
+
+            const newTheory: TheoryDraft[] = (data.theory_questions ?? []).map((q, i) => {
+              const r = q as Record<string, unknown>;
+              return {
+                id: `theory-${Date.now()}-${i}`,
+                question: String(r.question ?? ''),
+                expected_answer: String(r.expected_answer ?? ''),
+                marks: Number(r.marks) || 5,
+              };
+            });
+
+            setMcqQuestions(newMcqs);
+            setTheoryQuestions(newTheory);
+            setHasGenerated(true);
+            setHasUnsaved(true);
+            await fetchUsage();
+          }
+        }
+      }
     } catch (e: unknown) {
       setGenerateError(e instanceof Error ? e.message : 'Generation failed. Please try again.');
     } finally {
       setGenerating(false);
+      setGenerateStage('');
     }
   }
 
@@ -790,7 +833,7 @@ export default function AIAssistantPage() {
                 }`}
               >
                 {generating ? (
-                  <><Spinner /> Generating… This takes 10–15 seconds</>
+                  <><Spinner /> {generateStage || 'Generating…'}</>
                 ) : (
                   <><span>✨</span> Generate {testType === 'theory' ? 'Theory' : 'MCQ'} Questions</>
                 )}
@@ -823,8 +866,7 @@ export default function AIAssistantPage() {
                     disabled={generating || limitReached}
                     className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
                   >
-                    {generating ? <Spinner /> : <span>🔄</span>}
-                    Regenerate
+                    {generating ? <><Spinner /> {generateStage || 'Generating…'}</> : <><span>🔄</span> Regenerate</>}
                   </button>
                   <button
                     onClick={openSaveModal}
