@@ -51,6 +51,37 @@ router.get('/', async (req: Request, res: Response) => {
   const page  = isNaN(rawPage)  || rawPage  < 1 ? 1   : rawPage;
   const limit = isNaN(rawLimit) || rawLimit < 1 ? 100 : Math.min(rawLimit, 500);
 
+  // ── Student token: simple select, no join needed — we already have their ID ──
+  if (req.tokenType === 'student') {
+    let query = supabaseAdmin
+      .from('marks')
+      .select('*', { count: 'exact' })
+      .eq('student_id', req.student!.id)
+      .order('created_at', { ascending: false })
+      .range((page - 1) * limit, page * limit - 1);
+
+    if (subject) query = query.eq('subject', subject);
+
+    if (term) {
+      const termValues = termFilterValues(term);
+      query = termValues.length === 1
+        ? query.eq('term', termValues[0])
+        : query.in('term', termValues);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      sendError(res, error.message, 500);
+      return;
+    }
+
+    const total = count ?? 0;
+    sendSuccess(res, { data: data ?? [], total, page, limit, total_pages: Math.ceil(total / limit) });
+    return;
+  }
+
+  // ── Staff token: use inner join to enable school-scoped filtering ──────────
   let query = supabaseAdmin
     .from('marks')
     .select('*, students!inner(full_name, school_id)', { count: 'exact' })
@@ -67,61 +98,55 @@ router.get('/', async (req: Request, res: Response) => {
       : query.in('term', termValues);
   }
 
-  // ── Student token: filter strictly to their own records ─────────────────
-  if (req.tokenType === 'student') {
-    // Ignore any student_id in the query string — always use the token owner's ID
-    query = query.eq('student_id', req.student!.id);
-  } else {
-    // ── Staff token ─────────────────────────────────────────────────────────
-    const role = req.user!.role;
+  // ── Staff token ─────────────────────────────────────────────────────────
+  const role = req.user!.role;
 
-    if (!['superadmin', 'schooladmin', 'teacher', 'parent', 'student'].includes(role)) {
-      sendError(res, 'Access denied', 403);
+  if (!['superadmin', 'schooladmin', 'teacher', 'parent', 'student'].includes(role)) {
+    sendError(res, 'Access denied', 403);
+    return;
+  }
+
+  // Teachers and school admins: use a server-side join to scope by school_id
+  // This avoids fetching all student IDs first (N+1 pattern).
+  if (role === 'teacher' || role === 'schooladmin') {
+    const schoolId = req.user!.school_id;
+    if (!schoolId) {
+      sendError(res, 'Your account is not linked to a school', 403);
       return;
     }
+    // Use the inner join on students to filter by school_id directly in DB
+    query = query.eq('students.school_id', schoolId);
+    if (student_id) query = query.eq('student_id', student_id);
+  } else if (role === 'superadmin') {
+    if (student_id) query = query.eq('student_id', student_id);
+  } else if (role === 'student') {
+    // Legacy: staff token with student role — look up via user_id
+    const { data: studentRecord } = await supabaseAdmin
+      .from('students')
+      .select('id')
+      .eq('user_id', req.user!.id)
+      .eq('is_deleted', false)
+      .single();
 
-    // Teachers and school admins: use a server-side join to scope by school_id
-    // This avoids fetching all student IDs first (N+1 pattern).
-    if (role === 'teacher' || role === 'schooladmin') {
-      const schoolId = req.user!.school_id;
-      if (!schoolId) {
-        sendError(res, 'Your account is not linked to a school', 403);
-        return;
-      }
-      // Use the inner join on students to filter by school_id directly in DB
-      query = query.eq('students.school_id', schoolId);
-      if (student_id) query = query.eq('student_id', student_id);
-    } else if (role === 'superadmin') {
-      if (student_id) query = query.eq('student_id', student_id);
-    } else if (role === 'student') {
-      // Legacy: staff token with student role — look up via user_id
-      const { data: studentRecord } = await supabaseAdmin
-        .from('students')
-        .select('id')
-        .eq('user_id', req.user!.id)
-        .eq('is_deleted', false)
-        .single();
-
-      if (studentRecord) {
-        query = query.eq('student_id', studentRecord.id);
-      } else {
-        sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
-        return;
-      }
-    } else if (role === 'parent') {
-      // Parents can only see their children's marks
-      const { data: children } = await supabaseAdmin
-        .from('students')
-        .select('id')
-        .eq('parent_id', req.user!.id);
-
-      const childIds = (children ?? []).map((c: { id: string }) => c.id);
-      if (childIds.length === 0) {
-        sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
-        return;
-      }
-      query = query.in('student_id', childIds);
+    if (studentRecord) {
+      query = query.eq('student_id', studentRecord.id);
+    } else {
+      sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
+      return;
     }
+  } else if (role === 'parent') {
+    // Parents can only see their children's marks
+    const { data: children } = await supabaseAdmin
+      .from('students')
+      .select('id')
+      .eq('parent_id', req.user!.id);
+
+    const childIds = (children ?? []).map((c: { id: string }) => c.id);
+    if (childIds.length === 0) {
+      sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
+      return;
+    }
+    query = query.in('student_id', childIds);
   }
 
   const { data, error, count } = await query;
