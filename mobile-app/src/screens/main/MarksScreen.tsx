@@ -65,8 +65,9 @@ function formatDate(iso: string): string {
 }
 
 function buildSubjectSummaries(marks: MarkRecord[]): SubjectSummary[] {
+  const safeMarks = Array.isArray(marks) ? marks : [];
   const map = new Map<string, MarkRecord[]>();
-  for (const m of marks) {
+  for (const m of safeMarks) {
     if (!map.has(m.subject)) map.set(m.subject, []);
     map.get(m.subject)!.push(m);
   }
@@ -456,13 +457,15 @@ export default function MarksScreen() {
       ]);
 
       if (marksRes.status === 'fulfilled') {
-        setMarks(marksRes.value.data.data ?? []);
+        const raw = marksRes.value.data?.data;
+        setMarks(Array.isArray(raw) ? raw : []);
       } else {
         setMarks([]);
       }
 
       if (testsRes.status === 'fulfilled') {
-        const allTests: TestRecord[] = testsRes.value.data.data ?? [];
+        const raw = testsRes.value.data?.data;
+        const allTests: TestRecord[] = Array.isArray(raw) ? raw : [];
         // Only show completed tests with score info
         const done = allTests.filter((t) => t.attempt_status === 'completed');
         setCompletedTests(done);
