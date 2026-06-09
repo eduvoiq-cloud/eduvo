@@ -51,7 +51,7 @@ interface Answer {
   theory_answer?: string;
 }
 
-type Phase = 'pre' | 'active' | 'submitting' | 'results';
+type Phase = 'pre' | 'active' | 'submitting' | 'results' | 'error';
 
 interface ResultAnswer {
   question_id: string;
@@ -77,6 +77,8 @@ interface ResultData {
   answers: ResultAnswer[];
 }
 
+// ── Navigation prop type (stack-compatible) ───────────────────────────────────
+
 interface TestAttemptScreenProps {
   route: {
     params: {
@@ -89,7 +91,7 @@ interface TestAttemptScreenProps {
   };
 }
 
-// ── AsyncStorage helpers ──────────────────────────────────────────────────────
+// ── AsyncStorage key helpers ──────────────────────────────────────────────────
 
 const progressKey = (testId: string) => `eduvo_test_progress_${testId}`;
 
@@ -106,7 +108,7 @@ async function saveProgress(
   attempt_id: string,
   answers: Answer[],
   currentIndex: number,
-  secondsLeft: number | null,
+  secondsLeft: number | null
 ): Promise<void> {
   const payload: SavedProgress = {
     attempt_id,
@@ -132,68 +134,38 @@ async function clearProgress(testId: string): Promise<void> {
 }
 
 // ── Timer hook ────────────────────────────────────────────────────────────────
-//
-// Design rules:
-//   1. Starts as null (no timer running).
-//   2. Call setSecondsLeft(N) where N > 0 to start the countdown.
-//   3. onExpire fires only after the interval ticks secondsLeft down to 0 —
-//      never on the initial setSecondsLeft call.
-//   4. The interval is created once per "start" (when secondsLeft goes from
-//      null → positive). It is cleared on unmount or when the timer is stopped.
-//   5. onExpireRef keeps the callback fresh without restarting the interval.
 
-function useCountdown(onExpire: () => void): {
-  secondsLeft: number | null;
-  setSecondsLeft: (n: number | null) => void;
-} {
-  const [secondsLeft, setSecondsLeftState] = useState<number | null>(null);
+function useCountdown(
+  _initialSeconds: number | null,
+  onExpire: () => void
+): { secondsLeft: number | null; setSecondsLeft: React.Dispatch<React.SetStateAction<number | null>> } {
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
 
-  // Track whether the interval is currently running so we don't double-start.
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  useEffect(() => {
+    // No timer active
+    if (secondsLeft === null) return;
 
-  const stopInterval = useCallback(() => {
-    if (intervalRef.current !== null) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
+    // Already expired
+    if (secondsLeft <= 0) {
+      onExpireRef.current();
+      return;
     }
-  }, []);
 
-  // Public setter — starts/resets the interval when given a positive number,
-  // stops it when given null.
-  const setSecondsLeft = useCallback(
-    (n: number | null) => {
-      stopInterval();
-      if (n === null || n <= 0) {
-        setSecondsLeftState(null);
-        return;
-      }
-      setSecondsLeftState(n);
-      // Start a new interval. Each tick decrements by 1.
-      // When it reaches 0 we fire onExpire and stop.
-      intervalRef.current = setInterval(() => {
-        setSecondsLeftState((prev) => {
-          if (prev === null || prev <= 1) {
-            stopInterval();
-            // Schedule onExpire outside of setState to avoid React warnings.
-            setTimeout(() => onExpireRef.current(), 0);
-            return null; // hide the timer display once expired
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    },
-    [stopInterval],
-  );
+    const id = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) return 0;
+        return prev - 1;
+      });
+    }, 1000);
 
-  // Clean up on unmount.
-  useEffect(() => () => stopInterval(), [stopInterval]);
+    return () => clearInterval(id);
+  }, [secondsLeft]);
 
   return { secondsLeft, setSecondsLeft };
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -211,28 +183,42 @@ function formatHHMM(hhmm: string): string {
 
 type WindowState = 'before' | 'open' | 'closed' | 'no_window';
 
+/** Converts "HH:MM" to minutes-since-midnight for arithmetic comparison. */
 function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number);
   return h * 60 + m;
 }
 
+/**
+ * Returns the window state for the attempt screen.
+ * The date-boundary check is already done in TestsScreen before navigation,
+ * so here we only need to verify the HH:MM range — including overnight windows
+ * (e.g. 23:00 → 00:30 where available_until < available_from).
+ */
 function getWindowState(
   availableFrom: string | null | undefined,
   availableUntil: string | null | undefined,
 ): WindowState {
   if (!availableFrom && !availableUntil) return 'no_window';
   const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const fromMins = availableFrom ? toMinutes(availableFrom) : null;
+  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const nowMins  = toMinutes(nowHHMM);
+
+  const fromMins  = availableFrom  ? toMinutes(availableFrom)  : null;
   const untilMins = availableUntil ? toMinutes(availableUntil) : null;
+
+  // Overnight window: until < from (e.g. 23:00 → 00:30)
   const isOvernight = fromMins !== null && untilMins !== null && untilMins < fromMins;
   if (isOvernight) {
     if (fromMins !== null && nowMins >= fromMins) return 'open';
     if (untilMins !== null && nowMins <= untilMins) return 'open';
     return 'before';
   }
+
+  // Normal same-day window
   if (fromMins !== null && nowMins < fromMins) return 'before';
-  const effectiveUntil = availableUntil && availableUntil !== availableFrom ? availableUntil : null;
+  // Zero-duration window (until == from) → treat as no close time
+  const effectiveUntil = (availableUntil && availableUntil !== availableFrom) ? availableUntil : null;
   if (effectiveUntil && nowMins > toMinutes(effectiveUntil)) return 'closed';
   return 'open';
 }
@@ -253,10 +239,14 @@ function PreTestScreen({
   return (
     <ScrollView style={preStyles.container} contentContainerStyle={preStyles.content}>
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+
       <View style={preStyles.iconWrap}>
         <Text style={preStyles.icon}>📝</Text>
       </View>
+
       <Text style={preStyles.title}>{test.title}</Text>
+
+      {/* Details grid */}
       <View style={preStyles.detailsCard}>
         <View style={preStyles.detailRow}>
           <Text style={preStyles.detailLabel}>Questions</Text>
@@ -270,6 +260,8 @@ function PreTestScreen({
           </Text>
         </View>
       </View>
+
+      {/* Instructions */}
       <View style={preStyles.instructionsCard}>
         <Text style={preStyles.instructionsTitle}>Instructions</Text>
         {[
@@ -294,11 +286,14 @@ function PreTestScreen({
           </View>
         ) : null}
       </View>
+
+      {/* Resume banner */}
       {isResume && (
         <View style={preStyles.resumeBanner}>
           <Text style={preStyles.resumeText}>⏸ You have an attempt in progress. Tap below to continue.</Text>
         </View>
       )}
+
       <TouchableOpacity
         style={[preStyles.startBtn, isResume && preStyles.startBtnResume, starting && preStyles.startBtnDisabled]}
         onPress={onStart}
@@ -320,40 +315,83 @@ const preStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   content: { padding: 24, paddingBottom: 48, alignItems: 'center' },
   iconWrap: {
-    width: 88, height: 88, borderRadius: 44,
-    backgroundColor: '#DBEAFE', justifyContent: 'center', alignItems: 'center', marginBottom: 20,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: '#DBEAFE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
   },
   icon: { fontSize: 40 },
-  title: { fontSize: 24, fontWeight: '800', color: '#111827', textAlign: 'center', marginBottom: 24, lineHeight: 32 },
+  title: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 24,
+    lineHeight: 32,
+  },
   detailsCard: {
-    width: '100%', backgroundColor: '#FFFFFF', borderRadius: 14, padding: 16, marginBottom: 16,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
   detailLabel: { fontSize: 14, color: '#6B7280', fontWeight: '500' },
   detailValue: { fontSize: 14, color: '#111827', fontWeight: '700' },
   divider: { height: 1, backgroundColor: '#F3F4F6', marginVertical: 4 },
   instructionsCard: {
-    width: '100%', backgroundColor: '#FFFFFF', borderRadius: 14, padding: 16, marginBottom: 28,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 28,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
   },
   instructionsTitle: { fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 12 },
   instrRow: { flexDirection: 'row', marginBottom: 8 },
   instrBullet: { fontSize: 14, color: '#1D4ED8', marginRight: 8, lineHeight: 20 },
   instrText: { fontSize: 13, color: '#4B5563', flex: 1, lineHeight: 20 },
   customInstr: {
-    marginTop: 12, backgroundColor: '#EFF6FF', borderRadius: 8, padding: 12,
-    borderLeftWidth: 3, borderLeftColor: '#1D4ED8',
+    marginTop: 12,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    padding: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#1D4ED8',
   },
   customInstrTitle: { fontSize: 12, fontWeight: '700', color: '#1E3A8A', marginBottom: 4 },
   customInstrText: { fontSize: 13, color: '#374151', lineHeight: 19 },
-  startBtn: { width: '100%', backgroundColor: '#1D4ED8', borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+  startBtn: {
+    width: '100%',
+    backgroundColor: '#1D4ED8',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
   startBtnDisabled: { opacity: 0.6 },
   startBtnResume: { backgroundColor: '#15803D' },
   startBtnText: { fontSize: 17, fontWeight: '700', color: '#FFFFFF' },
   resumeBanner: {
-    width: '100%', backgroundColor: '#ECFDF5', borderRadius: 12, padding: 14, marginBottom: 16,
-    borderLeftWidth: 4, borderLeftColor: '#15803D',
+    width: '100%',
+    backgroundColor: '#ECFDF5',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#15803D',
   },
   resumeText: { fontSize: 13, color: '#065F46', fontWeight: '600', lineHeight: 19 },
 });
@@ -361,10 +399,22 @@ const preStyles = StyleSheet.create({
 // ── Question pill strip ───────────────────────────────────────────────────────
 
 function QuestionPills({
-  total, current, answers, onJump,
+  total,
+  current,
+  answers,
+  onJump,
 }: {
-  total: number; current: number; answers: Answer[]; onJump: (idx: number) => void;
+  total: number;
+  current: number;
+  answers: Answer[];
+  onJump: (idx: number) => void;
 }) {
+  const answeredSet = new Set(
+    answers
+      .filter((a) => a.selected_option || (a.theory_answer && a.theory_answer.trim().length > 0))
+      .map((a) => a.question_id)
+  );
+
   return (
     <ScrollView
       horizontal
@@ -374,20 +424,32 @@ function QuestionPills({
     >
       {Array.from({ length: total }, (_, i) => {
         const isCurrent = i === current;
+        // We don't have question IDs here, so we track by index via answers array position
         const ans = answers[i];
         const isAnswered = ans
           ? !!(ans.selected_option || (ans.theory_answer && ans.theory_answer.trim().length > 0))
           : false;
+
         return (
           <TouchableOpacity
             key={i}
-            style={[pillStyles.pill, isAnswered && pillStyles.pillAnswered, isCurrent && pillStyles.pillCurrent]}
+            style={[
+              pillStyles.pill,
+              isAnswered && pillStyles.pillAnswered,
+              isCurrent && pillStyles.pillCurrent,
+            ]}
             onPress={() => onJump(i)}
             accessibilityRole="button"
             accessibilityLabel={`Question ${i + 1}${isAnswered ? ', answered' : ', unanswered'}`}
             accessibilityState={{ selected: isCurrent }}
           >
-            <Text style={[pillStyles.pillText, isAnswered && pillStyles.pillTextAnswered, isCurrent && pillStyles.pillTextCurrent]}>
+            <Text
+              style={[
+                pillStyles.pillText,
+                isAnswered && pillStyles.pillTextAnswered,
+                isCurrent && pillStyles.pillTextCurrent,
+              ]}
+            >
               {i + 1}
             </Text>
           </TouchableOpacity>
@@ -400,7 +462,14 @@ function QuestionPills({
 const pillStyles = StyleSheet.create({
   scroll: { maxHeight: 52 },
   content: { paddingHorizontal: 16, paddingVertical: 8, gap: 8, flexDirection: 'row' },
-  pill: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E5E7EB', justifyContent: 'center', alignItems: 'center' },
+  pill: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   pillAnswered: { backgroundColor: '#22C55E' },
   pillCurrent: { backgroundColor: '#1D4ED8', borderWidth: 2, borderColor: '#93C5FD' },
   pillText: { fontSize: 13, fontWeight: '600', color: '#6B7280' },
@@ -410,12 +479,17 @@ const pillStyles = StyleSheet.create({
 
 // ── MCQ question view ─────────────────────────────────────────────────────────
 
+const OPTION_LABELS: OptionKey[] = ['a', 'b', 'c', 'd'];
 const OPTION_DISPLAY: Record<OptionKey, string> = { a: 'A', b: 'B', c: 'C', d: 'D' };
 
 function MCQQuestion({
-  question, answer, onSelect,
+  question,
+  answer,
+  onSelect,
 }: {
-  question: Question; answer: Answer | undefined; onSelect: (opt: OptionKey) => void;
+  question: Question;
+  answer: Answer | undefined;
+  onSelect: (opt: OptionKey) => void;
 }) {
   const options: Array<{ key: OptionKey; text: string | null }> = [
     { key: 'a', text: question.option_a },
@@ -423,12 +497,14 @@ function MCQQuestion({
     { key: 'c', text: question.option_c },
     { key: 'd', text: question.option_d },
   ];
+
   return (
     <View style={qStyles.container}>
       <View style={qStyles.marksRow}>
         <Text style={qStyles.marksLabel}>MCQ · {question.marks} mark{question.marks !== 1 ? 's' : ''}</Text>
       </View>
       <Text style={qStyles.questionText}>{question.question_text}</Text>
+
       <View style={qStyles.optionsContainer}>
         {options.map(({ key, text }) => {
           if (!text) return null;
@@ -448,7 +524,9 @@ function MCQQuestion({
                   {OPTION_DISPLAY[key]}
                 </Text>
               </View>
-              <Text style={[qStyles.optionText, selected && qStyles.optionTextSelected]}>{text}</Text>
+              <Text style={[qStyles.optionText, selected && qStyles.optionTextSelected]}>
+                {text}
+              </Text>
             </TouchableOpacity>
           );
         })}
@@ -460,9 +538,13 @@ function MCQQuestion({
 // ── Theory question view ──────────────────────────────────────────────────────
 
 function TheoryQuestion({
-  question, answer, onChange,
+  question,
+  answer,
+  onChange,
 }: {
-  question: Question; answer: Answer | undefined; onChange: (text: string) => void;
+  question: Question;
+  answer: Answer | undefined;
+  onChange: (text: string) => void;
 }) {
   return (
     <View style={qStyles.container}>
@@ -470,6 +552,7 @@ function TheoryQuestion({
         <Text style={qStyles.marksLabel}>Theory · {question.marks} mark{question.marks !== 1 ? 's' : ''}</Text>
       </View>
       <Text style={qStyles.questionText}>{question.question_text}</Text>
+
       <TextInput
         style={qStyles.theoryInput}
         multiline
@@ -487,18 +570,47 @@ function TheoryQuestion({
 const qStyles = StyleSheet.create({
   container: { flex: 1, padding: 20 },
   marksRow: { marginBottom: 8 },
-  marksLabel: { fontSize: 12, fontWeight: '600', color: '#6B7280', textTransform: 'uppercase', letterSpacing: 0.5 },
-  questionText: { fontSize: 18, fontWeight: '600', color: '#111827', lineHeight: 28, marginBottom: 24 },
+  marksLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  questionText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    lineHeight: 28,
+    marginBottom: 24,
+  },
   optionsContainer: { gap: 12 },
   optionBtn: {
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFFFFF',
-    borderRadius: 12, borderWidth: 2, borderColor: '#E5E7EB', padding: 14,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#E5E7EB',
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
   },
-  optionBtnSelected: { borderColor: '#1D4ED8', backgroundColor: '#EFF6FF' },
+  optionBtnSelected: {
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+  },
   optionBadge: {
-    width: 32, height: 32, borderRadius: 16, backgroundColor: '#F3F4F6',
-    justifyContent: 'center', alignItems: 'center', marginRight: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
   optionBadgeSelected: { backgroundColor: '#1D4ED8' },
   optionBadgeText: { fontSize: 13, fontWeight: '700', color: '#6B7280' },
@@ -506,22 +618,42 @@ const qStyles = StyleSheet.create({
   optionText: { fontSize: 15, color: '#374151', flex: 1, lineHeight: 22 },
   optionTextSelected: { color: '#1E3A8A', fontWeight: '600' },
   theoryInput: {
-    backgroundColor: '#FFFFFF', borderRadius: 12, borderWidth: 1.5, borderColor: '#D1D5DB',
-    padding: 14, fontSize: 15, color: '#111827', minHeight: 180, lineHeight: 22,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#D1D5DB',
+    padding: 14,
+    fontSize: 15,
+    color: '#111827',
+    minHeight: 180,
+    lineHeight: 22,
   },
 });
 
 // ── Submit confirmation modal ─────────────────────────────────────────────────
 
 function SubmitModal({
-  visible, answeredCount, totalCount, onConfirm, onCancel,
+  visible,
+  answeredCount,
+  totalCount,
+  onConfirm,
+  onCancel,
 }: {
-  visible: boolean; answeredCount: number; totalCount: number;
-  onConfirm: () => void; onCancel: () => void;
+  visible: boolean;
+  answeredCount: number;
+  totalCount: number;
+  onConfirm: () => void;
+  onCancel: () => void;
 }) {
   const unanswered = totalCount - answeredCount;
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel} accessibilityViewIsModal>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+      accessibilityViewIsModal
+    >
       <View style={modalStyles.overlay}>
         <View style={modalStyles.card}>
           <Text style={modalStyles.title}>Submit Test?</Text>
@@ -529,17 +661,33 @@ function SubmitModal({
             <Text style={modalStyles.bold}>{answeredCount}</Text> question
             {answeredCount !== 1 ? 's' : ''} answered
             {unanswered > 0 ? (
-              <>{', '}<Text style={modalStyles.warn}>{unanswered} unanswered</Text></>
-            ) : null}.
+              <>
+                {', '}
+                <Text style={modalStyles.warn}>{unanswered} unanswered</Text>
+              </>
+            ) : null}
+            .
           </Text>
           {unanswered > 0 && (
-            <Text style={modalStyles.hint}>Unanswered questions will receive 0 marks.</Text>
+            <Text style={modalStyles.hint}>
+              Unanswered questions will receive 0 marks.
+            </Text>
           )}
           <View style={modalStyles.btnRow}>
-            <TouchableOpacity style={[modalStyles.btn, modalStyles.btnCancel]} onPress={onCancel} accessibilityRole="button" accessibilityLabel="Cancel submission">
+            <TouchableOpacity
+              style={[modalStyles.btn, modalStyles.btnCancel]}
+              onPress={onCancel}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel submission"
+            >
               <Text style={modalStyles.btnCancelText}>Go Back</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[modalStyles.btn, modalStyles.btnConfirm]} onPress={onConfirm} accessibilityRole="button" accessibilityLabel="Confirm submission">
+            <TouchableOpacity
+              style={[modalStyles.btn, modalStyles.btnConfirm]}
+              onPress={onConfirm}
+              accessibilityRole="button"
+              accessibilityLabel="Confirm submission"
+            >
               <Text style={modalStyles.btnConfirmText}>Submit</Text>
             </TouchableOpacity>
           </View>
@@ -550,10 +698,23 @@ function SubmitModal({
 }
 
 const modalStyles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 },
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
   card: {
-    width: '100%', backgroundColor: '#FFFFFF', borderRadius: 16, padding: 24,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8,
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
   },
   title: { fontSize: 20, fontWeight: '800', color: '#111827', marginBottom: 12 },
   body: { fontSize: 15, color: '#374151', lineHeight: 22, marginBottom: 8 },
@@ -571,9 +732,13 @@ const modalStyles = StyleSheet.create({
 // ── Results screen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
-  testTitle, results, onBack,
+  testTitle,
+  results,
+  onBack,
 }: {
-  testTitle: string; results: ResultData; onBack: () => void;
+  testTitle: string;
+  results: ResultData;
+  onBack: () => void;
 }) {
   const mcqAnswers = results.answers.filter((a) => a.question_type === 'mcq');
   const theoryAnswers = results.answers.filter((a) => a.question_type === 'theory');
@@ -583,8 +748,11 @@ function ResultsScreen({
   return (
     <ScrollView style={resStyles.container} contentContainerStyle={resStyles.content}>
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+
       <Text style={resStyles.heading}>Results</Text>
       <Text style={resStyles.testTitle}>{testTitle}</Text>
+
+      {/* Score summary */}
       <View style={resStyles.scoreCard}>
         <View style={resStyles.scoreBlock}>
           <Text style={resStyles.scoreLabel}>MCQ Score</Text>
@@ -592,7 +760,9 @@ function ResultsScreen({
             {results.mcq_score ?? 0}
             <Text style={resStyles.scoreMax}> / {totalMcqMarks}</Text>
           </Text>
-          <Text style={resStyles.scoreSubtext}>{correctCount} of {mcqAnswers.length} correct</Text>
+          <Text style={resStyles.scoreSubtext}>
+            {correctCount} of {mcqAnswers.length} correct
+          </Text>
         </View>
         {theoryAnswers.length > 0 && (
           <>
@@ -607,6 +777,8 @@ function ResultsScreen({
           </>
         )}
       </View>
+
+      {/* MCQ per-question breakdown */}
       {mcqAnswers.length > 0 && (
         <View style={resStyles.section}>
           <Text style={resStyles.sectionTitle}>MCQ Breakdown</Text>
@@ -615,14 +787,22 @@ function ResultsScreen({
             const skipped = ans.selected_option == null;
             const optionText = (opt: string | null | undefined) => {
               if (!opt) return null;
-              const map: Record<string, string | null | undefined> = { a: ans.option_a, b: ans.option_b, c: ans.option_c, d: ans.option_d };
+              const map: Record<string, string | null | undefined> = {
+                a: ans.option_a, b: ans.option_b, c: ans.option_c, d: ans.option_d,
+              };
               return map[opt] ?? opt.toUpperCase();
             };
+
             return (
-              <View key={ans.question_id} style={[resStyles.qRow, correct ? resStyles.qRowCorrect : resStyles.qRowWrong]}>
+              <View
+                key={ans.question_id}
+                style={[resStyles.qRow, correct ? resStyles.qRowCorrect : resStyles.qRowWrong]}
+              >
                 <View style={resStyles.qRowHeader}>
                   <Text style={resStyles.qNum}>Q{idx + 1}</Text>
-                  <Text style={correct ? resStyles.tick : resStyles.cross}>{skipped ? '—' : correct ? '✓' : '✗'}</Text>
+                  <Text style={correct ? resStyles.tick : resStyles.cross}>
+                    {skipped ? '—' : correct ? '✓' : '✗'}
+                  </Text>
                 </View>
                 <Text style={resStyles.qText}>{ans.question_text}</Text>
                 {!skipped && (
@@ -633,13 +813,12 @@ function ResultsScreen({
                     </Text>
                   </Text>
                 )}
-                {skipped && <Text style={resStyles.qYourAnswer}>Not answered</Text>}
+                {skipped && (
+                  <Text style={resStyles.qYourAnswer}>Not answered</Text>
+                )}
                 {!correct && ans.correct_option && (
                   <Text style={resStyles.qCorrectAnswer}>
-                    ✓ Correct answer:{' '}
-                    <Text style={resStyles.ansCorrect}>
-                      {ans.correct_option.toUpperCase()} — {optionText(ans.correct_option)}
-                    </Text>
+                    ✓ Correct answer: <Text style={resStyles.ansCorrect}>{ans.correct_option.toUpperCase()} — {optionText(ans.correct_option)}</Text>
                   </Text>
                 )}
               </View>
@@ -647,6 +826,8 @@ function ResultsScreen({
           })}
         </View>
       )}
+
+      {/* Theory section */}
       {theoryAnswers.length > 0 && (
         <View style={resStyles.section}>
           <Text style={resStyles.sectionTitle}>Theory Questions</Text>
@@ -669,7 +850,13 @@ function ResultsScreen({
           ))}
         </View>
       )}
-      <TouchableOpacity style={resStyles.backBtn} onPress={onBack} accessibilityRole="button" accessibilityLabel="Back to tests list">
+
+      <TouchableOpacity
+        style={resStyles.backBtn}
+        onPress={onBack}
+        accessibilityRole="button"
+        accessibilityLabel="Back to tests list"
+      >
         <Text style={resStyles.backBtnText}>← Back to Tests</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -682,8 +869,16 @@ const resStyles = StyleSheet.create({
   heading: { fontSize: 26, fontWeight: '800', color: '#111827', marginBottom: 4 },
   testTitle: { fontSize: 15, color: '#6B7280', marginBottom: 20 },
   scoreCard: {
-    flexDirection: 'row', backgroundColor: '#FFFFFF', borderRadius: 14, padding: 20, marginBottom: 24,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 5, elevation: 2,
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 20,
+    marginBottom: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.07,
+    shadowRadius: 5,
+    elevation: 2,
   },
   scoreBlock: { flex: 1, alignItems: 'center' },
   scoreLabel: { fontSize: 11, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
@@ -695,8 +890,12 @@ const resStyles = StyleSheet.create({
   section: { marginBottom: 24 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: '#374151', marginBottom: 12 },
   qRow: {
-    backgroundColor: '#FFFFFF', borderRadius: 12, padding: 14, marginBottom: 10,
-    borderLeftWidth: 4, borderLeftColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#E5E7EB',
   },
   qRowCorrect: { borderLeftColor: '#22C55E', backgroundColor: '#F0FDF4' },
   qRowWrong: { borderLeftColor: '#EF4444', backgroundColor: '#FEF2F2' },
@@ -708,33 +907,45 @@ const resStyles = StyleSheet.create({
   qYourAnswer: { fontSize: 13, color: '#6B7280' },
   ansCorrect: { color: '#15803D', fontWeight: '600' },
   ansWrong: { color: '#DC2626', fontWeight: '600' },
-  qCorrectAnswer: { fontSize: 13, color: '#6B7280', marginTop: 4 },
+  qCorrectAnswer: { fontSize: 13, color: '#15803D', marginTop: 4, fontWeight: '500' },
   theoryNote: {
-    backgroundColor: '#FFF7ED', borderRadius: 10, padding: 12, marginBottom: 12,
-    borderLeftWidth: 3, borderLeftColor: '#F59E0B',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
   },
   theoryNoteText: { fontSize: 13, color: '#92400E', lineHeight: 19 },
   theoryRow: {
-    backgroundColor: '#FFFFFF', borderRadius: 12, padding: 14, marginBottom: 10,
-    borderLeftWidth: 4, borderLeftColor: '#6366F1',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#D97706',
   },
   theoryQNum: { fontSize: 12, fontWeight: '700', color: '#6B7280', marginBottom: 4 },
-  theoryQText: { fontSize: 14, color: '#111827', lineHeight: 20, marginBottom: 6 },
-  theoryMarks: { fontSize: 13, color: '#6366F1', fontWeight: '600' },
+  theoryQText: { fontSize: 14, color: '#111827', lineHeight: 20, marginBottom: 8 },
+  theoryMarks: { fontSize: 13, color: '#D97706', fontWeight: '600' },
   backBtn: {
-    marginTop: 8, backgroundColor: '#F3F4F6', borderRadius: 12, paddingVertical: 14, alignItems: 'center',
+    backgroundColor: '#1D4ED8',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
   },
-  backBtnText: { fontSize: 15, fontWeight: '600', color: '#374151' },
+  backBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
 });
 
-// ── Main screen ───────────────────────────────────────────────────────────────
+// ── Main component ────────────────────────────────────────────────────────────
 
 export default function TestAttemptScreen({ route, navigation }: TestAttemptScreenProps) {
   const { test } = route.params;
-  const hasTimeLimit = test.time_limit_minutes > 0;
 
-  // ── State ────────────────────────────────────────────────────────────────
+  // ── Phase & core state ──────────────────────────────────────────────────────
   const [phase, setPhase] = useState<Phase>('pre');
+  const [loadingResults, setLoadingResults] = useState(
+    test.attempt_status === 'completed'
+  ); // true while silently fetching results for completed tests
   const [starting, setStarting] = useState(false);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Answer[]>([]);
@@ -743,81 +954,131 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [results, setResults] = useState<ResultData | null>(null);
-  const [hasLocalProgress, setHasLocalProgress] = useState(false);
 
-  // ── Refs for use inside callbacks / AppState handler ─────────────────────
-  const phaseRef = useRef<Phase>('pre');
+  // ── Timer ───────────────────────────────────────────────────────────────────
+  const hasTimeLimit = test.time_limit_minutes > 0;
+  const initialSeconds = hasTimeLimit ? test.time_limit_minutes * 60 : null;
+  const { secondsLeft, setSecondsLeft } = useCountdown(
+    null, // start as null; set when test begins
+    () => {
+      // Auto-submit when timer hits 0
+      if (phase === 'active') {
+        handleSubmit(true);
+      }
+    }
+  );
+
+  // Keep a ref to answers for use in AppState handler without stale closure
   const answersRef = useRef<Answer[]>([]);
   const attemptIdRef = useRef<string | null>(null);
   const currentIndexRef = useRef(0);
   const secondsLeftRef = useRef<number | null>(null);
+  // Store the server-side started_at timestamp and time limit so the AppState
+  // handler can recompute remaining time when the app returns to foreground.
+  const startedAtRef = useRef<string | null>(null);
+  const timeLimitSecondsRef = useRef<number | null>(null);
+  const phaseRef = useRef<Phase>('pre');
 
-  useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { answersRef.current = answers; }, [answers]);
   useEffect(() => { attemptIdRef.current = attemptId; }, [attemptId]);
   useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
-
-  // ── Timer ────────────────────────────────────────────────────────────────
-  const { secondsLeft, setSecondsLeft } = useCountdown(() => {
-    // Called after the interval ticks down to 0 — never on initial set.
-    if (phaseRef.current === 'active') {
-      void handleSubmitRef.current(true);
-    }
-  });
-
   useEffect(() => { secondsLeftRef.current = secondsLeft; }, [secondsLeft]);
+  useEffect(() => { phaseRef.current = phase; }, [phase]);
 
-  // handleSubmit is defined below; we use a ref so onExpire doesn't need it
-  // in its dependency array (which would recreate the timer).
-  const handleSubmitRef = useRef<(auto?: boolean) => Promise<void>>(async () => {});
-
-  // ── Check for local saved progress on mount ───────────────────────────────
+  // ── AppState: correct timer on foreground; save progress on background ──────
   useEffect(() => {
-    loadProgress(test.id).then((saved) => {
-      if (saved) setHasLocalProgress(true);
-    }).catch(() => {});
-  }, [test.id]);
-
-  // ── AppState: save on background, correct timer on foreground ────────────
-  useEffect(() => {
-    // Track when the app went to background using wall-clock time.
-    // We do NOT use server started_at here. That timestamp is from the original
-    // attempt creation and can be hours old — making remaining a large negative
-    // number and triggering instant auto-submit on foreground.
-    let backgroundedAt: number | null = null;
-
     const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
       if (state === 'background' || state === 'inactive') {
-        backgroundedAt = Date.now();
+        // Save progress when leaving — timer is NOT saved, it will be recomputed on return
         const aid = attemptIdRef.current;
         if (aid && phaseRef.current === 'active') {
           saveProgress(
-            test.id, aid,
-            answersRef.current, currentIndexRef.current, secondsLeftRef.current,
-          ).catch(() => {});
+            test.id,
+            aid,
+            answersRef.current,
+            currentIndexRef.current,
+            null  // never persist secondsLeft — always recompute from server timestamp
+          ).catch(() => {/* silent */});
         }
-      } else if (state === 'active' && backgroundedAt !== null) {
-        const secondsInBackground = Math.floor((Date.now() - backgroundedAt) / 1000);
-        backgroundedAt = null;
-
-        // Only adjust if the test is still active and has a running timer.
-        if (phaseRef.current === 'active' && secondsLeftRef.current !== null) {
-          const remaining = secondsLeftRef.current - secondsInBackground;
-          if (remaining <= 0) {
-            // Time ran out while in background — submit now.
-            void handleSubmitRef.current(true);
-          } else {
-            // Restart the countdown from the corrected remaining time.
-            setSecondsLeft(remaining);
-          }
+      } else if (state === 'active') {
+        // App came back to foreground — recalculate remaining time from server started_at.
+        // This corrects any time the student spent outside the app.
+        if (phaseRef.current === 'active' && startedAtRef.current && timeLimitSecondsRef.current !== null) {
+          const elapsed = Math.floor((Date.now() - new Date(startedAtRef.current).getTime()) / 1000);
+          const remaining = Math.max(0, timeLimitSecondsRef.current - elapsed);
+          setSecondsLeft(remaining);
+          // If time has already expired while in background, the countdown hook will
+          // fire onExpire (→ handleSubmit) as soon as secondsLeft reaches 0.
         }
       }
     });
-
     return () => sub.remove();
   }, [test.id, setSecondsLeft]);
 
-  // ── Start / resume ────────────────────────────────────────────────────────
+  // ── Start / resume test ─────────────────────────────────────────────────────
+  const [hasActiveAttempt, setHasActiveAttempt] = useState(false);
+
+  // On mount: if the test is already completed, skip the pre-screen and load results directly.
+  // Otherwise check for saved local progress to show resume option.
+  useEffect(() => {
+    const checkAttemptStatus = async () => {
+      if (test.attempt_status === 'completed') {
+        // Fetch results directly by test id — never show the pre/start screen for completed tests.
+        // Try /results/by-test/:testId first (preferred — no attempt_id needed).
+        // If that fails, fall back to /results/:attemptId via the 409 from attempt/start.
+        // Under NO circumstances should we set phase='pre' for a completed test.
+        try {
+          const resResponse = await apiClient.get(`/api/tests/results/by-test/${test.id}`);
+          const resultData = resResponse.data.data as ResultData;
+          setResults(resultData);
+          setLoadingResults(false);
+          setPhase('results');
+          return;
+        } catch {
+          // /results/by-test/ failed — try to get the attempt_id via the start endpoint (returns 409)
+        }
+
+        try {
+          // This will 409 for a submitted test, giving us the attempt_id
+          await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
+          // If start actually succeeded (shouldn't happen for completed tests),
+          // do NOT drop to pre-screen — still show error to avoid confusing the student.
+          setLoadingResults(false);
+          setPhase('error' as Phase);
+        } catch (err: unknown) {
+          const attemptIdFromErr =
+            (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
+          const msg =
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? '';
+
+          if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
+            try {
+              const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
+              const resultData = resResponse.data.data as ResultData;
+              setResults(resultData);
+              setAttemptId(attemptIdFromErr);
+              setLoadingResults(false);
+              setPhase('results');
+              return;
+            } catch {
+              // fall through to error state
+            }
+          }
+          // All fetches failed — show error, never pre-screen for a completed test
+          setLoadingResults(false);
+          setPhase('error' as Phase);
+        }
+        return;
+      }
+
+      // Not completed — check for saved local progress (in-progress attempt)
+      const saved = await loadProgress(test.id);
+      if (saved) setHasActiveAttempt(true);
+    };
+
+    void checkAttemptStatus();
+  }, [test.id, test.attempt_status]);
+
   const handleStart = useCallback(async () => {
     setStarting(true);
     try {
@@ -834,59 +1095,48 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       setQuestions(qs);
       setAttemptId(payload.attempt_id);
 
+      // Store started_at and time limit in refs so the AppState foreground handler
+      // can recompute remaining time whenever the student returns to the app.
+      startedAtRef.current = payload.started_at;
+      timeLimitSecondsRef.current = hasTimeLimit ? payload.time_limit_minutes * 60 : null;
 
-      // Try to restore local saved progress.
+      // Initialise answer slots (one per question, empty)
+      setAnswers(qs.map((q) => ({ question_id: q.id })));
+
+      // Restore saved progress if resuming (app backgrounded or server-side active attempt)
       const saved = await loadProgress(test.id);
-      const hasSavedProgress = saved && saved.attempt_id === payload.attempt_id;
-
-      if (hasSavedProgress) {
+      if (saved && saved.attempt_id === payload.attempt_id) {
         setAnswers(saved.answers);
         setCurrentIndex(saved.currentIndex);
-      } else {
-        setAnswers(qs.map((q) => ({ question_id: q.id })));
       }
 
-      // Set timer:
-      //   - If we have a saved secondsLeft from local storage → restore it.
-      //   - If backend says this is a resumed attempt (no local save) → calculate
-      //     from server started_at (the user left without saving).
-      //   - Otherwise (fresh attempt) → start from the full time limit.
+      // Timer is ALWAYS computed from started_at — never trust saved secondsLeft.
+      // This means time spent in the background or outside the app is always deducted.
       if (hasTimeLimit) {
-        if (hasSavedProgress && saved.secondsLeft !== null && saved.secondsLeft > 0) {
-          // Restore from local save, adjusted for time that passed while app was closed.
-          const savedAt = new Date(saved.savedAt).getTime();
-          const secondsSinceSave = Math.floor((Date.now() - savedAt) / 1000);
-          const adjusted = saved.secondsLeft - secondsSinceSave;
-          setSecondsLeft(adjusted > 0 ? adjusted : 1);
-        } else if (payload.resumed) {
-          // Resumed without local save — use server timestamp.
-          const elapsed = Math.floor(
-            (Date.now() - new Date(payload.started_at).getTime()) / 1000,
-          );
-          const remaining = payload.time_limit_minutes * 60 - elapsed;
-          setSecondsLeft(remaining > 0 ? remaining : 1);
-        } else {
-          // Fresh new attempt — full time limit.
-          setSecondsLeft(payload.time_limit_minutes * 60);
-        }
+        const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
+        const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
+        setSecondsLeft(remaining);
       }
 
-      phaseRef.current = 'active';
       setPhase('active');
     } catch (err: unknown) {
-      const errData = (err as { response?: { data?: { message?: string; attempt_id?: string } } })?.response?.data;
-      const msg = errData?.message ?? (err instanceof Error ? err.message : 'Failed to start test');
+      const attemptIdFromErr =
+        (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
+      const msg =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+        ?? (err instanceof Error ? err.message : 'Failed to start test');
 
-      if (msg.toLowerCase().includes('already submitted') && errData?.attempt_id) {
+      // Safety net: if backend says already submitted, load results instead of erroring
+      if (attemptIdFromErr && msg.toLowerCase().includes('already submitted')) {
         try {
-          const resResponse = await apiClient.get(`/api/tests/results/${errData.attempt_id}`);
-          setResults(resResponse.data.data as ResultData);
-          setAttemptId(errData.attempt_id);
-          phaseRef.current = 'results';
+          const resResponse = await apiClient.get(`/api/tests/results/${attemptIdFromErr}`);
+          const resultData = resResponse.data.data as ResultData;
+          setResults(resultData);
+          setAttemptId(attemptIdFromErr);
           setPhase('results');
           return;
         } catch {
-          // fall through
+          // fall through to alert
         }
       }
 
@@ -896,88 +1146,149 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     }
   }, [test.id, hasTimeLimit, setSecondsLeft]);
 
-  // ── Answer handlers ───────────────────────────────────────────────────────
+  // ── Answer handlers ─────────────────────────────────────────────────────────
   const handleSelectOption = useCallback((opt: OptionKey) => {
-    setAnswers((prev) => prev.map((a, i) => i === currentIndex ? { ...a, selected_option: opt } : a));
+    setAnswers((prev) =>
+      prev.map((a, i) =>
+        i === currentIndex ? { ...a, selected_option: opt } : a
+      )
+    );
   }, [currentIndex]);
 
   const handleTheoryChange = useCallback((text: string) => {
-    setAnswers((prev) => prev.map((a, i) => i === currentIndex ? { ...a, theory_answer: text } : a));
+    setAnswers((prev) =>
+      prev.map((a, i) =>
+        i === currentIndex ? { ...a, theory_answer: text } : a
+      )
+    );
   }, [currentIndex]);
 
+  // ── Navigation ──────────────────────────────────────────────────────────────
   const goTo = useCallback((idx: number) => {
     setCurrentIndex(Math.max(0, Math.min(idx, questions.length - 1)));
   }, [questions.length]);
 
-  // ── Submit ────────────────────────────────────────────────────────────────
-  const handleSubmit = useCallback(async (_auto = false) => {
-    const aid = attemptIdRef.current;
-    if (!aid) return;
-
+  // ── Submit ──────────────────────────────────────────────────────────────────
+  const handleSubmit = useCallback(async (autoSubmit = false) => {
+    if (!attemptId) return;
     setShowSubmitModal(false);
-    phaseRef.current = 'submitting';
     setPhase('submitting');
     setSubmitError(null);
 
-    // Stop the timer immediately so it can't fire again.
-    setSecondsLeft(null);
+    const currentAnswers = answersRef.current;
 
-    const answersPayload = answersRef.current.map((a) => {
+    // Build payload — include all questions, even unanswered ones
+    const answersPayload = currentAnswers.map((a) => {
       const entry: { question_id: string; selected_option?: OptionKey; theory_answer?: string } = {
         question_id: a.question_id,
       };
       if (a.selected_option) entry.selected_option = a.selected_option;
-      if (a.theory_answer?.trim()) entry.theory_answer = a.theory_answer.trim();
+      if (a.theory_answer && a.theory_answer.trim()) entry.theory_answer = a.theory_answer.trim();
       return entry;
     });
 
     try {
       await apiClient.post('/api/tests/attempt/submit', {
-        attempt_id: aid,
+        attempt_id: attemptId,
         answers: answersPayload,
       });
-      const resResponse = await apiClient.get(`/api/tests/results/${aid}`);
-      setResults(resResponse.data.data as ResultData);
+
+      // Fetch results
+      const resResponse = await apiClient.get(`/api/tests/results/${attemptId}`);
+      const resultData = resResponse.data.data as ResultData;
+      setResults(resultData);
+
+      // Clear saved progress
       await clearProgress(test.id);
-      phaseRef.current = 'results';
+
       setPhase('results');
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message
         ?? (err instanceof Error ? err.message : 'Submission failed. Please retry.');
       setSubmitError(msg);
-      phaseRef.current = 'active';
-      setPhase('active');
+      setPhase('active'); // return to active so student can retry
     }
-  }, [test.id, setSecondsLeft]);
+  }, [attemptId, test.id]);
 
-  // Keep the ref in sync so onExpire can call the latest version.
-  useEffect(() => { handleSubmitRef.current = handleSubmit; }, [handleSubmit]);
-
-  // ── Derived values ────────────────────────────────────────────────────────
+  // ── Answered count ──────────────────────────────────────────────────────────
   const answeredCount = answers.filter(
-    (a) => a.selected_option || (a.theory_answer && a.theory_answer.trim().length > 0),
+    (a) => a.selected_option || (a.theory_answer && a.theory_answer.trim().length > 0)
   ).length;
+
+  // ── Timer warning colour ────────────────────────────────────────────────────
   const timerWarning = secondsLeft !== null && secondsLeft <= 60;
   const timerCritical = secondsLeft !== null && secondsLeft <= 30;
 
-  // ── Render ────────────────────────────────────────────────────────────────
-
-  if (phase === 'pre') {
+  // ── Render: loading results (completed test, fetching silently) ─────────────
+  if (loadingResults) {
     return (
-      <PreTestScreen
-        test={test}
-        onStart={handleStart}
-        starting={starting}
-        isResume={hasLocalProgress}
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+        <ActivityIndicator size="large" color="#1D4ED8" />
+        <Text style={{ marginTop: 14, fontSize: 14, color: '#6B7280', fontWeight: '500' }}>
+          Loading your results…
+        </Text>
+      </View>
+    );
+  }
+
+  // ── Render: error loading results for a completed test ───────────────────────
+  if (phase === 'error') {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB', padding: 24 }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+        <Text style={{ fontSize: 40, marginBottom: 16 }}>⚠️</Text>
+        <Text style={{ fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 8, textAlign: 'center' }}>
+          Could not load results
+        </Text>
+        <Text style={{ fontSize: 14, color: '#6B7280', textAlign: 'center', marginBottom: 24 }}>
+          There was a problem fetching your results. Please go back and try again.
+        </Text>
+        <TouchableOpacity
+          style={{ backgroundColor: '#1D4ED8', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 32 }}
+          onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 15 }}>← Back to Tests</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // ── Render: pre-test ────────────────────────────────────────────────────────
+  // Safety guard: never show the start/pre screen for a completed test even if
+  // state is somehow inconsistent — show loading spinner while results fetch resolves.
+  if (phase === 'pre') {
+    if (test.attempt_status === 'completed') {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' }}>
+          <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+          <ActivityIndicator size="large" color="#1D4ED8" />
+          <Text style={{ marginTop: 14, fontSize: 14, color: '#6B7280', fontWeight: '500' }}>
+            Loading your results…
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <PreTestScreen test={test} onStart={handleStart} starting={starting} isResume={hasActiveAttempt} />
+    );
+  }
+
+  // ── Render: results ─────────────────────────────────────────────────────────
+  if (phase === 'results' && results) {
+    return (
+      <ResultsScreen
+        testTitle={test.title}
+        results={results}
+        onBack={() => navigation.goBack()}
       />
     );
   }
 
-  if (phase === 'results' && results) {
-    return <ResultsScreen testTitle={test.title} results={results} onBack={() => navigation.goBack()} />;
-  }
-
+  // ── Render: submitting overlay ───────────────────────────────────────────────
   if (phase === 'submitting') {
     return (
       <View style={activeStyles.centered}>
@@ -987,15 +1298,19 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     );
   }
 
+  // ── Render: active test ──────────────────────────────────────────────────────
   const currentQuestion = questions[currentIndex];
   const currentAnswer = answers[currentIndex];
   const isLast = currentIndex === questions.length - 1;
 
   return (
-    <KeyboardAvoidingView style={activeStyles.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={activeStyles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#1D4ED8" />
 
-      {/* Header */}
+      {/* ── Header ── */}
       <View style={activeStyles.header}>
         <View style={activeStyles.headerTop}>
           <Text style={activeStyles.headerTitle} numberOfLines={1}>{test.title}</Text>
@@ -1005,40 +1320,66 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
               timerWarning && activeStyles.timerBadgeWarn,
               timerCritical && activeStyles.timerBadgeCritical,
             ]}>
-              <Text style={[activeStyles.timerText, timerWarning && activeStyles.timerTextWarn]}>
+              <Text style={[
+                activeStyles.timerText,
+                timerWarning && activeStyles.timerTextWarn,
+              ]}>
                 ⏱ {formatTime(secondsLeft)}
               </Text>
             </View>
           )}
         </View>
-        <Text style={activeStyles.progress}>Question {currentIndex + 1} of {questions.length}</Text>
+        <Text style={activeStyles.progress}>
+          Question {currentIndex + 1} of {questions.length}
+        </Text>
       </View>
 
-      {/* Question pills */}
+      {/* ── Question pills ── */}
       <View style={activeStyles.pillsWrapper}>
-        <QuestionPills total={questions.length} current={currentIndex} answers={answers} onJump={goTo} />
+        <QuestionPills
+          total={questions.length}
+          current={currentIndex}
+          answers={answers}
+          onJump={goTo}
+        />
       </View>
 
-      {/* Submit error banner */}
+      {/* ── Submit error banner ── */}
       {submitError && (
         <View style={activeStyles.errorBanner}>
           <Text style={activeStyles.errorText}>⚠️ {submitError}</Text>
-          <TouchableOpacity onPress={() => handleSubmit()} accessibilityRole="button" accessibilityLabel="Retry submission">
+          <TouchableOpacity
+            onPress={() => handleSubmit()}
+            accessibilityRole="button"
+            accessibilityLabel="Retry submission"
+          >
             <Text style={activeStyles.retryText}>Retry</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Question body */}
-      <ScrollView style={activeStyles.questionScroll} contentContainerStyle={activeStyles.questionScrollContent} keyboardShouldPersistTaps="handled">
+      {/* ── Question body ── */}
+      <ScrollView
+        style={activeStyles.questionScroll}
+        contentContainerStyle={activeStyles.questionScrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         {currentQuestion?.question_type === 'mcq' ? (
-          <MCQQuestion question={currentQuestion} answer={currentAnswer} onSelect={handleSelectOption} />
+          <MCQQuestion
+            question={currentQuestion}
+            answer={currentAnswer}
+            onSelect={handleSelectOption}
+          />
         ) : currentQuestion ? (
-          <TheoryQuestion question={currentQuestion} answer={currentAnswer} onChange={handleTheoryChange} />
+          <TheoryQuestion
+            question={currentQuestion}
+            answer={currentAnswer}
+            onChange={handleTheoryChange}
+          />
         ) : null}
       </ScrollView>
 
-      {/* Navigation footer */}
+      {/* ── Navigation footer ── */}
       <View style={activeStyles.footer}>
         <TouchableOpacity
           style={[activeStyles.navBtn, currentIndex === 0 && activeStyles.navBtnDisabled]}
@@ -1047,19 +1388,33 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
           accessibilityRole="button"
           accessibilityLabel="Previous question"
         >
-          <Text style={[activeStyles.navBtnText, currentIndex === 0 && activeStyles.navBtnTextDisabled]}>← Prev</Text>
+          <Text style={[activeStyles.navBtnText, currentIndex === 0 && activeStyles.navBtnTextDisabled]}>
+            ← Prev
+          </Text>
         </TouchableOpacity>
+
         {isLast ? (
-          <TouchableOpacity style={activeStyles.submitBtn} onPress={() => setShowSubmitModal(true)} accessibilityRole="button" accessibilityLabel="Submit test">
+          <TouchableOpacity
+            style={activeStyles.submitBtn}
+            onPress={() => setShowSubmitModal(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Submit test"
+          >
             <Text style={activeStyles.submitBtnText}>Submit Test</Text>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={activeStyles.navBtn} onPress={() => goTo(currentIndex + 1)} accessibilityRole="button" accessibilityLabel="Next question">
+          <TouchableOpacity
+            style={activeStyles.navBtn}
+            onPress={() => goTo(currentIndex + 1)}
+            accessibilityRole="button"
+            accessibilityLabel="Next question"
+          >
             <Text style={activeStyles.navBtnText}>Next →</Text>
           </TouchableOpacity>
         )}
       </View>
 
+      {/* ── Submit confirmation modal ── */}
       <SubmitModal
         visible={showSubmitModal}
         answeredCount={answeredCount}
@@ -1075,28 +1430,97 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
 const activeStyles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F9FAFB' },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB', gap: 16 },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    gap: 16,
+  },
   submittingText: { fontSize: 16, color: '#6B7280', fontWeight: '500' },
-  header: { backgroundColor: '#1D4ED8', paddingTop: 16, paddingBottom: 12, paddingHorizontal: 16 },
-  headerTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  headerTitle: { fontSize: 16, fontWeight: '700', color: '#FFFFFF', flex: 1, marginRight: 12 },
-  timerBadge: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 },
+
+  // Header
+  header: {
+    backgroundColor: '#1D4ED8',
+    paddingTop: 16,
+    paddingBottom: 12,
+    paddingHorizontal: 16,
+  },
+  headerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  headerTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    flex: 1,
+    marginRight: 12,
+  },
+  timerBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
   timerBadgeWarn: { backgroundColor: '#FEF3C7' },
   timerBadgeCritical: { backgroundColor: '#FEE2E2' },
   timerText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
   timerTextWarn: { color: '#92400E' },
   progress: { fontSize: 13, color: 'rgba(255,255,255,0.75)', fontWeight: '500' },
-  pillsWrapper: { backgroundColor: '#FFFFFF', borderBottomWidth: 1, borderBottomColor: '#F3F4F6' },
-  errorBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FEE2E2', paddingHorizontal: 16, paddingVertical: 10 },
+
+  // Pills
+  pillsWrapper: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+
+  // Error banner
+  errorBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
   errorText: { fontSize: 13, color: '#DC2626', flex: 1 },
   retryText: { fontSize: 13, fontWeight: '700', color: '#DC2626', marginLeft: 12 },
+
+  // Question scroll
   questionScroll: { flex: 1 },
   questionScrollContent: { flexGrow: 1, paddingBottom: 16 },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#F3F4F6', gap: 12 },
-  navBtn: { flex: 1, backgroundColor: '#F3F4F6', borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+
+  // Footer navigation
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    gap: 12,
+  },
+  navBtn: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
   navBtnDisabled: { opacity: 0.4 },
   navBtnText: { fontSize: 15, fontWeight: '600', color: '#374151' },
   navBtnTextDisabled: { color: '#9CA3AF' },
-  submitBtn: { flex: 1, backgroundColor: '#1D4ED8', borderRadius: 10, paddingVertical: 13, alignItems: 'center' },
+  submitBtn: {
+    flex: 1,
+    backgroundColor: '#1D4ED8',
+    borderRadius: 10,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
   submitBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
 });
