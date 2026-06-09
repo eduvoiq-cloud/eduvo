@@ -79,7 +79,7 @@ export default function SuperAdminUsersPage() {
         }),
         schoolsApi.list(token),
       ]);
-      setUsers(uRes.data as unknown as UserRow[]);
+      setUsers((uRes.data as unknown as { data: UserRow[] }).data ?? []);
       setSchools(sRes.data);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load users');

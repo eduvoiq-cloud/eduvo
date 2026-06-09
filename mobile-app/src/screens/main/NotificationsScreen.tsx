@@ -165,7 +165,7 @@ export default function NotificationsScreen() {
       ]);
 
       if (notifRes.status === 'fulfilled') {
-        const raw: any[] = notifRes.value.data.data ?? [];
+        const raw: any[] = notifRes.value.data.data?.data ?? [];
         setNotifications(
           raw.map((n) => ({
             id: n.id,

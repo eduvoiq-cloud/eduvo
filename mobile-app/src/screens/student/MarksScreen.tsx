@@ -394,7 +394,7 @@ export default function StudentMarksScreen() {
     setError(null);
     try {
       const response = await apiClient.get('/api/marks');
-      setMarks(response.data.data ?? []);
+      setMarks(response.data.data?.data ?? []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load marks';
       console.warn('[StudentMarks] fetchMarks error:', msg);

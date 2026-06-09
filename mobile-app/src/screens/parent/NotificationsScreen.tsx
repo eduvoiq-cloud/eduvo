@@ -61,7 +61,7 @@ export default function ParentNotificationsScreen() {
   const fetchNotifications = async () => {
     try {
       const response = await apiClient.get('/api/notifications');
-      setNotifications(response.data.data ?? []);
+      setNotifications(response.data.data?.data ?? []);
     } catch (error: any) {
       console.warn('[ParentNotifications] Failed to fetch:', error.message);
     } finally {
