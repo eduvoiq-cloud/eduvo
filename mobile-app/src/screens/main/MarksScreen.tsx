@@ -482,7 +482,7 @@ export default function MarksScreen() {
       ]);
 
       if (marksRes.status === 'fulfilled') {
-        const raw = marksRes.value.data?.data;
+        const raw = marksRes.value.data?.data?.data;
         setMarks(Array.isArray(raw) ? raw : []);
       } else {
         setMarks([]);
