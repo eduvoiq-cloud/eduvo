@@ -560,6 +560,27 @@ function StudentsPageInner() {
 
   const schoolName = user?.name ?? 'School';
 
+  // ── Fee summary totals (aggregated from feeMap) ─────────────────────────
+  const feeMapValues = Object.values(feeMap);
+  const feeSummaryTotalFees = feeMapValues.reduce((sum, r) => {
+    const t = r.total_fee_amount != null ? Number(r.total_fee_amount) : 0;
+    return sum + t;
+  }, 0);
+  const feeSummaryCollected = feeMapValues.reduce((sum, r) => {
+    return sum + (r.amount_paid != null ? Number(r.amount_paid) : 0);
+  }, 0);
+  const feeSummaryDue = feeMapValues.reduce((sum, r) => {
+    const total = r.total_fee_amount != null ? Number(r.total_fee_amount) : 0;
+    const paid = r.amount_paid != null ? Number(r.amount_paid) : 0;
+    const remaining = Math.max(0, total - paid);
+    return sum + remaining;
+  }, 0);
+  const hasFeeData = feeMapValues.length > 0;
+
+  function formatINR(amount: number) {
+    return '₹' + amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
@@ -597,6 +618,60 @@ function StudentsPageInner() {
       {error && (
         <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
       )}
+
+      {/* ── Fee Summary Cards ─────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        {/* Total Fees */}
+        <div className="bg-white rounded-xl border border-blue-100 shadow-sm px-5 py-4 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a5 5 0 00-10 0v2M5 12h14l-1 7H6l-1-7z" />
+            </svg>
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Fees</p>
+            {hasFeeData ? (
+              <p className="text-lg font-semibold text-blue-700 truncate">{formatINR(feeSummaryTotalFees)}</p>
+            ) : (
+              <p className="text-sm text-gray-400 italic">No fee data</p>
+            )}
+          </div>
+        </div>
+
+        {/* Fees Collected */}
+        <div className="bg-white rounded-xl border border-green-100 shadow-sm px-5 py-4 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fees Collected</p>
+            {hasFeeData ? (
+              <p className="text-lg font-semibold text-green-700 truncate">{formatINR(feeSummaryCollected)}</p>
+            ) : (
+              <p className="text-sm text-gray-400 italic">No fee data</p>
+            )}
+          </div>
+        </div>
+
+        {/* Fees Due */}
+        <div className="bg-white rounded-xl border border-red-100 shadow-sm px-5 py-4 flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
+            <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fees Due</p>
+            {hasFeeData ? (
+              <p className="text-lg font-semibold text-red-600 truncate">{formatINR(feeSummaryDue)}</p>
+            ) : (
+              <p className="text-sm text-gray-400 italic">No fee data</p>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* ── Filters ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 mb-4">

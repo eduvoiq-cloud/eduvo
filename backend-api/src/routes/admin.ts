@@ -1640,4 +1640,240 @@ router.post('/request-deletion', async (req: Request, res: Response) => {
   sendSuccess(res, null, 'Deletion request submitted. A super admin will contact you within 7 business days.');
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MONTHLY PERFORMANCE SNAPSHOT  (schooladmin only — never exposed to teachers,
+// students, or parents; the entire /api/admin prefix already requires schooladmin)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/admin/performance/monthly-snapshot?year=2026&month=6
+ *
+ * Returns three data sets for the selected calendar month:
+ *   1. classRankings   — all classes ranked by average % (marks from that month)
+ *   2. topStudents     — top 10 students school-wide by average %
+ *   3. bottomStudents  — bottom 10 students school-wide by average %
+ *
+ * Only students / classes that have at least one mark entry in the selected
+ * month are included.  Students with no marks that month are excluded entirely.
+ *
+ * Both the `marks` table (manual entries) and `test_attempts` scores are used
+ * to compute a student's marks for the month.  Test attempt scores are already
+ * mirrored into the `marks` table with notes = 'auto:attempt:...', so a single
+ * pass over `marks` is sufficient — no double-counting.
+ *
+ * Ties: students / classes with the same average receive the same rank.
+ */
+router.get('/performance/monthly-snapshot', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id!;
+
+  // ── Parse year / month ────────────────────────────────────────────────────
+  const now = new Date();
+  const rawYear  = parseInt((req.query.year  as string) ?? String(now.getFullYear()),  10);
+  const rawMonth = parseInt((req.query.month as string) ?? String(now.getMonth() + 1), 10);
+
+  if (
+    isNaN(rawYear) || rawYear < 2000 || rawYear > 2100 ||
+    isNaN(rawMonth) || rawMonth < 1 || rawMonth > 12
+  ) {
+    sendError(res, 'Invalid year or month parameter', 400);
+    return;
+  }
+
+  // Build inclusive date range for the selected month
+  const monthStart = new Date(rawYear, rawMonth - 1, 1);
+  const monthEnd   = new Date(rawYear, rawMonth, 1); // exclusive upper bound
+
+  const startIso = monthStart.toISOString();
+  const endIso   = monthEnd.toISOString();
+
+  // ── Fetch all non-deleted students for this school ────────────────────────
+  const { data: students, error: studErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, class_name, section')
+    .eq('school_id', schoolId)
+    .eq('is_deleted', false);
+
+  if (studErr) { sendError(res, studErr.message, 500); return; }
+  if (!students || students.length === 0) {
+    sendSuccess(res, { classRankings: [], topStudents: [], bottomStudents: [], year: rawYear, month: rawMonth });
+    return;
+  }
+
+  const studentIds = students.map((s: { id: string }) => s.id);
+
+  // ── Fetch all marks for this school in the selected month ─────────────────
+  // Supabase .in() supports up to ~1000 IDs directly; for very large schools
+  // we chunk, but most schools stay well under that.
+  const CHUNK = 900;
+  let allMarks: Array<{ student_id: string; score: number; max_score: number }> = [];
+
+  for (let i = 0; i < studentIds.length; i += CHUNK) {
+    const chunk = studentIds.slice(i, i + CHUNK);
+    const { data: chunkMarks, error: marksErr } = await supabaseAdmin
+      .from('marks')
+      .select('student_id, score, max_score')
+      .in('student_id', chunk)
+      .gte('created_at', startIso)
+      .lt('created_at', endIso);
+
+    if (marksErr) { sendError(res, marksErr.message, 500); return; }
+    if (chunkMarks) allMarks = allMarks.concat(chunkMarks);
+  }
+
+  // ── Aggregate per-student totals ──────────────────────────────────────────
+  type StudentAgg = {
+    totalScore: number;
+    totalMax:   number;
+    markCount:  number;
+  };
+
+  const studentAgg = new Map<string, StudentAgg>();
+
+  for (const m of allMarks) {
+    const existing = studentAgg.get(m.student_id);
+    if (existing) {
+      existing.totalScore += Number(m.score);
+      existing.totalMax   += Number(m.max_score);
+      existing.markCount  += 1;
+    } else {
+      studentAgg.set(m.student_id, {
+        totalScore: Number(m.score),
+        totalMax:   Number(m.max_score),
+        markCount:  1,
+      });
+    }
+  }
+
+  // ── Build student result rows (exclude students with no marks) ─────────────
+  type StudentResultRow = {
+    student_id:  string;
+    full_name:   string;
+    class_name:  string;
+    section:     string | null;
+    avg_pct:     number;
+    mark_count:  number;
+    rank:        number;
+  };
+
+  const studentResults: StudentResultRow[] = [];
+
+  const studentMap = new Map(
+    (students as Array<{ id: string; full_name: string; class_name: string; section: string | null }>)
+      .map((s) => [s.id, s])
+  );
+
+  for (const [sid, agg] of studentAgg.entries()) {
+    if (agg.totalMax === 0) continue; // safety guard against div-by-zero
+    const s = studentMap.get(sid);
+    if (!s) continue;
+
+    studentResults.push({
+      student_id: sid,
+      full_name:  s.full_name,
+      class_name: s.class_name,
+      section:    s.section ?? null,
+      avg_pct:    Math.round((agg.totalScore / agg.totalMax) * 1000) / 10, // 1dp
+      mark_count: agg.markCount,
+      rank:       0, // filled below
+    });
+  }
+
+  // Sort descending by average percentage
+  studentResults.sort((a, b) => b.avg_pct - a.avg_pct);
+
+  // Assign ranks (ties share the same rank)
+  let currentRank = 1;
+  for (let i = 0; i < studentResults.length; i++) {
+    if (i > 0 && studentResults[i].avg_pct < studentResults[i - 1].avg_pct) {
+      currentRank = i + 1;
+    }
+    studentResults[i].rank = currentRank;
+  }
+
+  const topStudents    = studentResults.slice(0, 10);
+  const bottomStudents = studentResults.slice(-10).reverse(); // worst → slightly better
+
+  // Re-rank bottom students from the bottom (rank 1 = worst)
+  const bottomRanked = [...bottomStudents];
+  let bRank = 1;
+  for (let i = 0; i < bottomRanked.length; i++) {
+    if (i > 0 && bottomRanked[i].avg_pct > bottomRanked[i - 1].avg_pct) {
+      bRank = i + 1;
+    }
+    bottomRanked[i] = { ...bottomRanked[i], rank: bRank };
+  }
+
+  // ── Aggregate per-class totals ────────────────────────────────────────────
+  type ClassAgg = {
+    totalScore: number;
+    totalMax:   number;
+    examCount:  number;   // unique (student, mark) tuples = total mark entries
+    studentSet: Set<string>;
+  };
+
+  const classAgg = new Map<string, ClassAgg>();
+
+  for (const m of allMarks) {
+    const s = studentMap.get(m.student_id);
+    if (!s) continue;
+    const key = `${s.class_name}||${s.section ?? ''}`;
+    const existing = classAgg.get(key);
+    if (existing) {
+      existing.totalScore += Number(m.score);
+      existing.totalMax   += Number(m.max_score);
+      existing.examCount  += 1;
+      existing.studentSet.add(m.student_id);
+    } else {
+      classAgg.set(key, {
+        totalScore: Number(m.score),
+        totalMax:   Number(m.max_score),
+        examCount:  1,
+        studentSet: new Set([m.student_id]),
+      });
+    }
+  }
+
+  type ClassResultRow = {
+    class_name:    string;
+    section:       string | null;
+    avg_pct:       number;
+    exam_count:    number;
+    student_count: number;
+    rank:          number;
+  };
+
+  const classResults: ClassResultRow[] = [];
+
+  for (const [key, agg] of classAgg.entries()) {
+    if (agg.totalMax === 0) continue;
+    const [class_name, section] = key.split('||');
+    classResults.push({
+      class_name,
+      section:       section || null,
+      avg_pct:       Math.round((agg.totalScore / agg.totalMax) * 1000) / 10,
+      exam_count:    agg.examCount,
+      student_count: agg.studentSet.size,
+      rank:          0,
+    });
+  }
+
+  classResults.sort((a, b) => b.avg_pct - a.avg_pct);
+
+  let cRank = 1;
+  for (let i = 0; i < classResults.length; i++) {
+    if (i > 0 && classResults[i].avg_pct < classResults[i - 1].avg_pct) {
+      cRank = i + 1;
+    }
+    classResults[i].rank = cRank;
+  }
+
+  sendSuccess(res, {
+    year:          rawYear,
+    month:         rawMonth,
+    classRankings: classResults,
+    topStudents,
+    bottomStudents: bottomRanked,
+  });
+});
+
 export default router;
