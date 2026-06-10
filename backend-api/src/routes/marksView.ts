@@ -188,10 +188,15 @@ router.get('/class', async (req: Request, res: Response) => {
     const studentMarks = marksByStudent[s.id] ?? [];
     const submissionCount = attemptCountByStudent[s.id] ?? 0;
 
-    // When filtering by exam_type, only count marks for students who have
-    // actually submitted a test. Students with 0 submissions should show 0
-    // marks regardless of any stale manually-entered marks in the marks table.
-    const effectiveMarks = (exam_type && submissionCount === 0) ? [] : studentMarks;
+    // Exam types that are sourced from MCQ test submissions (test_attempts table).
+    // For these, suppress manually-entered marks when the student has 0 submissions
+    // — it means they haven't taken the test yet and any mark in the table is stale.
+    // For manually-entered exam types (final, assignment, project) we ALWAYS show
+    // the marks from the marks table regardless of test_submissions count.
+    const TEST_BASED_EXAM_TYPES = new Set(['quiz', 'unit_test', 'mid_term', 'midterm', 'class_test']);
+    const isTestBasedFilter = exam_type && TEST_BASED_EXAM_TYPES.has(exam_type);
+
+    const effectiveMarks = (isTestBasedFilter && submissionCount === 0) ? [] : studentMarks;
 
     const totalObtained = effectiveMarks.reduce(
       (sum: number, m: { score: number }) => sum + Number(m.score), 0
@@ -200,14 +205,13 @@ router.get('/class', async (req: Request, res: Response) => {
       (sum: number, m: { max_score: number }) => sum + Number(m.max_score), 0
     );
 
-    // When exam_type is filtered and student hasn't submitted, derive max from
-    // the class reference (use raw marks max_score from their record if available,
-    // so we can show 0/100 rather than just —).
-    const refMax = (exam_type && submissionCount === 0 && studentMarks.length > 0)
+    // When a test-based exam_type is filtered and student hasn't submitted, derive
+    // max from the class reference so we can show 0/100 rather than just —.
+    const refMax = (isTestBasedFilter && submissionCount === 0 && studentMarks.length > 0)
       ? studentMarks.reduce((sum: number, m: { max_score: number }) => sum + Number(m.max_score), 0)
       : totalMax;
 
-    const percentage = (exam_type && submissionCount === 0)
+    const percentage = (isTestBasedFilter && submissionCount === 0)
       ? (refMax > 0 ? 0 : null)
       : (totalMax > 0 ? Math.round((totalObtained / totalMax) * 100) : null);
 
