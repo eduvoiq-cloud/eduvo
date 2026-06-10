@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { schoolsApi } from '@/lib/api';
+import { getToken } from '@/lib/session';
 import type { AppRole } from '@/lib/api';
 
 // ── Nav items per role ────────────────────────────────────────────────────────
@@ -68,6 +70,20 @@ export default function Navbar() {
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [schoolName, setSchoolName] = useState<string | null>(null);
+
+  // Fetch the school name for roles that belong to a school
+  useEffect(() => {
+    const rolesWithSchool: AppRole[] = ['schooladmin', 'teacher'];
+    if (!user || !user.school_id || !rolesWithSchool.includes(user.role)) return;
+
+    const token = getToken();
+    if (!token) return;
+
+    schoolsApi.get(token, user.school_id)
+      .then((res) => setSchoolName(res.data.name))
+      .catch(() => { /* silently ignore — school name is decorative */ });
+  }, [user]);
 
   if (!user) return null;
 
@@ -78,7 +94,7 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
 
-          {/* Logo + desktop nav */}
+          {/* Logo + school name + desktop nav */}
           <div className="flex items-center gap-8">
             <Link href="/" className="flex items-center gap-2 shrink-0">
               <Image
@@ -93,6 +109,16 @@ export default function Navbar() {
                 eduvo
               </span>
             </Link>
+
+            {/* School name badge — only shown for schooladmin and teacher */}
+            {schoolName && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-100 text-indigo-700 text-xs font-semibold tracking-wide">
+                <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l9-9 9 9M5 10v9a1 1 0 001 1h4v-4h4v4h4a1 1 0 001-1v-9" />
+                </svg>
+                {schoolName}
+              </span>
+            )}
 
             {/* Desktop nav links */}
             <nav className="hidden md:flex items-center gap-1">
@@ -157,6 +183,15 @@ export default function Navbar() {
       {mobileOpen && navItems.length > 0 && (
         <div className="md:hidden border-t border-gray-100 bg-white">
           <nav className="px-4 py-3 space-y-1">
+            {/* School name in mobile menu */}
+            {schoolName && (
+              <div className="flex items-center gap-1.5 px-3 py-2 mb-1 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-semibold">
+                <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l9-9 9 9M5 10v9a1 1 0 001 1h4v-4h4v4h4a1 1 0 001-1v-9" />
+                </svg>
+                {schoolName}
+              </div>
+            )}
             {navItems.map((item) => {
               const active = pathname === item.href || pathname.startsWith(item.href + '/');
               return (
