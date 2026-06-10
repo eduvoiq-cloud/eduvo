@@ -1039,171 +1039,494 @@ router.put('/settings', async (req: Request, res: Response) => {
 
 // ── GET /api/admin/export ─────────────────────────────────────────────────────
 /**
- * Export all school data as a ZIP containing:
- *   students.csv, attendance.csv, marks.csv, test_results.csv
+ * Export all school data as a clean, human-readable Excel (.xlsx) file.
  *
- * Uses only Node.js built-ins (zlib + Buffer) — no extra dependencies.
- * The ZIP is assembled manually using the DEFLATE-stored (method=0) format
- * so it works without installing archiver or jszip.
+ * Sheets:
+ *   1. Students Directory   — Roll No, Name, Class, Section, Parent Phone
+ *   2. Marks Summary        — per-student marks with percentage, clean exam type labels
+ *   3. Attendance Summary   — per-student totals + %, red highlight below 75%
+ *   4. Class Performance    — one row per class with avg/high/low/below-40% stats
+ *
+ * Uses exceljs (already in dependencies).
  */
 router.get('/export', async (req: Request, res: Response) => {
+  const ExcelJS = await import('exceljs');
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
 
-  // ── Fetch all data ──────────────────────────────────────────────────────────
-  const [studentsRes, attendanceRes, marksRes, testsRes] = await Promise.all([
-    supabaseAdmin
-      .from('students')
-      .select('id, full_name, class_name, section, roll_number, phone, photo_url, is_deleted, created_at')
-      .eq('school_id', schoolId),
-    supabaseAdmin
-      .from('attendance')
-      .select('id, student_id, date, status, source, created_at')
-      .in(
-        'student_id',
-        (await supabaseAdmin.from('students').select('id').eq('school_id', schoolId))
-          .data?.map((s: { id: string }) => s.id) ?? []
-      ),
-    supabaseAdmin
-      .from('marks')
-      .select('id, student_id, subject, score, max_score, term, exam_type, created_at')
-      .in(
-        'student_id',
-        (await supabaseAdmin.from('students').select('id').eq('school_id', schoolId))
-          .data?.map((s: { id: string }) => s.id) ?? []
-      ),
-    supabaseAdmin
-      .from('tests')
-      .select('id, title, subject, class_name, section, term, date, created_at')
-      .eq('school_id', schoolId),
+  // ── Fetch school name ───────────────────────────────────────────────────────
+  const { data: schoolRow } = await supabaseAdmin
+    .from('schools')
+    .select('name')
+    .eq('id', schoolId)
+    .maybeSingle();
+  const schoolName = (schoolRow as Record<string, unknown> | null)?.name as string ?? 'School';
+
+  // ── Fetch all students (active only) ───────────────────────────────────────
+  const { data: students } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, class_name, section, roll_number, phone, phone_number')
+    .eq('school_id', schoolId)
+    .eq('is_deleted', false)
+    .order('class_name')
+    .order('section')
+    .order('roll_number');
+
+  const studentList = (students ?? []) as {
+    id: string;
+    full_name: string;
+    class_name: string;
+    section: string;
+    roll_number: string | null;
+    phone: string | null;
+    phone_number: string | null;
+  }[];
+
+  const studentIds = studentList.map((s) => s.id);
+
+  // Build a lookup map: student_id → student row
+  const studentMap = new Map(studentList.map((s) => [s.id, s]));
+
+  // ── Fetch marks & attendance in parallel ────────────────────────────────────
+  const [marksRes, attendanceRes] = await Promise.all([
+    studentIds.length > 0
+      ? supabaseAdmin
+          .from('marks')
+          .select('student_id, subject, score, max_score, exam_type, term')
+          .in('student_id', studentIds)
+      : Promise.resolve({ data: [] }),
+    studentIds.length > 0
+      ? supabaseAdmin
+          .from('attendance')
+          .select('student_id, date, status')
+          .in('student_id', studentIds)
+      : Promise.resolve({ data: [] }),
   ]);
 
-  /** Convert an array of objects to a CSV string. */
-  function toCsv(rows: Record<string, unknown>[]): string {
-    if (!rows || rows.length === 0) return '';
-    const headers = Object.keys(rows[0]);
-    const escape  = (v: unknown) => {
-      const s = v == null ? '' : String(v);
-      return s.includes(',') || s.includes('"') || s.includes('\n')
-        ? `"${s.replace(/"/g, '""')}"`
-        : s;
+  const marksList = (marksRes.data ?? []) as {
+    student_id: string;
+    subject: string;
+    score: number;
+    max_score: number;
+    exam_type: string;
+    term: string;
+  }[];
+
+  const attendanceList = (attendanceRes.data ?? []) as {
+    student_id: string;
+    date: string;
+    status: string;
+  }[];
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  const exportDate = new Date().toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  });
+
+  /** Capitalise exam_type codes into readable labels. */
+  function examTypeLabel(raw: string): string {
+    const map: Record<string, string> = {
+      final:        'Final Exam',
+      final_exam:   'Final Exam',
+      mid_term:     'Mid Term',
+      midterm:      'Mid Term',
+      class_test:   'Class Test',
+      classtest:    'Class Test',
+      unit_test:    'Unit Test',
+      unittest:     'Unit Test',
+      quarterly:    'Quarterly',
+      half_yearly:  'Half Yearly',
+      halfyearly:   'Half Yearly',
+      annual:       'Annual Exam',
     };
-    return [
-      headers.join(','),
-      ...rows.map((r) => headers.map((h) => escape(r[h])).join(',')),
-    ].join('\n');
+    return map[raw?.toLowerCase?.()] ?? raw?.replace(/_/g, ' ')?.replace(/\b\w/g, (c) => c.toUpperCase()) ?? '';
   }
 
-  const files: { name: string; content: Buffer }[] = [
-    { name: 'students.csv',     content: Buffer.from(toCsv(studentsRes.data  ?? []), 'utf8') },
-    { name: 'attendance.csv',   content: Buffer.from(toCsv(attendanceRes.data ?? []), 'utf8') },
-    { name: 'marks.csv',        content: Buffer.from(toCsv(marksRes.data      ?? []), 'utf8') },
-    { name: 'test_results.csv', content: Buffer.from(toCsv(testsRes.data      ?? []), 'utf8') },
-  ];
+  /** Shared header style — bold, white text, dark blue background. */
+  const headerFill: ExcelJS.Fill = {
+    type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' },
+  };
+  const headerFont: Partial<ExcelJS.Font> = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+  const headerAlignment: Partial<ExcelJS.Alignment> = { vertical: 'middle', horizontal: 'center' };
 
-  // ── Build a minimal ZIP (store method, no compression) ─────────────────────
-  // ZIP spec: https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
-  const localHeaders: Buffer[] = [];
-  const centralDirs:  Buffer[] = [];
-  let   offset = 0;
-
-  const crc32Table = (() => {
-    const t = new Uint32Array(256);
-    for (let i = 0; i < 256; i++) {
-      let c = i;
-      for (let j = 0; j < 8; j++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-      t[i] = c;
+  /** Apply header style to a row. */
+  function styleHeaderRow(row: ExcelJS.Row, colCount: number): void {
+    row.height = 22;
+    for (let c = 1; c <= colCount; c++) {
+      const cell = row.getCell(c);
+      cell.fill      = headerFill;
+      cell.font      = headerFont;
+      cell.alignment = headerAlignment;
+      cell.border    = {
+        bottom: { style: 'thin', color: { argb: 'FFB0C4DE' } },
+      };
     }
-    return t;
-  })();
-
-  function crc32(buf: Buffer): number {
-    let crc = 0xffffffff;
-    for (let i = 0; i < buf.length; i++) crc = crc32Table[(crc ^ buf[i]) & 0xff] ^ (crc >>> 8);
-    return (crc ^ 0xffffffff) >>> 0;
   }
 
-  const dosDate = (() => {
-    const d = new Date();
-    return ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
-  })();
-  const dosTime = (() => {
-    const d = new Date();
-    return (d.getHours() << 11) | (d.getMinutes() << 5) | Math.floor(d.getSeconds() / 2);
-  })();
+  /** Write school name + export date banner into rows 1–2, return next row index. */
+  function writeBanner(ws: ExcelJS.Worksheet, colCount: number): number {
+    ws.mergeCells(1, 1, 1, Math.max(colCount, 4));
+    const titleCell = ws.getCell('A1');
+    titleCell.value     = schoolName;
+    titleCell.font      = { bold: true, size: 14, color: { argb: 'FF1E3A5F' } };
+    titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
 
-  for (const file of files) {
-    const nameBytes = Buffer.from(file.name, 'utf8');
-    const crc       = crc32(file.content);
-    const size      = file.content.length;
+    const dateCell = ws.getCell(1, colCount);
+    dateCell.value     = `Exported: ${exportDate}`;
+    dateCell.font      = { italic: true, size: 10, color: { argb: 'FF666666' } };
+    dateCell.alignment = { horizontal: 'right', vertical: 'middle' };
 
-    // Local file header (30 bytes + name)
-    const local = Buffer.alloc(30 + nameBytes.length);
-    local.writeUInt32LE(0x04034b50, 0);  // signature
-    local.writeUInt16LE(20, 4);           // version needed
-    local.writeUInt16LE(0, 6);            // flags
-    local.writeUInt16LE(0, 8);            // compression (stored)
-    local.writeUInt16LE(dosTime, 10);
-    local.writeUInt16LE(dosDate, 12);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(size, 18);        // compressed size
-    local.writeUInt32LE(size, 22);        // uncompressed size
-    local.writeUInt16LE(nameBytes.length, 26);
-    local.writeUInt16LE(0, 28);           // extra field length
-    nameBytes.copy(local, 30);
-
-    localHeaders.push(local);
-
-    // Central directory entry (46 bytes + name)
-    const central = Buffer.alloc(46 + nameBytes.length);
-    central.writeUInt32LE(0x02014b50, 0); // signature
-    central.writeUInt16LE(20, 4);          // version made by
-    central.writeUInt16LE(20, 6);          // version needed
-    central.writeUInt16LE(0, 8);           // flags
-    central.writeUInt16LE(0, 10);          // compression
-    central.writeUInt16LE(dosTime, 12);
-    central.writeUInt16LE(dosDate, 14);
-    central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(size, 20);
-    central.writeUInt32LE(size, 24);
-    central.writeUInt16LE(nameBytes.length, 28);
-    central.writeUInt16LE(0, 30);          // extra
-    central.writeUInt16LE(0, 32);          // comment
-    central.writeUInt16LE(0, 34);          // disk start
-    central.writeUInt16LE(0, 36);          // internal attr
-    central.writeUInt32LE(0, 38);          // external attr
-    central.writeUInt32LE(offset, 42);     // local header offset
-    nameBytes.copy(central, 46);
-
-    centralDirs.push(central);
-    offset += local.length + size;
+    ws.getRow(1).height = 24;
+    ws.getRow(2).height = 6; // spacer
+    return 3; // data starts at row 3
   }
 
-  const centralDirBuf = Buffer.concat(centralDirs);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(0, 4);
-  eocd.writeUInt16LE(0, 6);
-  eocd.writeUInt16LE(files.length, 8);
-  eocd.writeUInt16LE(files.length, 10);
-  eocd.writeUInt32LE(centralDirBuf.length, 12);
-  eocd.writeUInt32LE(offset, 16);
-  eocd.writeUInt16LE(0, 20);
+  // ── Build Workbook ──────────────────────────────────────────────────────────
+  const wb = new ExcelJS.Workbook();
+  wb.creator  = 'Eduvo';
+  wb.created  = new Date();
+  wb.modified = new Date();
 
-  const parts: Buffer[] = [];
-  for (let i = 0; i < files.length; i++) {
-    parts.push(localHeaders[i], files[i].content);
+  // ════════════════════════════════════════════════════════════════════════════
+  // SHEET 1 — Students Directory
+  // ════════════════════════════════════════════════════════════════════════════
+  {
+    const ws = wb.addWorksheet('Students Directory');
+    ws.views = [{ state: 'frozen', ySplit: 3 }];
+
+    const cols = [
+      { header: 'Roll Number',   key: 'roll',    width: 14 },
+      { header: 'Student Name',  key: 'name',    width: 28 },
+      { header: 'Class',         key: 'class',   width: 10 },
+      { header: 'Section',       key: 'section', width: 10 },
+      { header: 'Parent Phone',  key: 'phone',   width: 18 },
+    ];
+    ws.columns = cols.map((c) => ({ key: c.key, width: c.width }));
+
+    const startRow = writeBanner(ws, cols.length);
+    const hRow = ws.getRow(startRow);
+    hRow.values = ['', ...cols.map((c) => c.header)]; // offset by 1 for row number
+    hRow.values = cols.map((c) => c.header);
+    styleHeaderRow(hRow, cols.length);
+
+    // Group by class+section, insert blank row between groups
+    let lastGroup = '';
+    let dataRowIdx = startRow + 1;
+
+    for (const s of studentList) {
+      const group = `${s.class_name}||${s.section}`;
+      if (lastGroup && group !== lastGroup) {
+        // blank separator row
+        ws.getRow(dataRowIdx).height = 8;
+        dataRowIdx++;
+      }
+      lastGroup = group;
+
+      const row = ws.getRow(dataRowIdx);
+      row.values = [
+        s.roll_number ?? '',
+        s.full_name,
+        s.class_name,
+        s.section,
+        s.phone_number ?? s.phone ?? '',
+      ];
+      row.height = 18;
+
+      // Zebra striping within each group
+      const fillColor = dataRowIdx % 2 === 0 ? 'FFF0F4FA' : 'FFFFFFFF';
+      for (let c = 1; c <= cols.length; c++) {
+        const cell = row.getCell(c);
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+        cell.font      = { size: 10 };
+        cell.alignment = { vertical: 'middle', horizontal: c === 2 ? 'left' : 'center' };
+      }
+      dataRowIdx++;
+    }
   }
-  parts.push(centralDirBuf, eocd);
 
-  const zipBuffer = Buffer.concat(parts);
+  // ════════════════════════════════════════════════════════════════════════════
+  // SHEET 2 — Marks Summary
+  // ════════════════════════════════════════════════════════════════════════════
+  {
+    const ws = wb.addWorksheet('Marks Summary');
+    ws.views = [{ state: 'frozen', ySplit: 3 }];
 
-  await logAudit(adminId, 'DATA_EXPORTED', 'schools', { school_id: schoolId });
+    const cols = [
+      { header: 'Roll Number',     width: 14 },
+      { header: 'Student Name',    width: 28 },
+      { header: 'Class',           width: 10 },
+      { header: 'Section',         width: 10 },
+      { header: 'Subject',         width: 18 },
+      { header: 'Exam Type',       width: 18 },
+      { header: 'Marks Obtained',  width: 16 },
+      { header: 'Maximum Marks',   width: 16 },
+      { header: 'Percentage',      width: 14 },
+      { header: 'Term',            width: 14 },
+    ];
+    ws.columns = cols.map((c, i) => ({ key: `c${i}`, width: c.width }));
 
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', `attachment; filename="school-export-${schoolId}.zip"`);
-  res.setHeader('Content-Length', zipBuffer.length);
-  res.end(zipBuffer);
+    const startRow = writeBanner(ws, cols.length);
+    const hRow = ws.getRow(startRow);
+    hRow.values = cols.map((c) => c.header);
+    styleHeaderRow(hRow, cols.length);
+
+    // Sort marks by class → section → student name → subject
+    const sortedMarks = [...marksList].sort((a, b) => {
+      const sa = studentMap.get(a.student_id);
+      const sb = studentMap.get(b.student_id);
+      if (!sa || !sb) return 0;
+      return (
+        sa.class_name.localeCompare(sb.class_name) ||
+        sa.section.localeCompare(sb.section) ||
+        sa.full_name.localeCompare(sb.full_name) ||
+        a.subject.localeCompare(b.subject)
+      );
+    });
+
+    let dataRowIdx = startRow + 1;
+    for (const m of sortedMarks) {
+      const s = studentMap.get(m.student_id);
+      if (!s) continue;
+
+      const pct = m.max_score > 0
+        ? Math.round((m.score / m.max_score) * 1000) / 10
+        : 0;
+
+      const row = ws.getRow(dataRowIdx);
+      row.values = [
+        s.roll_number ?? '',
+        s.full_name,
+        s.class_name,
+        s.section,
+        m.subject,
+        examTypeLabel(m.exam_type),
+        m.score,
+        m.max_score,
+        pct,
+        m.term ?? '',
+      ];
+      row.height = 18;
+
+      const fillColor = dataRowIdx % 2 === 0 ? 'FFF0F4FA' : 'FFFFFFFF';
+      for (let c = 1; c <= cols.length; c++) {
+        const cell = row.getCell(c);
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+        cell.font      = { size: 10 };
+        cell.alignment = {
+          vertical: 'middle',
+          horizontal: (c === 2 || c === 5 || c === 6) ? 'left' : 'center',
+        };
+      }
+
+      // Colour percentage cell: red if < 40, orange if < 75
+      const pctCell = row.getCell(9);
+      pctCell.numFmt = '0.0"%"';
+      if (pct < 40) {
+        pctCell.font = { size: 10, bold: true, color: { argb: 'FFCC0000' } };
+      } else if (pct < 75) {
+        pctCell.font = { size: 10, color: { argb: 'FFE06C00' } };
+      } else {
+        pctCell.font = { size: 10, color: { argb: 'FF1A7A1A' } };
+      }
+
+      dataRowIdx++;
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // SHEET 3 — Attendance Summary
+  // ════════════════════════════════════════════════════════════════════════════
+  {
+    const ws = wb.addWorksheet('Attendance Summary');
+    ws.views = [{ state: 'frozen', ySplit: 3 }];
+
+    const cols = [
+      { header: 'Roll Number',    width: 14 },
+      { header: 'Student Name',   width: 28 },
+      { header: 'Class',          width: 10 },
+      { header: 'Section',        width: 10 },
+      { header: 'Total Days',     width: 12 },
+      { header: 'Days Present',   width: 14 },
+      { header: 'Days Absent',    width: 13 },
+      { header: 'Attendance %',   width: 14 },
+    ];
+    ws.columns = cols.map((c, i) => ({ key: `c${i}`, width: c.width }));
+
+    const startRow = writeBanner(ws, cols.length);
+    const hRow = ws.getRow(startRow);
+    hRow.values = cols.map((c) => c.header);
+    styleHeaderRow(hRow, cols.length);
+
+    // Aggregate attendance per student
+    const attMap = new Map<string, { total: number; present: number }>();
+    for (const a of attendanceList) {
+      const existing = attMap.get(a.student_id) ?? { total: 0, present: 0 };
+      existing.total++;
+      if (a.status === 'present' || a.status === 'late') existing.present++;
+      attMap.set(a.student_id, existing);
+    }
+
+    let dataRowIdx = startRow + 1;
+    for (const s of studentList) {
+      const att     = attMap.get(s.id) ?? { total: 0, present: 0 };
+      const absent  = att.total - att.present;
+      const pct     = att.total > 0 ? Math.round((att.present / att.total) * 1000) / 10 : 0;
+      const lowAtt  = att.total > 0 && pct < 75;
+
+      const row = ws.getRow(dataRowIdx);
+      row.values = [
+        s.roll_number ?? '',
+        s.full_name,
+        s.class_name,
+        s.section,
+        att.total,
+        att.present,
+        absent,
+        pct,
+      ];
+      row.height = 18;
+
+      const fillColor = lowAtt ? 'FFFFF0F0' : (dataRowIdx % 2 === 0 ? 'FFF0F4FA' : 'FFFFFFFF');
+      for (let c = 1; c <= cols.length; c++) {
+        const cell = row.getCell(c);
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+        cell.font      = { size: 10, color: { argb: lowAtt ? 'FF990000' : 'FF000000' } };
+        cell.alignment = { vertical: 'middle', horizontal: c === 2 ? 'left' : 'center' };
+      }
+
+      // Percentage cell formatting
+      const pctCell = row.getCell(8);
+      pctCell.numFmt = '0.0"%"';
+      if (lowAtt) {
+        pctCell.font = { size: 10, bold: true, color: { argb: 'FFCC0000' } };
+      }
+
+      dataRowIdx++;
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════════
+  // SHEET 4 — Class Performance Summary
+  // ════════════════════════════════════════════════════════════════════════════
+  {
+    const ws = wb.addWorksheet('Class Performance');
+    ws.views = [{ state: 'frozen', ySplit: 3 }];
+
+    const cols = [
+      { header: 'Class',               width: 12 },
+      { header: 'Section',             width: 10 },
+      { header: 'Total Students',      width: 16 },
+      { header: 'Avg Marks %',         width: 14 },
+      { header: 'Highest Score %',     width: 16 },
+      { header: 'Lowest Score %',      width: 15 },
+      { header: 'Students Below 40%',  width: 18 },
+    ];
+    ws.columns = cols.map((c, i) => ({ key: `c${i}`, width: c.width }));
+
+    const startRow = writeBanner(ws, cols.length);
+    const hRow = ws.getRow(startRow);
+    hRow.values = cols.map((c) => c.header);
+    styleHeaderRow(hRow, cols.length);
+
+    // Build per-class stats from marks
+    type ClassStats = {
+      classKey: string;
+      class_name: string;
+      section: string;
+      studentSet: Set<string>;
+      scores: number[];   // percentages per mark row
+    };
+
+    const classMap = new Map<string, ClassStats>();
+
+    // Initialise every class from students list (so classes with no marks still appear)
+    for (const s of studentList) {
+      const key = `${s.class_name}||${s.section}`;
+      if (!classMap.has(key)) {
+        classMap.set(key, {
+          classKey:   key,
+          class_name: s.class_name,
+          section:    s.section,
+          studentSet: new Set(),
+          scores:     [],
+        });
+      }
+      classMap.get(key)!.studentSet.add(s.id);
+    }
+
+    for (const m of marksList) {
+      const s = studentMap.get(m.student_id);
+      if (!s) continue;
+      const key = `${s.class_name}||${s.section}`;
+      const entry = classMap.get(key);
+      if (!entry) continue;
+      if (m.max_score > 0) {
+        entry.scores.push((m.score / m.max_score) * 100);
+      }
+    }
+
+    // Sort by avg marks descending
+    const classRows = [...classMap.values()].sort((a, b) => {
+      const avgA = a.scores.length ? a.scores.reduce((x, y) => x + y, 0) / a.scores.length : 0;
+      const avgB = b.scores.length ? b.scores.reduce((x, y) => x + y, 0) / b.scores.length : 0;
+      return avgB - avgA;
+    });
+
+    let dataRowIdx = startRow + 1;
+    for (const cl of classRows) {
+      const avg     = cl.scores.length ? cl.scores.reduce((a, b) => a + b, 0) / cl.scores.length : 0;
+      const highest = cl.scores.length ? Math.max(...cl.scores) : 0;
+      const lowest  = cl.scores.length ? Math.min(...cl.scores) : 0;
+      const below40 = cl.scores.filter((p) => p < 40).length;
+
+      const row = ws.getRow(dataRowIdx);
+      row.values = [
+        cl.class_name,
+        cl.section,
+        cl.studentSet.size,
+        Math.round(avg * 10) / 10,
+        Math.round(highest * 10) / 10,
+        Math.round(lowest * 10) / 10,
+        below40,
+      ];
+      row.height = 20;
+
+      const fillColor = dataRowIdx % 2 === 0 ? 'FFF0F4FA' : 'FFFFFFFF';
+      for (let c = 1; c <= cols.length; c++) {
+        const cell = row.getCell(c);
+        cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillColor } };
+        cell.font      = { size: 10 };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      }
+
+      // Format percentage columns
+      for (const colIdx of [4, 5, 6]) {
+        row.getCell(colIdx).numFmt = '0.0"%"';
+      }
+
+      // Highlight below-40 count in red if non-zero
+      if (below40 > 0) {
+        row.getCell(7).font = { size: 10, bold: true, color: { argb: 'FFCC0000' } };
+      }
+
+      dataRowIdx++;
+    }
+  }
+
+  // ── Stream the workbook back ────────────────────────────────────────────────
+  await logAudit(adminId, 'SCHOOL_DATA_EXPORTED', 'schools', { school_id: schoolId });
+
+  // Sanitise school name for filename
+  const safeName = schoolName.replace(/[^a-zA-Z0-9\s]/g, '').trim().replace(/\s+/g, '_');
+  const dateStr  = new Date().toISOString().slice(0, 10);
+  const filename = `${safeName}_DataExport_${dateStr}.xlsx`;
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+  await wb.xlsx.write(res);
+  res.end();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
