@@ -119,7 +119,7 @@ export default function SettingsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `eduvo-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `eduvo-export-${new Date().toISOString().slice(0, 10)}.zip`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
