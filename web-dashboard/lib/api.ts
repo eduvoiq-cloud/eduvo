@@ -33,6 +33,13 @@ export interface UserProfile {
   phone?: string | null;
 }
 
+/** A school record returned as part of the /me response (medium switcher) */
+export interface MediumSchool {
+  id: string;
+  name: string;
+  medium: 'english' | 'gujarati';
+}
+
 export interface LoginResponse {
   token: string;
   refresh_token: string;
@@ -45,6 +52,25 @@ export interface ApiResponse<T> {
   success: boolean;
   message: string;
   data: T;
+}
+
+// ── Active medium school ID ───────────────────────────────────────────────────
+// When the admin switches medium, this is set and injected into every request
+// as X-School-ID so the backend uses the correct school context.
+const ACTIVE_SCHOOL_KEY = 'eduvo_active_school_id';
+
+export function getActiveSchoolId(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(ACTIVE_SCHOOL_KEY);
+}
+
+export function setActiveSchoolId(schoolId: string | null): void {
+  if (typeof window === 'undefined') return;
+  if (schoolId) {
+    localStorage.setItem(ACTIVE_SCHOOL_KEY, schoolId);
+  } else {
+    localStorage.removeItem(ACTIVE_SCHOOL_KEY);
+  }
 }
 
 // ── Core fetch wrapper ────────────────────────────────────────────────────────
@@ -61,6 +87,12 @@ async function request<T>(
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Inject active medium school ID so the backend uses the correct school context
+  const activeSchoolId = getActiveSchoolId();
+  if (activeSchoolId) {
+    headers['X-School-ID'] = activeSchoolId;
   }
 
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -362,7 +394,7 @@ export const authApi = {
     request<null>('/api/auth/logout', { method: 'POST' }, token),
 
   me: (token: string) =>
-    request<{ token_type: string; user: UserProfile }>('/api/auth/me', { method: 'GET' }, token),
+    request<{ token_type: string; user: UserProfile; schools: MediumSchool[] }>('/api/auth/me', { method: 'GET' }, token),
 
   /** Send a password reset email to the given staff email address */
   forgotPassword: (email: string) =>
@@ -643,6 +675,14 @@ export const settingsApi = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }, token),
+
+  /** Create a sibling medium school account (school admin only) */
+  addMedium: (token: string) =>
+    request<{ id: string; name: string; medium: string; parent_school_id: string }>(
+      '/api/settings/add-medium',
+      { method: 'POST' },
+      token
+    ),
 };
 
 // ── Marks View types ──────────────────────────────────────────────────────────

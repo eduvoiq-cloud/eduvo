@@ -808,6 +808,47 @@ router.get('/me', authenticateAny, async (req: Request, res: Response) => {
 
   const p = (profile ?? req.user) as Record<string, unknown>;
 
+  // ── Fetch accessible schools (for medium switcher) ────────────────────────
+  // schooladmin: look up all schools they can access via school_admin_access.
+  // Other roles: return single-item array with their own school (or empty if none).
+  let schools: { id: string; name: string; medium: string }[] = [];
+
+  if (p.role === 'schooladmin' && p.school_id) {
+    const { data: accessRows } = await supabaseAdmin
+      .from('school_admin_access')
+      .select('school_id, schools(id, name, medium)')
+      .eq('admin_id', p.id as string);
+
+    if (accessRows && accessRows.length > 0) {
+      schools = (accessRows as unknown as Array<{
+        school_id: string;
+        schools: { id: string; name: string; medium: string } | null;
+      }>)
+        .filter((r) => r.schools)
+        .map((r) => ({
+          id: r.schools!.id,
+          name: r.schools!.name,
+          medium: r.schools!.medium ?? 'english',
+        }));
+    }
+
+    // Fallback: if no access rows yet (e.g. migration not run), use primary school
+    if (schools.length === 0) {
+      const { data: primarySchool } = await supabaseAdmin
+        .from('schools')
+        .select('id, name, medium')
+        .eq('id', p.school_id as string)
+        .maybeSingle();
+      if (primarySchool) {
+        schools = [{
+          id: primarySchool.id,
+          name: primarySchool.name,
+          medium: (primarySchool as Record<string, unknown>).medium as string ?? 'english',
+        }];
+      }
+    }
+  }
+
   sendSuccess(res, {
     token_type: 'staff',
     user: {
@@ -819,6 +860,7 @@ router.get('/me', authenticateAny, async (req: Request, res: Response) => {
       must_reset_password: p.must_reset_password === true,
       phone: (p.phone as string | null) ?? null,
     },
+    schools,
   });
 });
 

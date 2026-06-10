@@ -37,6 +37,8 @@ declare global {
         email: string;
         role: AppRole;
         school_id: string | null;
+        /** The JWT's original school_id before any X-School-ID override */
+        primary_school_id: string | null;
       };
       /** Populated for student tokens */
       student?: {
@@ -139,12 +141,40 @@ export async function authenticate(
     }
   }
 
+  const primarySchoolId = (profile.school_id as string | null) ?? null;
+
+  // ── X-School-ID override (medium switcher) ────────────────────────────────
+  // If the frontend sends X-School-ID, use that school instead of the JWT's
+  // default school_id — but ONLY if the admin has explicit access via
+  // school_admin_access. Any other role ignores the header silently.
+  let activeSchoolId = primarySchoolId;
+
+  const requestedSchoolId = req.headers['x-school-id'] as string | undefined;
+  if (
+    requestedSchoolId &&
+    (profile.role as AppRole) === 'schooladmin' &&
+    requestedSchoolId !== primarySchoolId
+  ) {
+    const { data: accessRow } = await supabaseAdmin
+      .from('school_admin_access')
+      .select('school_id')
+      .eq('admin_id', profile.id)
+      .eq('school_id', requestedSchoolId)
+      .maybeSingle();
+
+    if (accessRow) {
+      activeSchoolId = requestedSchoolId;
+    }
+    // No access row found → silently fall back to primary school
+  }
+
   req.user = {
     id: profile.id,
     name: profile.name,
     email: profile.email,
     role: profile.role as AppRole,
-    school_id: profile.school_id ?? null,
+    school_id: activeSchoolId,
+    primary_school_id: primarySchoolId,
   };
   req.tokenType = 'staff';
 
@@ -300,6 +330,7 @@ export async function authenticateAny(
     email: profile.email,
     role: profile.role as AppRole,
     school_id: profile.school_id ?? null,
+    primary_school_id: profile.school_id ?? null,
   };
   req.tokenType = 'staff';
 
