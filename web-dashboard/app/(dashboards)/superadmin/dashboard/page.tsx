@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { schoolsApi, type AuditLog } from '@/lib/api';
+import { type AuditLog } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
@@ -37,6 +37,14 @@ interface PlatformStats {
 interface AuditLogsResponse {
   logs: AuditLog[];
   total: number;
+}
+
+interface SchoolsPageResponse {
+  data: SuperAdminSchool[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
 }
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
@@ -96,8 +104,9 @@ export default function SuperAdminDashboard() {
     const token = getToken();
     if (!token) return;
     try {
-      const data = await apiFetch<SuperAdminSchool[]>('/api/superadmin/schools', token);
-      setSchools(data);
+      // Backend returns a pagination envelope: { data: [...], total, page, ... }
+      const result = await apiFetch<SchoolsPageResponse>('/api/superadmin/schools', token);
+      setSchools(result.data ?? []);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -129,7 +138,7 @@ export default function SuperAdminDashboard() {
         `/api/superadmin/audit-logs?${qs.toString()}`,
         token
       );
-      setAuditLogs(data.logs.slice(0, 20));
+      setAuditLogs((data.logs ?? []).slice(0, 20));
     } catch {
       // logs are non-critical
     } finally {
@@ -225,7 +234,10 @@ export default function SuperAdminDashboard() {
     setSchoolLoading(true);
     setSchoolError(null);
     try {
-      await schoolsApi.create(token, schoolForm);
+      await apiFetch('/api/superadmin/schools', token, {
+        method: 'POST',
+        body: JSON.stringify(schoolForm),
+      });
       setShowAddSchool(false);
       setSchoolForm({ name: '', address: '', phone: '', email: '' });
       fetchSchools();
