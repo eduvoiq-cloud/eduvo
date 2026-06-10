@@ -1086,3 +1086,50 @@ export const adminApi = {
   restoreStudent: (token: string, id: string) =>
     request<AdminStudent>(`/api/admin/students/restore/${id}`, { method: 'POST' }, token),
 };
+
+// ── Monthly Performance Snapshot types ───────────────────────────────────────
+
+export interface ClassRankingRow {
+  class_name:    string;
+  section:       string | null;
+  avg_pct:       number;
+  exam_count:    number;
+  student_count: number;
+  rank:          number;
+}
+
+export interface SnapshotStudentRow {
+  student_id:  string;
+  full_name:   string;
+  class_name:  string;
+  section:     string | null;
+  avg_pct:     number;
+  mark_count:  number;
+  rank:        number;
+}
+
+export interface MonthlySnapshot {
+  year:           number;
+  month:          number;
+  classRankings:  ClassRankingRow[];
+  topStudents:    SnapshotStudentRow[];
+  bottomStudents: SnapshotStudentRow[];
+}
+
+export const performanceApi = {
+  /**
+   * GET /api/admin/performance/monthly-snapshot
+   * Admin-only. Returns class rankings + top/bottom 10 students for a given month.
+   */
+  monthlySnapshot: (token: string, params: { year: number; month: number }) => {
+    const qs = new URLSearchParams({
+      year:  String(params.year),
+      month: String(params.month),
+    });
+    return request<MonthlySnapshot>(
+      `/api/admin/performance/monthly-snapshot?${qs.toString()}`,
+      { method: 'GET' },
+      token
+    );
+  },
+};
