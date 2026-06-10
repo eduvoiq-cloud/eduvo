@@ -87,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch {
         // Refresh failed — session is dead, force re-login
         clearSession();
-        setState({ user: null, token: null, loading: false });
+        setState({ user: null, token: null, loading: false, schools: [], activeSchoolId: null });
         router.push('/login');
       }
     }, delayMs);
