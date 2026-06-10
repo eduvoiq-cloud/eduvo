@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
@@ -63,6 +63,86 @@ const ROLE_LABEL: Record<AppRole, string> = {
   parent: 'Parent',
   student: 'Student',
 };
+
+// ── Medium Switcher ───────────────────────────────────────────────────────────
+
+function MediumSwitcher() {
+  const { schools, activeSchoolId, switchMedium } = useAuth();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  // Only render for schooladmin with 2+ schools
+  if (!schools || schools.length < 2) return null;
+
+  const active = schools.find((s) => s.id === activeSchoolId) ?? schools[0];
+
+  const mediumLabel = (m: string) =>
+    m.charAt(0).toUpperCase() + m.slice(1) + ' Medium';
+
+  const mediumColors = (m: string) =>
+    m === 'gujarati'
+      ? 'bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100'
+      : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100';
+
+  const activePillColors = (m: string) =>
+    m === 'gujarati'
+      ? 'bg-orange-50 text-orange-700 border border-orange-200'
+      : 'bg-blue-50 text-blue-700 border border-blue-200';
+
+  return (
+    <div ref={ref} className="relative hidden sm:block">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${activePillColors(active.medium)}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <span>{mediumLabel(active.medium)}</span>
+        <svg
+          className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          className="absolute left-0 top-full mt-1.5 w-44 bg-white rounded-xl border border-gray-200 shadow-lg py-1 z-50"
+          role="listbox"
+        >
+          {schools.map((s) => (
+            <button
+              key={s.id}
+              role="option"
+              aria-selected={s.id === active.id}
+              onClick={() => { switchMedium(s.id); setOpen(false); }}
+              className={`w-full flex items-center justify-between px-3 py-2 text-xs font-medium transition-colors ${mediumColors(s.medium)}`}
+            >
+              <span>{mediumLabel(s.medium)}</span>
+              {s.id === active.id && (
+                <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -143,6 +223,9 @@ export default function Navbar() {
 
           {/* Right side */}
           <div className="flex items-center gap-3">
+            {/* Medium switcher — only visible for schooladmin with 2 mediums */}
+            <MediumSwitcher />
+
             <span className={`hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${ROLE_BADGE[user.role]}`}>
               {ROLE_LABEL[user.role]}
             </span>
@@ -192,6 +275,10 @@ export default function Navbar() {
                 {schoolName}
               </div>
             )}
+
+            {/* Mobile medium switcher */}
+            <MobileMediumSwitcher onClose={() => setMobileOpen(false)} />
+
             {navItems.map((item) => {
               const active = pathname === item.href || pathname.startsWith(item.href + '/');
               return (
@@ -229,5 +316,39 @@ export default function Navbar() {
         </div>
       )}
     </header>
+  );
+}
+
+// ── Mobile Medium Switcher ────────────────────────────────────────────────────
+
+function MobileMediumSwitcher({ onClose }: { onClose: () => void }) {
+  const { schools, activeSchoolId, switchMedium } = useAuth();
+
+  if (!schools || schools.length < 2) return null;
+
+  const mediumLabel = (m: string) =>
+    m.charAt(0).toUpperCase() + m.slice(1) + ' Medium';
+
+  return (
+    <div className="flex gap-2 px-1 pb-1">
+      {schools.map((s) => {
+        const isActive = s.id === (activeSchoolId ?? schools[0].id);
+        return (
+          <button
+            key={s.id}
+            onClick={() => { switchMedium(s.id); onClose(); }}
+            className={`flex-1 py-2 rounded-lg text-xs font-semibold border transition-colors ${
+              isActive
+                ? s.medium === 'gujarati'
+                  ? 'bg-orange-100 text-orange-700 border-orange-300'
+                  : 'bg-blue-100 text-blue-700 border-blue-300'
+                : 'bg-gray-50 text-gray-500 border-gray-200'
+            }`}
+          >
+            {mediumLabel(s.medium)}
+          </button>
+        );
+      })}
+    </div>
   );
 }

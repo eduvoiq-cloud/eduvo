@@ -9,7 +9,7 @@ import React, {
   useRef,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { authApi, registerOn401Handler, type UserProfile } from '@/lib/api';
+import { authApi, registerOn401Handler, type UserProfile, type MediumSchool, getActiveSchoolId, setActiveSchoolId } from '@/lib/api';
 import {
   saveSession,
   getToken,
@@ -26,11 +26,19 @@ interface AuthState {
   user: UserProfile | null;
   token: string | null;
   loading: boolean;
+  /** All schools this admin can access (populated for schooladmin role) */
+  schools: MediumSchool[];
+  /** The currently active school ID (may differ from user.school_id when switched) */
+  activeSchoolId: string | null;
 }
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Switch the active medium — updates activeSchoolId and persists to localStorage */
+  switchMedium: (schoolId: string) => void;
+  /** Refresh the schools list after adding a new medium */
+  refreshSchools: () => Promise<void>;
 }
 
 // ── Context ───────────────────────────────────────────────────────────────────
@@ -48,6 +56,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user: null,
     token: null,
     loading: true,
+    schools: [],
+    activeSchoolId: null,
   });
 
   // Hold the refresh timer so we can clear it on logout
@@ -105,12 +115,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .then((res) => {
           const { token: newToken, refresh_token: newRefreshToken, expires_at: newExpiresAt } = res.data;
           saveSession(newToken, user, newRefreshToken, newExpiresAt);
-          setState({ user, token: newToken, loading: false });
+          const activeSchoolId = getActiveSchoolId() ?? user.school_id;
+          setState({ user, token: newToken, loading: false, schools: [], activeSchoolId });
           scheduleRefresh(newExpiresAt, newRefreshToken, user);
         })
         .catch(() => {
           clearSession();
-          setState({ user: null, token: null, loading: false });
+          setActiveSchoolId(null);
+          setState({ user: null, token: null, loading: false, schools: [], activeSchoolId: null });
           router.push('/login');
         });
       return;
@@ -118,34 +130,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Optimistically set the cached user so the UI renders immediately,
     // then silently refresh the profile from the server in the background.
-    setState({ user, token, loading: true });
+    const activeSchoolId = getActiveSchoolId() ?? user.school_id;
+    setState({ user, token, loading: true, schools: [], activeSchoolId });
 
     authApi.me(token)
       .then((res) => {
-        // /me returns { token_type: 'staff', user: {...} }
+        // /me returns { token_type: 'staff', user: {...}, schools: [...] }
         const freshUser: UserProfile = res.data.user;
+        const freshSchools: MediumSchool[] = res.data.schools ?? [];
+
         // Persist the refreshed profile so future loads are up-to-date
         saveSession(token, freshUser, refreshToken ?? undefined, expiresAt ?? undefined);
+
+        // Restore active school from localStorage, or use primary school_id
+        let activeSchoolId = getActiveSchoolId();
+        if (
+          !activeSchoolId ||
+          !freshSchools.find((s) => s.id === activeSchoolId)
+        ) {
+          activeSchoolId = freshUser.school_id;
+          setActiveSchoolId(freshUser.school_id);
+        }
 
         // Schedule a proactive refresh if we have the needed info
         if (expiresAt && refreshToken) {
           scheduleRefresh(expiresAt, refreshToken, freshUser);
         }
 
-        // If this is a first-login teacher who hasn't reset their password,
-        // do a hard redirect before rendering the dashboard. Using
-        // window.location avoids the async Next.js App Router race condition
-        // where router.push fires but the dashboard layout re-renders first.
-        // Only redirect if not already on the force-reset-password page to
-        // prevent an infinite reload loop.
         if (freshUser.must_reset_password && !window.location.pathname.includes('force-reset-password')) {
-          // Keep loading: true so nothing renders while we navigate away
-          setState({ user: freshUser, token, loading: true });
+          setState({ user: freshUser, token, loading: true, schools: freshSchools, activeSchoolId });
           window.location.replace('/force-reset-password');
           return;
         }
 
-        setState({ user: freshUser, token, loading: false });
+        setState({ user: freshUser, token, loading: false, schools: freshSchools, activeSchoolId });
       })
       .catch((err: unknown) => {
         // If the server explicitly rejected the token (401/403), try to refresh
@@ -163,21 +181,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .then((res) => {
               const { token: newToken, refresh_token: newRefreshToken, expires_at: newExpiresAt } = res.data;
               saveSession(newToken, user, newRefreshToken, newExpiresAt);
-              setState({ user, token: newToken, loading: false });
+              setState({ user, token: newToken, loading: false, schools: state.schools, activeSchoolId: state.activeSchoolId });
               scheduleRefresh(newExpiresAt, newRefreshToken, user);
             })
             .catch(() => {
               clearSession();
-              setState({ user: null, token: null, loading: false });
+              setState({ user: null, token: null, loading: false, schools: [], activeSchoolId: null });
               router.push('/login');
             });
         } else if (isAuthError) {
           clearSession();
-          setState({ user: null, token: null, loading: false });
+          setState({ user: null, token: null, loading: false, schools: [], activeSchoolId: null });
           router.push('/login');
         } else {
           // Network / server error — keep cached user, mark loading done
-          setState({ user, token, loading: false });
+          setState({ user, token, loading: false, schools: state.schools, activeSchoolId: state.activeSchoolId });
         }
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -188,17 +206,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { token, refresh_token, expires_at, user } = res.data;
 
     saveSession(token, user, refresh_token, expires_at);
-    setState({ user, token, loading: false });
+
+    // Set active school to primary on fresh login
+    setActiveSchoolId(user.school_id);
+    setState({ user, token, loading: false, schools: [], activeSchoolId: user.school_id });
 
     // Schedule proactive token refresh
     if (expires_at && refresh_token) {
       scheduleRefresh(expires_at, refresh_token, user);
     }
 
-    // Force password reset before going to dashboard.
-    // Use a hard redirect (window.location) to avoid the Next.js App Router
-    // async navigation race where the dashboard layout renders first and
-    // gets stuck in a spinner loop.
     if (res.data.must_reset_password || user.must_reset_password) {
       window.location.replace('/force-reset-password');
     } else {
@@ -207,7 +224,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router, scheduleRefresh]);
 
   const logout = useCallback(async () => {
-    // Cancel any pending refresh timer
     if (refreshTimerRef.current) {
       clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = null;
@@ -222,9 +238,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     clearSession();
-    setState({ user: null, token: null, loading: false });
+    setActiveSchoolId(null);
+    setState({ user: null, token: null, loading: false, schools: [], activeSchoolId: null });
     router.push('/login');
   }, [router]);
+
+  /** Switch the active medium — updates context and localStorage */
+  const switchMedium = useCallback((schoolId: string) => {
+    setActiveSchoolId(schoolId);
+    setState((s) => ({ ...s, activeSchoolId: schoolId }));
+  }, []);
+
+  /** Re-fetch /me to get an updated schools list after adding a new medium */
+  const refreshSchools = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    try {
+      const res = await authApi.me(token);
+      const freshSchools: MediumSchool[] = res.data.schools ?? [];
+      setState((s) => ({ ...s, schools: freshSchools }));
+    } catch {
+      // Silently ignore — schools list will update on next full reload
+    }
+  }, []);
 
   // Register the global 401 handler so any API call that gets a 401
   // mid-session (expired token) automatically clears the session and
@@ -236,13 +272,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         refreshTimerRef.current = null;
       }
       clearSession();
-      setState({ user: null, token: null, loading: false });
+      setActiveSchoolId(null);
+      setState({ user: null, token: null, loading: false, schools: [], activeSchoolId: null });
       router.push('/login');
     });
   }, [router]);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout }}>
+    <AuthContext.Provider value={{ ...state, login, logout, switchMedium, refreshSchools }}>
       {children}
     </AuthContext.Provider>
   );

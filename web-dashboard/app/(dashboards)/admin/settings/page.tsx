@@ -16,7 +16,7 @@ const TIMEZONES = [
 ];
 
 export default function SettingsPage() {
-  const { user } = useAuth();
+  const { user, schools, refreshSchools } = useAuth();
 
   const [settings, setSettings] = useState<Partial<SchoolSettings>>({
     attendance_cutoff_time: '09:00',
@@ -32,6 +32,12 @@ export default function SettingsPage() {
   // ── Data export ───────────────────────────────────────────────────────────
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
+
+  // ── Medium account ────────────────────────────────────────────────────────
+  const [showMediumModal, setShowMediumModal] = useState(false);
+  const [addingMedium, setAddingMedium] = useState(false);
+  const [mediumSuccess, setMediumSuccess] = useState('');
+  const [mediumError, setMediumError] = useState('');
 
   // ── Delete school modal ───────────────────────────────────────────────────
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -157,6 +163,29 @@ export default function SettingsPage() {
       setDeleteError(e instanceof Error ? e.message : 'Failed to send request.');
     } finally {
       setDeleteSending(false);
+    }
+  }
+
+  // ── Add medium ────────────────────────────────────────────────────────────
+
+  async function handleAddMedium() {
+    setMediumError('');
+    const token = getToken();
+    if (!token) return;
+    setAddingMedium(true);
+    try {
+      const res = await settingsApi.addMedium(token);
+      const newMedium = (res.data as { medium: string }).medium;
+      const label = newMedium.charAt(0).toUpperCase() + newMedium.slice(1);
+      setMediumSuccess(
+        `${label} medium account created. Use the switcher in the navbar to switch between mediums.`
+      );
+      setShowMediumModal(false);
+      await refreshSchools();
+    } catch (e: unknown) {
+      setMediumError(e instanceof Error ? e.message.replace(/^\d+:\s*/, '') : 'Failed to create medium account');
+    } finally {
+      setAddingMedium(false);
     }
   }
 
@@ -298,6 +327,75 @@ export default function SettingsPage() {
         <div className="max-w-xl mt-8 space-y-4">
           <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
             <div className="flex items-center gap-2 mb-1">
+              <div className="w-7 h-7 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-semibold text-gray-900">Medium Accounts</h2>
+            </div>
+
+            {/* Success feedback */}
+            {mediumSuccess && (
+              <div className="px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 flex items-center gap-2">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                {mediumSuccess}
+              </div>
+            )}
+
+            {/* Current mediums */}
+            <div className="flex flex-wrap gap-2">
+              {schools.length === 0 ? (
+                <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                  English Medium
+                </span>
+              ) : (
+                schools.map((s) => (
+                  <span
+                    key={s.id}
+                    className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border ${
+                      s.medium === 'gujarati'
+                        ? 'bg-orange-50 text-orange-700 border-orange-100'
+                        : 'bg-blue-50 text-blue-700 border-blue-100'
+                    }`}
+                  >
+                    {s.medium.charAt(0).toUpperCase() + s.medium.slice(1)} Medium
+                  </span>
+                ))
+              )}
+            </div>
+
+            {schools.length >= 2 ? (
+              <p className="text-sm text-gray-500">Both mediums are active.</p>
+            ) : (
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Add {schools.length > 0 && schools[0].medium === 'english' ? 'Gujarati' : 'English'} Medium Account
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Creates a separate, isolated account for the other medium. Starts completely empty.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setMediumError(''); setShowMediumModal(true); }}
+                  className="shrink-0 flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Medium
+                </button>
+              </div>
+            )}
+          </section>
+
+          <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+            <div className="flex items-center gap-2 mb-1">
               <div className="w-7 h-7 bg-purple-50 rounded-lg flex items-center justify-center text-purple-600">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -396,6 +494,74 @@ export default function SettingsPage() {
           </section>
         </div>
         </>
+      )}
+
+      {/* ── Add Medium Modal ────────────────────────────────────────────────── */}
+      {showMediumModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="medium-modal-title"
+        >
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+              </div>
+              <div>
+                <h3 id="medium-modal-title" className="text-base font-semibold text-gray-900">
+                  Add {schools.length > 0 && schools[0].medium === 'english' ? 'Gujarati' : 'English'} Medium Account
+                </h3>
+                <p className="text-xs text-gray-500">One subscription — two isolated mediums</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              This will create a separate{' '}
+              <strong>
+                {schools.length > 0 && schools[0].medium === 'english' ? 'Gujarati' : 'English'}
+              </strong>{' '}
+              medium account for your school. It will start completely empty — no students, teachers, or classes.
+              You can switch between mediums from the top navbar.
+            </p>
+
+            {mediumError && (
+              <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 mb-4">
+                {mediumError}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowMediumModal(false)}
+                disabled={addingMedium}
+                className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 text-sm font-medium rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAddMedium}
+                disabled={addingMedium}
+                className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              >
+                {addingMedium ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Creating…
+                  </>
+                ) : (
+                  'Continue'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ── Delete School Modal ─────────────────────────────────────────────── */}
