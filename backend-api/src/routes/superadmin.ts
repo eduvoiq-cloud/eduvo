@@ -163,6 +163,157 @@ router.get('/schools', async (req: Request, res: Response) => {
   sendSuccess(res, { data: result, total, page, limit, total_pages: Math.ceil(total / limit) });
 });
 
+// ── GET /api/superadmin/schools/:id ──────────────────────────────────────────
+/**
+ * Get detailed info for a single school:
+ * - Basic info (name, address, phone, email, subscription_status)
+ * - student_count, teacher_count, today's attendance count
+ * - list of school admins (name, email, phone)
+ */
+router.get('/schools/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+
+  const { data: school, error: schoolErr } = await supabaseAdmin
+    .from('schools')
+    .select('id, name, address, phone, email, subscription_status, created_at, updated_at')
+    .eq('id', id)
+    .single();
+
+  if (schoolErr || !school) {
+    sendError(res, 'School not found', 404);
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Fetch counts and admins in parallel
+  const [
+    { count: studentCount },
+    { count: teacherCount },
+    { data: admins },
+    { data: studentIds },
+  ] = await Promise.all([
+    supabaseAdmin
+      .from('students')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', id)
+      .eq('is_deleted', false),
+    supabaseAdmin
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', id)
+      .eq('role', 'teacher')
+      .or('is_deleted.eq.false,is_deleted.is.null'),
+    supabaseAdmin
+      .from('users')
+      .select('id, name, email, phone, created_at')
+      .eq('school_id', id)
+      .eq('role', 'schooladmin'),
+    supabaseAdmin
+      .from('students')
+      .select('id')
+      .eq('school_id', id)
+      .eq('is_deleted', false),
+  ]);
+
+  // Today's attendance count for this school
+  let attendanceToday = 0;
+  if (studentIds && studentIds.length > 0) {
+    const sids = studentIds.map((s: { id: string }) => s.id);
+    const { count } = await supabaseAdmin
+      .from('attendance')
+      .select('id', { count: 'exact', head: true })
+      .in('student_id', sids)
+      .eq('date', today)
+      .eq('status', 'present');
+    attendanceToday = count ?? 0;
+  }
+
+  sendSuccess(res, {
+    ...school,
+    student_count: studentCount ?? 0,
+    teacher_count: teacherCount ?? 0,
+    attendance_today: attendanceToday,
+    admins: admins ?? [],
+  });
+});
+
+// ── DELETE /api/superadmin/schools/:id ────────────────────────────────────────
+/**
+ * Completely delete a school and ALL related data:
+ * - Deletes all auth users (students + staff) linked to this school
+ * - Deletes the school row (cascades to students, users, attendance, etc.)
+ */
+router.delete('/schools/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const adminId = req.user!.id;
+
+  // Verify school exists
+  const { data: school, error: schoolErr } = await supabaseAdmin
+    .from('schools')
+    .select('id, name')
+    .eq('id', id)
+    .single();
+
+  if (schoolErr || !school) {
+    sendError(res, 'School not found', 404);
+    return;
+  }
+
+  const schoolName = (school as { id: string; name: string }).name;
+
+  // Fetch all staff user IDs for this school
+  const { data: staffUsers } = await supabaseAdmin
+    .from('users')
+    .select('id')
+    .eq('school_id', id);
+
+  // Fetch all student auth IDs (students who have a parent_id / auth account)
+  // Students use the same auth system — their auth.uid is stored in students.id
+  const { data: studentAuthRows } = await supabaseAdmin
+    .from('students')
+    .select('id')
+    .eq('school_id', id);
+
+  // Delete all auth users for staff
+  const staffIds = (staffUsers ?? []).map((u: { id: string }) => u.id);
+  const studentIds = (studentAuthRows ?? []).map((s: { id: string }) => s.id);
+  const allAuthIds = [...new Set([...staffIds, ...studentIds])];
+
+  const deleteErrors: string[] = [];
+  for (const uid of allAuthIds) {
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(uid);
+    if (error) {
+      // Log but don't stop — user may already be deleted
+      deleteErrors.push(`${uid}: ${error.message}`);
+    }
+  }
+
+  if (deleteErrors.length > 0) {
+    console.warn('[superadmin delete school] Some auth users could not be deleted:', deleteErrors);
+  }
+
+  // Delete the school row — DB cascades handle students, users, attendance, etc.
+  const { error: deleteErr } = await supabaseAdmin
+    .from('schools')
+    .delete()
+    .eq('id', id);
+
+  if (deleteErr) {
+    sendError(res, deleteErr.message, 500);
+    return;
+  }
+
+  await logAudit(adminId, 'SCHOOL_DELETED', 'schools', {
+    school_id: id,
+    school_name: schoolName,
+    auth_users_deleted: allAuthIds.length - deleteErrors.length,
+    auth_deletion_errors: deleteErrors.length,
+  });
+
+  sendSuccess(res, { deleted: true, school_id: id }, 'School deleted successfully');
+});
+
 // ── POST /api/superadmin/schools ──────────────────────────────────────────────
 /**
  * Create a new school.

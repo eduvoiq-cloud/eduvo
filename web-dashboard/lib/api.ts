@@ -486,6 +486,19 @@ export const superadminApi = {
       method: 'PUT',
       body: JSON.stringify({ status }),
     }, token),
+
+  getSchoolDetail: (token: string, schoolId: string) =>
+    request<School & {
+      student_count: number;
+      teacher_count: number;
+      attendance_today: number;
+      admins: Array<{ id: string; name: string; email: string; phone: string | null; created_at: string }>;
+    }>(`/api/superadmin/schools/${schoolId}`, { method: 'GET' }, token),
+
+  deleteSchool: (token: string, schoolId: string) =>
+    request<{ deleted: boolean; school_id: string }>(`/api/superadmin/schools/${schoolId}`, {
+      method: 'DELETE',
+    }, token),
 };
 
 // ── Schools endpoints ─────────────────────────────────────────────────────────
