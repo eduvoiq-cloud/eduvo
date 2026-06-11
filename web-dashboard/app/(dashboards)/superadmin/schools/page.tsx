@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { superadminApi, schoolsApi, type School } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -276,6 +277,13 @@ function SchoolsPageInner() {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center justify-end gap-2">
+                        {/* View details */}
+                        <Link
+                          href={`/superadmin/schools/${school.id}`}
+                          className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
+                        >
+                          View Details
+                        </Link>
                         {/* Create admin */}
                         <button
                           onClick={() => { setAdminForm(EMPTY_ADMIN_FORM); setFormError(''); setShowAdminPassword(false); setShowAddAdmin(school); }}

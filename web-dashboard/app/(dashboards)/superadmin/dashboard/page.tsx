@@ -401,7 +401,7 @@ export default function SuperAdminDashboard() {
                     <td className="px-6 py-3.5">
                       <div className="flex items-center justify-end gap-2">
                         <Link
-                          href={`/superadmin/schools`}
+                          href={`/superadmin/schools/${school.id}`}
                           className="text-xs text-blue-600 hover:text-blue-700 font-medium"
                         >
                           View
