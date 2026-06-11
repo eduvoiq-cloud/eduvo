@@ -282,9 +282,10 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
   }
 
   // Disable the auth account so they can no longer log in
+  // '876000h' ≈ 100 years — effectively permanent ban
   const { error: authError } = await supabaseAdmin.auth.admin.updateUserById(
     String(req.params.id),
-    { ban_duration: 'none' } // marks account as banned/disabled
+    { ban_duration: '876000h' }
   );
 
   if (authError) {

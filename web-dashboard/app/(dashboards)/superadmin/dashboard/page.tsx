@@ -91,6 +91,7 @@ export default function SuperAdminDashboard() {
   const [adminForm, setAdminForm] = useState({ name: '', email: '', phone: '' });
   const [adminLoading, setAdminLoading] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
+  const [adminCreated, setAdminCreated] = useState<{ email: string; default_password?: string; password_is_phone?: boolean; already_existed?: boolean } | null>(null);
 
   // Add school modal
   const [showAddSchool, setShowAddSchool] = useState(false);
@@ -214,12 +215,19 @@ export default function SuperAdminDashboard() {
     setAdminLoading(true);
     setAdminError(null);
     try {
-      await apiFetch(`/api/superadmin/schools/${adminTarget.id}/admin`, token, {
-        method: 'POST',
-        body: JSON.stringify(adminForm),
-      });
-      setAdminTarget(null);
+      const result = await apiFetch<{ email: string; default_password?: string; password_is_phone?: boolean; already_existed?: boolean }>(
+        `/api/superadmin/schools/${adminTarget.id}/admin`, token, {
+          method: 'POST',
+          body: JSON.stringify(adminForm),
+        }
+      );
       setAdminForm({ name: '', email: '', phone: '' });
+      setAdminCreated({
+        email:             result.email ?? adminForm.email,
+        default_password:  result.default_password,
+        password_is_phone: result.password_is_phone,
+        already_existed:   result.already_existed,
+      });
     } catch (e) {
       setAdminError((e as Error).message);
     } finally {
@@ -544,65 +552,109 @@ export default function SuperAdminDashboard() {
       {/* ── Create Admin Modal ── */}
       <Modal
         open={!!adminTarget}
-        onClose={() => { setAdminTarget(null); setAdminError(null); }}
+        onClose={() => { setAdminTarget(null); setAdminError(null); setAdminCreated(null); }}
         title={`Create Admin — ${adminTarget?.name ?? ''}`}
         size="md"
       >
-        <form onSubmit={handleCreateAdmin} className="space-y-4">
-          {adminError && (
-            <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-              {adminError}
-            </p>
-          )}
-          <FormField label="Full Name" htmlFor="admin-name" required>
-            <input
-              id="admin-name"
-              type="text"
-              required
-              value={adminForm.name}
-              onChange={(e) => setAdminForm((f) => ({ ...f, name: e.target.value }))}
-              className={inputClass}
-              placeholder="Jane Smith"
-            />
-          </FormField>
-          <FormField label="Email" htmlFor="admin-email" required>
-            <input
-              id="admin-email"
-              type="email"
-              required
-              value={adminForm.email}
-              onChange={(e) => setAdminForm((f) => ({ ...f, email: e.target.value }))}
-              className={inputClass}
-              placeholder="admin@school.edu"
-            />
-          </FormField>
-          <FormField label="Phone" htmlFor="admin-phone">
-            <input
-              id="admin-phone"
-              type="tel"
-              value={adminForm.phone}
-              onChange={(e) => setAdminForm((f) => ({ ...f, phone: e.target.value }))}
-              className={inputClass}
-              placeholder="+1 555 000 0000"
-            />
-          </FormField>
-          <div className="flex justify-end gap-3 pt-1">
-            <button
-              type="button"
-              onClick={() => { setAdminTarget(null); setAdminError(null); }}
-              className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={adminLoading}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
-            >
-              {adminLoading ? 'Creating…' : 'Create Admin'}
-            </button>
+        {adminCreated ? (
+          <div className="space-y-4">
+            {adminCreated.already_existed ? (
+              <div className="px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                An admin with email <strong>{adminCreated.email}</strong> already exists for this school.
+                They can log in with their existing credentials, or use &ldquo;Forgot Password&rdquo; to reset.
+              </div>
+            ) : (
+              <>
+                <div className="px-3 py-2.5 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+                  ✓ Admin account created for <strong>{adminCreated.email}</strong>.
+                </div>
+                {adminCreated.default_password && (
+                  <div className="px-3 py-2.5 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-900 space-y-2">
+                    <p className="font-semibold">Share these login credentials with the school admin:</p>
+                    <div className="bg-white border border-yellow-200 rounded-lg p-3 space-y-1 text-sm font-mono">
+                      <p><span className="text-gray-500 font-sans">Email: </span>{adminCreated.email}</p>
+                      <p><span className="text-gray-500 font-sans">Password: </span><span className="font-bold tracking-wider">{adminCreated.default_password}</span></p>
+                    </div>
+                    <p className="text-xs text-yellow-700">
+                      {adminCreated.password_is_phone
+                        ? 'Password is their phone number. They will be prompted to change it on first login.'
+                        : 'A temporary password was generated. They will be prompted to change it on first login.'}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+            <div className="flex justify-end">
+              <button
+                onClick={() => { setAdminTarget(null); setAdminCreated(null); }}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+              >
+                Done
+              </button>
+            </div>
           </div>
-        </form>
+        ) : (
+          <form onSubmit={handleCreateAdmin} className="space-y-4">
+            {adminError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {adminError}
+              </p>
+            )}
+            <div className="px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-700">
+              This account will have <strong>School Admin</strong> access for <strong>{adminTarget?.name}</strong>.
+              Password will be set to their phone number and they&apos;ll be asked to change it on first login.
+            </div>
+            <FormField label="Full Name" htmlFor="admin-name" required>
+              <input
+                id="admin-name"
+                type="text"
+                required
+                value={adminForm.name}
+                onChange={(e) => setAdminForm((f) => ({ ...f, name: e.target.value }))}
+                className={inputClass}
+                placeholder="Jane Smith"
+              />
+            </FormField>
+            <FormField label="Email" htmlFor="admin-email" required>
+              <input
+                id="admin-email"
+                type="email"
+                required
+                value={adminForm.email}
+                onChange={(e) => setAdminForm((f) => ({ ...f, email: e.target.value }))}
+                className={inputClass}
+                placeholder="admin@school.edu"
+              />
+            </FormField>
+            <FormField label="Phone Number" htmlFor="admin-phone">
+              <input
+                id="admin-phone"
+                type="tel"
+                value={adminForm.phone}
+                onChange={(e) => setAdminForm((f) => ({ ...f, phone: e.target.value }))}
+                className={inputClass}
+                placeholder="+1 555 000 0000"
+              />
+              <p className="text-xs text-gray-400 mt-1">Used as the default password. If left blank, a temporary password is generated.</p>
+            </FormField>
+            <div className="flex justify-end gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => { setAdminTarget(null); setAdminError(null); }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={adminLoading}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+              >
+                {adminLoading ? 'Creating…' : 'Create Admin'}
+              </button>
+            </div>
+          </form>
+        )}
       </Modal>
 
       {/* ── Add School Modal ── */}

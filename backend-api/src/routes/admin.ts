@@ -219,6 +219,7 @@ router.post('/students', async (req: Request, res: Response) => {
     .insert({
       full_name:      name,
       class_name:     normalizedClass,
+      class:          normalizedClass,  // legacy NOT NULL column — keep in sync
       section:        normalizedSection,
       roll_number:    roll_number ?? null,
       phone_number,
@@ -514,11 +515,12 @@ router.post('/teachers', async (req: Request, res: Response) => {
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
 
-  // Check email not already in use
+  // Check email not already in use (exclude soft-deleted users)
   const { data: emailConflict } = await supabaseAdmin
     .from('users')
     .select('id')
     .eq('email', email.toLowerCase())
+    .or('is_deleted.eq.false,is_deleted.is.null')
     .maybeSingle();
 
   if (emailConflict) {
@@ -528,12 +530,44 @@ router.post('/teachers', async (req: Request, res: Response) => {
 
   const tempPassword = password ?? generateTempPassword();
 
-  // Create Supabase auth user
-  const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+  // Create Supabase auth user.
+  // If a stale auth account exists (e.g. from a previously soft-deleted teacher),
+  // hard-delete it first so we can re-create cleanly.
+  let { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
     email,
     password:      tempPassword,
     email_confirm: true,
   });
+
+  if (authErr && authErr.message?.toLowerCase().includes('already been registered')) {
+    // Hard-delete the stale auth user. Query the users table first (soft-deleted rows
+    // retain their auth UUID), then fall back to scanning listUsers if the row is gone.
+    const { data: staleProfile } = await supabaseAdmin
+      .from('users')
+      .select('id')
+      .ilike('email', email)
+      .limit(1)
+      .maybeSingle();
+
+    if (staleProfile) {
+      await supabaseAdmin.auth.admin.deleteUser(staleProfile.id);
+      await supabaseAdmin.from('users').delete().eq('id', staleProfile.id);
+    } else {
+      const { data: page1 } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000, page: 1 });
+      const staleAuth = page1?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+      if (staleAuth) {
+        await supabaseAdmin.auth.admin.deleteUser(staleAuth.id);
+      }
+    }
+
+    const retry = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password:      tempPassword,
+      email_confirm: true,
+    });
+    authData = retry.data;
+    authErr  = retry.error;
+  }
 
   if (authErr || !authData?.user) {
     sendError(res, authErr?.message ?? 'Failed to create auth account', 500);
