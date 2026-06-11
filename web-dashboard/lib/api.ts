@@ -12,13 +12,23 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 // When any API call returns 401, clear the session and redirect to login.
 // This handles tokens that expire mid-session (after the initial /me check).
 let _on401: (() => void) | null = null;
+// When any API call returns 402, show the subscription expired screen.
+let _on402: (() => void) | null = null;
 
 export function registerOn401Handler(handler: () => void) {
   _on401 = handler;
 }
 
+export function registerOn402Handler(handler: () => void) {
+  _on402 = handler;
+}
+
 function handle401() {
   if (_on401) _on401();
+}
+
+function handle402() {
+  if (_on402) _on402();
 }
 
 export type AppRole = 'superadmin' | 'schooladmin' | 'teacher' | 'parent' | 'student';
@@ -106,6 +116,9 @@ async function request<T>(
     // Trigger global 401 handler so any expired mid-session token
     // clears the session and redirects to login automatically.
     if (res.status === 401) handle401();
+
+    // Trigger global 402 handler — school subscription expired.
+    if (res.status === 402) handle402();
 
     // Include the HTTP status in the message so callers (e.g. AuthContext)
     // can distinguish auth failures (401/403) from other errors.

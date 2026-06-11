@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { schoolsApi, superadminApi, studentsApi, type School } from '@/lib/api';
+import { superadminApi, schoolsApi, type School } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
@@ -75,29 +75,19 @@ function SchoolsPageInner() {
     setLoading(true);
     setError('');
     try {
-      const [schoolsRes, studentsRes] = await Promise.all([
-        schoolsApi.list(token),
-        // limit=0 → returns a flat array (no pagination envelope)
-        studentsApi.list(token, { limit: 0 }),
-      ]);
+      // superadminApi.listSchools already includes student_count, teacher_count,
+      // and subscription_status — no need for a separate students call.
+      const res = await superadminApi.listSchools(token, { limit: 200 });
+      const schoolList = res.data?.data ?? [];
 
-      // Unwrap: limit=0 returns a flat array; paginated calls return an envelope
-      const studentList = Array.isArray(studentsRes.data)
-        ? (studentsRes.data as unknown as { school_id: string }[])
-        : ((studentsRes.data as unknown as { data: { school_id: string }[] }).data ?? []);
-
-      // Count students per school
-      const countMap: Record<string, number> = {};
-      for (const s of studentList) {
-        countMap[s.school_id] = (countMap[s.school_id] ?? 0) + 1;
-      }
-
-      const enriched = schoolsRes.data.map((school) => ({
+      // Normalise: map subscription_status → is_active so the rest of the UI
+      // can use school.is_active consistently.
+      const enriched = schoolList.map((school) => ({
         ...school,
-        student_count: countMap[school.id] ?? 0,
+        is_active: (school as School & { subscription_status?: boolean }).subscription_status ?? false,
       }));
 
-      setSchools(enriched);
+      setSchools(enriched as School[]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load schools');
     } finally {
@@ -144,9 +134,8 @@ function SchoolsPageInner() {
     if (!token) return;
     setSubmitting(true);
     try {
-      await schoolsApi.update(token, showConfirmToggle.id, {
-        is_active: !showConfirmToggle.is_active,
-      });
+      const newStatus = !showConfirmToggle.is_active;
+      await superadminApi.toggleSubscription(token, showConfirmToggle.id, newStatus);
       setShowConfirmToggle(null);
       await fetchSchools();
     } catch (err: unknown) {

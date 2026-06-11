@@ -167,6 +167,23 @@ router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) 
     return;
   }
 
+  // 3. Check school subscription (non-superadmin only)
+  const role = profile.role as string;
+  if (role !== 'superadmin' && profile.school_id) {
+    const { data: school } = await supabaseAdmin
+      .from('schools')
+      .select('subscription_status')
+      .eq('id', profile.school_id)
+      .single();
+
+    const isActive = (school as { subscription_status: boolean } | null)?.subscription_status;
+    if (isActive === false) {
+      await logAudit(authUser.id, 'STAFF_LOGIN_FAILED', { email, reason: 'subscription_expired' });
+      sendError(res, 'Your subscription has expired. Please renew your subscription to continue using the service.', 402);
+      return;
+    }
+  }
+
   await logAudit(authUser.id, 'STAFF_LOGIN_SUCCESS', { email, role: profile.role });
 
   const p = profile as Record<string, unknown>;
@@ -242,7 +259,21 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
     return;
   }
 
-  // 3. Sign custom JWT
+  // 3. Check school subscription
+  const { data: school } = await supabaseAdmin
+    .from('schools')
+    .select('subscription_status')
+    .eq('id', student.school_id)
+    .single();
+
+  const isSchoolActive = (school as { subscription_status: boolean } | null)?.subscription_status;
+  if (isSchoolActive === false) {
+    await logAudit(student.id, 'STUDENT_LOGIN_FAILED', { reason: 'subscription_expired' });
+    sendError(res, 'Your subscription has expired. Please renew your subscription to continue using the service.', 402);
+    return;
+  }
+
+  // 4. Sign custom JWT
   let token: string;
   try {
     token = signStudentToken(student.id, student.school_id);

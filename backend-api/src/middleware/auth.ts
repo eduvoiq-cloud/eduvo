@@ -141,6 +141,27 @@ export async function authenticate(
     }
   }
 
+  // ── School subscription check ─────────────────────────────────────────────
+  // Non-superadmin users of a deactivated school must be blocked.
+  // Superadmins are never blocked — they manage the platform.
+  if ((profile.role as AppRole) !== 'superadmin' && profile.school_id) {
+    const { data: schoolStatus } = await supabaseAdmin
+      .from('schools')
+      .select('subscription_status')
+      .eq('id', profile.school_id)
+      .single();
+
+    const isActive = (schoolStatus as { subscription_status: boolean } | null)?.subscription_status;
+    if (isActive === false) {
+      sendError(
+        res,
+        'Your subscription has expired. Please renew your subscription to continue using the service.',
+        402
+      );
+      return;
+    }
+  }
+
   const primarySchoolId = (profile.school_id as string | null) ?? null;
 
   // ── X-School-ID override (medium switcher) ────────────────────────────────
@@ -226,6 +247,24 @@ export async function authenticateStudent(
 
   if (error || !student) {
     sendError(res, 'Student not found', 403);
+    return;
+  }
+
+  // ── School subscription check ─────────────────────────────────────────────
+  // Block students from deactivated schools.
+  const { data: studentSchool } = await supabaseAdmin
+    .from('schools')
+    .select('subscription_status')
+    .eq('id', student.school_id)
+    .single();
+
+  const isSchoolActive = (studentSchool as { subscription_status: boolean } | null)?.subscription_status;
+  if (isSchoolActive === false) {
+    sendError(
+      res,
+      'Your subscription has expired. Please renew your subscription to continue using the service.',
+      402
+    );
     return;
   }
 

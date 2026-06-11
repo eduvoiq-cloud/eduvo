@@ -10,14 +10,14 @@ import Navbar from '@/components/Navbar';
  * Client-side guard:
  *  1. No user after loading → redirect to /login
  *  2. User has must_reset_password → redirect to /force-reset-password
- *     (prevents accessing any dashboard page before setting a new password)
+ *  3. School subscription expired → show the subscription-expired screen
  */
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading } = useAuth();
+  const { user, loading, subscriptionExpired, logout } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -27,8 +27,6 @@ export default function DashboardLayout({
       return;
     }
     if (user.must_reset_password) {
-      // Hard redirect — avoids the async App Router race that leaves the
-      // spinner rendering indefinitely instead of navigating away.
       window.location.replace('/force-reset-password');
     }
   }, [loading, user, router]);
@@ -41,11 +39,42 @@ export default function DashboardLayout({
     );
   }
 
-  // Render nothing while redirecting to force-reset (avoids flash of dashboard)
   if (user.must_reset_password) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Subscription expired — block all dashboard access
+  if (subscriptionExpired && user.role !== 'superadmin') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-10 max-w-md w-full text-center space-y-6">
+          {/* Icon */}
+          <div className="flex items-center justify-center w-16 h-16 bg-orange-100 rounded-full mx-auto">
+            <svg className="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+          </div>
+
+          <div className="space-y-2">
+            <h1 className="text-xl font-bold text-gray-900">Subscription Expired</h1>
+            <p className="text-sm text-gray-500 leading-relaxed">
+              Your subscription has expired. Please renew your subscription to continue
+              using the service. Contact your administrator for assistance.
+            </p>
+          </div>
+
+          <button
+            onClick={() => logout()}
+            className="w-full py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+          >
+            Sign Out
+          </button>
+        </div>
       </div>
     );
   }

@@ -28,7 +28,7 @@ apiClient.interceptors.request.use(
   (error: AxiosError) => Promise.reject(error)
 );
 
-// ── Response interceptor: auto-logout on 401 ─────────────────────────────────
+// ── Response interceptor: auto-logout on 401, subscription block on 402 ──────
 // Only auto-logout on 401 from authenticated routes, NOT from login/change-password
 // endpoints — those should let the screen handle the error and show it to the user.
 const AUTH_ENDPOINTS = ['/api/auth/login/student', '/api/auth/student/change-password'];
@@ -43,6 +43,12 @@ apiClient.interceptors.response.use(
       // Token expired or invalid on a regular route — clear auth state
       useAuthStore.getState().logout();
     }
+
+    if (error.response?.status === 402) {
+      // School subscription expired — flag it in auth store
+      useAuthStore.getState().setSubscriptionExpired(true);
+    }
+
     return Promise.reject(error);
   }
 );
