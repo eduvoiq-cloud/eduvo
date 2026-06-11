@@ -329,10 +329,9 @@ router.put('/schools/:id/subscription', async (req: Request, res: Response) => {
  */
 router.post('/schools/:id/admin', async (req: Request, res: Response) => {
   const schema = z.object({
-    name:     z.string().min(1),
-    email:    z.string().email(),
-    phone:    z.string().optional(),
-    password: z.string().min(8).optional(),
+    name:  z.string().min(1),
+    email: z.string().email(),
+    phone: z.string().optional(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -341,8 +340,8 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
     return;
   }
 
-  const { name, email, phone, password } = parsed.data;
-  const schoolId    = req.params.id;
+  const { name, email, phone } = parsed.data;
+  const schoolId     = req.params.id;
   const superAdminId = req.user!.id;
 
   // Verify school exists
@@ -357,26 +356,52 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
     return;
   }
 
-  // Check email not already in use
-  const { data: emailConflict } = await supabaseAdmin
+  // If the user already exists as a schooladmin for THIS school, return their info
+  // (idempotent — calling "Create Admin" twice is harmless)
+  const { data: existingUser } = await supabaseAdmin
     .from('users')
-    .select('id')
+    .select('id, name, email, role, school_id, phone')
     .eq('email', email.toLowerCase())
     .maybeSingle();
 
-  if (emailConflict) {
-    sendError(res, 'A user with this email already exists', 409);
+  if (existingUser) {
+    const u = existingUser as { id: string; role: string; school_id: string; name: string; email: string; phone: string | null };
+    if (u.role === 'schooladmin' && u.school_id === schoolId) {
+      sendSuccess(res, { ...u, already_existed: true }, 'School admin already exists for this school', 200);
+      return;
+    }
+    sendError(res, 'A user with this email already exists for a different school or role', 409);
     return;
   }
 
-  const tempPassword = password ?? generateTempPassword();
+  // Default password = phone number (digits only).
+  // If no phone provided, generate a random temp password.
+  // Either way, must_reset_password = true forces a change on first login —
+  // same behaviour as teachers created via bulk import.
+  const rawPhone = (phone ?? '').replace(/\D/g, '');
+  const defaultPassword = rawPhone.length >= 6 ? rawPhone : generateTempPassword();
+  const passwordIsPhone = rawPhone.length >= 6;
 
-  // Create Supabase auth user
-  const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+  // Create Supabase auth user.
+  // Clean up any orphaned stale auth account before re-creating.
+  let { data: authData, error: authErr } = await supabaseAdmin.auth.admin.createUser({
     email,
-    password:      tempPassword,
+    password:      defaultPassword,
     email_confirm: true,
   });
+
+  if (authErr && authErr.message?.toLowerCase().includes('already been registered')) {
+    const { data: page1 } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000, page: 1 });
+    const staleAuth = page1?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    if (staleAuth) await supabaseAdmin.auth.admin.deleteUser(staleAuth.id);
+    const retry = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password:      defaultPassword,
+      email_confirm: true,
+    });
+    authData = retry.data;
+    authErr  = retry.error;
+  }
 
   if (authErr || !authData?.user) {
     sendError(res, authErr?.message ?? 'Failed to create auth account', 500);
@@ -385,35 +410,32 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
 
   const newUserId = authData.user.id;
 
-  // Insert users profile row
+  // Insert users profile — must_reset_password = true forces a password change on first login
   const { data: profile, error: profileErr } = await supabaseAdmin
     .from('users')
     .insert({
-      id:         newUserId,
+      id:                  newUserId,
       name,
-      email:      email.toLowerCase(),
-      role:       'schooladmin',
-      school_id:  schoolId,
-      phone:      phone ?? null,
-      created_by: superAdminId,
-      created_at: new Date().toISOString(),
+      email:               email.toLowerCase(),
+      role:                'schooladmin',
+      school_id:           schoolId,
+      phone:               phone ?? null,
+      must_reset_password: true,
+      created_by:          superAdminId,
+      created_at:          new Date().toISOString(),
     })
     .select('id, name, email, role, school_id, phone')
     .single();
 
   if (profileErr) {
-    // Roll back auth user to avoid orphaned accounts
     await supabaseAdmin.auth.admin.deleteUser(newUserId);
     sendError(res, 'Failed to create admin profile. Auth account rolled back.', 500);
     return;
   }
 
-  // Send welcome email via Supabase magic link (best-effort)
+  // Send welcome email via magic link (best-effort)
   try {
-    await supabaseAdmin.auth.admin.generateLink({
-      type:  'magiclink',
-      email,
-    });
+    await supabaseAdmin.auth.admin.generateLink({ type: 'magiclink', email });
   } catch (emailErr) {
     console.warn('[superadmin] Welcome email failed for school admin:', email, emailErr);
   }
@@ -426,7 +448,13 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
     school_name:  (school as { name: string }).name,
   });
 
-  sendSuccess(res, profile, 'School admin account created successfully', 201);
+  // Return the default password so the super admin can share it with the school admin.
+  // They will be forced to change it on first login.
+  sendSuccess(res, {
+    ...profile,
+    default_password: defaultPassword,
+    password_is_phone: passwordIsPhone,
+  }, 'School admin account created successfully', 201);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

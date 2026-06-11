@@ -461,9 +461,9 @@ export const superadminApi = {
   createSchoolAdmin: (
     token: string,
     schoolId: string,
-    payload: { name: string; email: string; password: string; phone?: string }
+    payload: { name: string; email: string; phone?: string }
   ) =>
-    request<UserProfile>(`/api/superadmin/schools/${schoolId}/admin`, {
+    request<UserProfile & { default_password?: string; password_is_phone?: boolean; already_existed?: boolean }>(`/api/superadmin/schools/${schoolId}/admin`, {
       method: 'POST',
       body: JSON.stringify(payload),
     }, token),

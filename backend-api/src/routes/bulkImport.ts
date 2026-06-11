@@ -1066,15 +1066,25 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
       });
 
       if (authErr && authErr.message?.toLowerCase().includes('already been registered')) {
-        // Find and delete the stale auth user, then retry
-        const { data: existingAuthUsers } = await supabaseAdmin.auth.admin.listUsers();
-        const staleUser = existingAuthUsers?.users?.find(
-          (u) => u.email?.toLowerCase() === data.email.toLowerCase()
-        );
-        if (staleUser) {
-          await supabaseAdmin.auth.admin.deleteUser(staleUser.id);
-          // Also clean up any stale users row
-          await supabaseAdmin.from('users').delete().eq('id', staleUser.id);
+        // Hard-delete the stale auth user. Use the users table (public schema) to find
+        // the auth ID — soft-deleted rows still exist there and retain the auth UUID.
+        const { data: staleProfile } = await supabaseAdmin
+          .from('users')
+          .select('id')
+          .ilike('email', data.email)
+          .limit(1)
+          .maybeSingle();
+
+        if (staleProfile) {
+          await supabaseAdmin.auth.admin.deleteUser(staleProfile.id);
+          await supabaseAdmin.from('users').delete().eq('id', staleProfile.id);
+        } else {
+          // Profile row already gone — find the auth entry by scanning with listUsers
+          const { data: page1 } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000, page: 1 });
+          const staleAuth = page1?.users?.find((u) => u.email?.toLowerCase() === data.email.toLowerCase());
+          if (staleAuth) {
+            await supabaseAdmin.auth.admin.deleteUser(staleAuth.id);
+          }
         }
         // Retry creation
         const retry = await supabaseAdmin.auth.admin.createUser({
