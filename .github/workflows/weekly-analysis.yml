@@ -1,0 +1,33 @@
+name: Weekly AI Analysis (Sunday Cron)
+
+on:
+  schedule:
+    # Every Sunday at 06:00 UTC (11:30 IST)
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    # Allows manual trigger from GitHub Actions tab
+
+jobs:
+  run-weekly-analysis:
+    name: Trigger Weekly Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger weekly analysis job on Railway API
+        run: |
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.API_BASE_URL }}/api/weekly-analysis/run" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json")
+
+          echo "API response code: $RESPONSE"
+
+          if [ "$RESPONSE" != "200" ] && [ "$RESPONSE" != "201" ]; then
+            echo "❌ Weekly analysis trigger failed with HTTP $RESPONSE"
+            exit 1
+          fi
+
+          echo "✅ Weekly analysis job started successfully (HTTP $RESPONSE)"
+          echo "The job processes all premium students in the background."
+          echo "Check Railway logs for detailed progress."

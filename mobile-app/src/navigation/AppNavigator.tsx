@@ -23,6 +23,9 @@ import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
 
 // Student-specific screens
 import StudentTestsScreen from '../screens/student/TestsScreen';
+import DailyTestScreen from '../screens/student/DailyTestScreen';
+import DailyTestAttemptScreen from '../screens/student/DailyTestAttemptScreen';
+import type { DailyTestMeta } from '../screens/student/DailyTestScreen';
 
 // More home screen
 import MoreHomeScreen from '../screens/main/MoreHomeScreen';
@@ -33,6 +36,16 @@ import AnnouncementsScreen from '../screens/main/AnnouncementsScreen';
 // Settings screens
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import LinkChildScreen from '../screens/settings/LinkChildScreen';
+
+// Parent screens
+import ParentDashboardScreen from '../screens/parent/DashboardScreen';
+import ParentAttendanceScreen from '../screens/parent/AttendanceScreen';
+import ParentPerformanceScreen from '../screens/parent/PerformanceScreen';
+import ParentNotificationsScreen from '../screens/parent/NotificationsScreen';
+import ActivityPacksScreen from '../screens/parent/ActivityPacksScreen';
+import PremiumInsightsScreen from '../screens/parent/PremiumInsightsScreen';
+
+import { useChildStore } from '../store/childStore';
 
 // ── Stack param lists ─────────────────────────────────────────────────────────
 
@@ -46,6 +59,7 @@ export type MainTabParamList = {
   Attendance: undefined;
   Marks: undefined;
   Tests: undefined;
+  DailyTest: undefined;
   More: undefined;
 };
 
@@ -55,6 +69,7 @@ export type StudentTabParamList = MainTabParamList;
 export type MainStackParamList = {
   MainTabs: undefined;
   TestAttempt: { test: TestMeta };
+  DailyTestAttempt: { test: DailyTestMeta };
   ChangePassword: undefined;
   LinkChild: undefined;
   Announcements: undefined;
@@ -68,7 +83,9 @@ export type StudentStackParamList = MainStackParamList;
 export type ParentTabParamList = {
   Dashboard: undefined;
   Attendance: undefined;
+  ActivityPacks: undefined;
   Performance: undefined;
+  Insights: undefined;
   Notifications: undefined;
 };
 
@@ -77,6 +94,7 @@ export type ParentTabParamList = {
 const AuthStack = createStackNavigator<AuthStackParamList>();
 const MainTab = createBottomTabNavigator<MainTabParamList>();
 const MainStack = createStackNavigator<MainStackParamList>();
+const ParentTab = createBottomTabNavigator<ParentTabParamList>();
 
 // ── Tab icon helper ───────────────────────────────────────────────────────────
 
@@ -160,6 +178,74 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+// ── Parent bottom tab navigator ───────────────────────────────────────────────
+
+function ParentNavigator() {
+  return (
+    <ParentTab.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: '#1D4ED8' },
+        headerTintColor: '#FFFFFF',
+        headerTitleStyle: { fontWeight: '600' },
+        tabBarActiveTintColor: '#1D4ED8',
+        tabBarInactiveTintColor: '#9CA3AF',
+        tabBarStyle: { paddingBottom: 4 },
+      }}
+    >
+      <ParentTab.Screen
+        name="Dashboard"
+        component={ParentDashboardScreen}
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ focused }) => <TabIcon label="🏠" focused={focused} />,
+        }}
+      />
+      <ParentTab.Screen
+        name="Attendance"
+        component={ParentAttendanceScreen}
+        options={{
+          title: 'Attendance',
+          tabBarIcon: ({ focused }) => <TabIcon label="📅" focused={focused} />,
+        }}
+      />
+      <ParentTab.Screen
+        name="ActivityPacks"
+        component={ActivityPacksScreen}
+        options={{
+          title: 'Activities',
+          tabBarIcon: ({ focused }) => <TabIcon label="🎯" focused={focused} />,
+          headerTitle: "Today's Activities",
+        }}
+      />
+      <ParentTab.Screen
+        name="Performance"
+        component={ParentPerformanceScreen}
+        options={{
+          title: 'Progress',
+          tabBarIcon: ({ focused }) => <TabIcon label="📊" focused={focused} />,
+        }}
+      />
+      <ParentTab.Screen
+        name="Insights"
+        component={PremiumInsightsScreen}
+        options={{
+          title: 'Insights',
+          tabBarIcon: ({ focused }) => <TabIcon label="✨" focused={focused} />,
+          headerShown: false,
+        }}
+      />
+      <ParentTab.Screen
+        name="Notifications"
+        component={ParentNotificationsScreen}
+        options={{
+          title: 'Alerts',
+          tabBarIcon: ({ focused }) => <TabIcon label="🔔" focused={focused} />,
+        }}
+      />
+    </ParentTab.Navigator>
+  );
+}
 
 // ── Auth navigator ────────────────────────────────────────────────────────────
 
@@ -286,6 +372,14 @@ function MainTabNavigator() {
         }}
       />
       <MainTab.Screen
+        name="DailyTest"
+        component={DailyTestScreen}
+        options={{
+          title: 'Daily Test',
+          tabBarIcon: ({ focused }) => <TabIcon label="🧠" focused={focused} />,
+        }}
+      />
+      <MainTab.Screen
         name="More"
         component={MoreNavigator}
         options={{
@@ -296,7 +390,8 @@ function MainTabNavigator() {
         listeners={({ navigation }) => ({
           tabPress: () => {
             // Always reset the More stack to MoreHome when the tab is tapped
-            navigation.navigate('More', { screen: 'MoreHome' });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (navigation as any).navigate('More', { screen: 'MoreHome' });
           },
         })}
       />
@@ -318,6 +413,11 @@ function MainNavigator() {
       <MainStack.Screen
         name="TestAttempt"
         component={TestAttemptScreen}
+        options={{ headerShown: false }}
+      />
+      <MainStack.Screen
+        name="DailyTestAttempt"
+        component={DailyTestAttemptScreen}
         options={{ headerShown: false }}
       />
       <MainStack.Screen
@@ -347,16 +447,20 @@ function MainNavigator() {
 
 interface AppNavigatorProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  navigationRef?: React.RefObject<NavigationContainerRef<any>>;
+  navigationRef?: React.RefObject<NavigationContainerRef<any> | null>;
 }
 
 export default function AppNavigator({ navigationRef }: AppNavigatorProps) {
   const { isLoggedIn, subscriptionExpired } = useAuthStore();
+  const linkedChildren = useChildStore((s) => s.linkedChildren);
+  const isParent = linkedChildren.length > 0;
 
   return (
     <NavigationContainer ref={navigationRef}>
       {isLoggedIn && subscriptionExpired
         ? <SubscriptionExpiredScreen />
+        : isLoggedIn && isParent
+        ? <ParentNavigator />
         : isLoggedIn
         ? <MainNavigator />
         : <AuthNavigator />}

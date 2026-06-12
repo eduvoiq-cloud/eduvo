@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 import rateLimit from 'express-rate-limit';
 import { sendAttendanceNotifications } from '../services/attendanceNotifications';
 
@@ -30,26 +31,6 @@ const submitRateLimit = rateLimit({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Insert a row into audit_logs. Errors are swallowed so they never break the main flow. */
-async function logAudit(
-  userId: string | null,
-  action: string,
-  tableName: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      table_name: tableName,
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[audit] Failed to write audit log:', err);
-  }
-}
 
 /** Returns today's date as YYYY-MM-DD (UTC). */
 function todayDate(): string {

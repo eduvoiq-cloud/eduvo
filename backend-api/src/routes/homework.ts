@@ -1,10 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import multer from 'multer';
 import * as admin from 'firebase-admin';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 import rateLimit from 'express-rate-limit';
 
 const router = Router();
@@ -14,6 +16,27 @@ const router = Router();
 const SUPABASE_STORAGE_HOST = process.env.SUPABASE_URL ?? '';
 const FCM_BATCH_SIZE = 100;
 const FCM_BATCH_DELAY_MS = 100;
+
+// ── Multer (memory storage — file streamed to Supabase Storage) ──────────────
+const homeworkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (_req, file, cb) => {
+    const mime = file.mimetype.toLowerCase();
+    const allowedMimes = new Set([
+      'application/pdf',
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/gif',
+    ]);
+    if (allowedMimes.has(mime)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only PDF and image files (JPEG, PNG, WebP, GIF) are allowed.'));
+    }
+  },
+});
 
 // ── Rate limiter: max 20 homework posts per teacher per day ───────────────────
 const createHomeworkRateLimit = rateLimit({
@@ -34,26 +57,6 @@ const createHomeworkRateLimit = rateLimit({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Insert a row into audit_logs. Errors are swallowed so they never break the main flow. */
-async function logAudit(
-  userId: string | null,
-  action: string,
-  tableName: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      table_name: tableName,
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[audit] Failed to write audit log:', err);
-  }
-}
 
 /** Returns today's date as YYYY-MM-DD (UTC). */
 function todayDate(): string {
@@ -922,6 +925,86 @@ router.get(
     const pendingCount = allIds.filter((id) => !ackedIds.has(id)).length;
 
     sendSuccess(res, { count: pendingCount });
+  }
+);
+
+// ── POST /api/homework/upload ─────────────────────────────────────────────────
+/**
+ * Upload a homework attachment (PDF or image) to Supabase Storage.
+ * Auth: teacher, schooladmin, superadmin.
+ *
+ * - Accepts multipart/form-data with a single 'file' field.
+ * - Stores in the 'homework-uploads' bucket under <school_id>/<timestamp>_<filename>.
+ * - Returns { url } — a public URL to store in homework.file_url.
+ *
+ * Max file size: 5 MB. Allowed types: PDF, JPEG, PNG, WebP, GIF.
+ */
+router.post(
+  '/upload',
+  authenticate,
+  requireRole('teacher', 'schooladmin', 'superadmin'),
+  (req: Request, res: Response, next) => {
+    homeworkUpload.single('file')(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          sendError(res, 'File must be under 5 MB.', 400);
+          return;
+        }
+        sendError(res, err.message, 400);
+        return;
+      }
+      if (err) {
+        sendError(res, err instanceof Error ? err.message : 'File upload error', 400);
+        return;
+      }
+      next();
+    });
+  },
+  async (req: Request, res: Response) => {
+    if (!req.file) {
+      sendError(res, 'No file provided. Send a multipart/form-data request with a "file" field.', 400);
+      return;
+    }
+
+    const schoolId = req.user!.school_id;
+    if (!schoolId) {
+      sendError(res, 'Your account is not linked to a school', 403);
+      return;
+    }
+
+    const BUCKET = 'homework-uploads';
+    const ts = Date.now();
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${schoolId}/${ts}_${safeName}`;
+
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from(BUCKET)
+      .upload(storagePath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error('[homework/upload] Storage error:', uploadError.message);
+      sendError(res, `Failed to store file: ${uploadError.message}`, 500);
+      return;
+    }
+
+    const { data: urlData } = supabaseAdmin.storage
+      .from(BUCKET)
+      .getPublicUrl(storagePath);
+
+    sendSuccess(
+      res,
+      {
+        url: urlData?.publicUrl ?? null,
+        storage_path: storagePath,
+        file_name: req.file.originalname,
+        file_size: req.file.size,
+      },
+      'File uploaded successfully.',
+      201
+    );
   }
 );
 

@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 import { normaliseTerm, termFilterValues } from '../utils/term';
 
 const router = Router();
@@ -25,19 +26,6 @@ const createMarkSchema = z.object({
 const updateMarkSchema = createMarkSchema.partial();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function logAudit(
-  userId: string,
-  action: string,
-  details: Record<string, unknown> = {}
-) {
-  await supabaseAdmin.from('audit_logs').insert({
-    user_id: userId,
-    action,
-    details,
-    created_at: new Date().toISOString(),
-  });
-}
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 

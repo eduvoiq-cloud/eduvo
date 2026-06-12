@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 
 const router = Router();
 
@@ -21,19 +22,6 @@ const updateSchoolSchema = createSchoolSchema.partial().extend({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function logAudit(
-  userId: string,
-  action: string,
-  details: Record<string, unknown> = {}
-) {
-  await supabaseAdmin.from('audit_logs').insert({
-    user_id: userId,
-    action,
-    details,
-    created_at: new Date().toISOString(),
-  });
-}
 
 // ── Public routes (no auth) ───────────────────────────────────────────────────
 

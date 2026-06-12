@@ -7,6 +7,8 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
+import { generateTempPassword } from '../utils/password';
 import { sendSMS } from '../services/smsService';
 
 const router = Router();
@@ -16,26 +18,6 @@ router.use(authenticate);
 router.use(requireRole('schooladmin'));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Write to audit_logs. Errors are swallowed so they never break the main flow. */
-async function logAudit(
-  userId: string,
-  action: string,
-  tableName: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      table_name: tableName,
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[audit] Failed to write audit log:', err);
-  }
-}
 
 /** Guard: ensure the target student belongs to the admin's school. */
 async function getStudentInSchool(
@@ -49,12 +31,6 @@ async function getStudentInSchool(
     .eq('school_id', schoolId)
     .maybeSingle();
   return data ?? null;
-}
-
-/** Generate a random 10-char alphanumeric temp password. */
-function generateTempPassword(): string {
-  return Math.random().toString(36).slice(2, 7).toUpperCase() +
-    Math.random().toString(36).slice(2, 7);
 }
 
 /** Get Firebase app (lazy, idempotent). Returns null if not configured. */

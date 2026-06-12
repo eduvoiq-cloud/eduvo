@@ -16,6 +16,7 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
     { label: 'Dashboard', href: '/superadmin/dashboard' },
     { label: 'Schools', href: '/superadmin/schools' },
     { label: 'Users', href: '/superadmin/users' },
+    { label: 'Revenue', href: '/superadmin/revenue' },
     { label: 'Audit Logs', href: '/superadmin/audit-logs' },
   ],
   schooladmin: [
@@ -27,6 +28,10 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
     { label: 'Announcements', href: '/admin/announcements' },
     { label: 'Complaints', href: '/admin/complaints' },
     { label: 'Performance', href: '/admin/performance' },
+    { label: 'Premium', href: '/admin/premium-management' },
+    { label: 'AI Insights', href: '/admin/premium-insights' },
+    { label: 'Activity Packs', href: '/admin/activity-packs' },
+    { label: 'Streak Board', href: '/admin/streak-leaderboard' },
     { label: 'Settings', href: '/admin/settings' },
   ],
   teacher: [
@@ -36,6 +41,9 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
     { label: 'Attendance', href: '/teacher/attendance' },
     { label: 'Fees', href: '/teacher/fees' },
     { label: 'Tests', href: '/teacher/tests' },
+    { label: 'Daily Test', href: '/teacher/daily-test' },
+    { label: 'Activity Packs', href: '/teacher/activity-packs' },
+    { label: 'Streak Board', href: '/teacher/streak-leaderboard' },
     { label: 'Timetable', href: '/teacher/timetable' },
     { label: 'Homework', href: '/teacher/homework' },
     { label: 'AI Assistant', href: '/teacher/ai-assistant' },

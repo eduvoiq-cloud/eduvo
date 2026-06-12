@@ -1,0 +1,915 @@
+﻿{
+    "success":  true,
+    "message":  "Success",
+    "data":  [
+                 {
+                     "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                     "full_name":  "Ananya Gupta",
+                     "roll_number":  "10A01",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "588583c6-ad06-4961-8a72-75113eb20101",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "Science",
+                                       "score":  58,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "8b3f9c92-bf82-4b1f-9332-eb9b0a46b92d",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "Social Science",
+                                       "score":  35,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "b36b4d22-0d67-4e65-94a6-892c2cf5ae49",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "Gujarati",
+                                       "score":  13,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "56b5fd5e-bc44-4587-bde9-923d0d0a4116",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "Computer",
+                                       "score":  45,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "3923527d-6514-4a83-bcf4-cf7ced8f209e",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "Hindi",
+                                       "score":  58,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "4b33645f-ec11-426b-ba82-3e820f8ff7b6",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "Sanskrit",
+                                       "score":  69,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "5bd1496b-9053-4791-ac2b-6054b7facecd",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "Mathematics",
+                                       "score":  33,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "163754c8-fcf6-41e8-8589-aa8d09d5b404",
+                                       "student_id":  "8e866b0d-565c-458c-97a6-4643a4319489",
+                                       "subject":  "English",
+                                       "score":  56,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  367,
+                     "total_max":  800,
+                     "percentage":  46,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                     "full_name":  "Vivek Rao",
+                     "roll_number":  "10A02",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "2a75c28e-4308-491e-99d4-3e551450ce48",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "Science",
+                                       "score":  75,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "3f0d5199-6fe8-487d-8341-31f216366b57",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "Social Science",
+                                       "score":  52,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "84e519c3-2070-461a-abb7-7588138b5a3b",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "Gujarati",
+                                       "score":  57,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "7fffe50b-f719-4296-a17d-734214ca7bd5",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "Computer",
+                                       "score":  76,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "6c5dd44b-f266-4b9e-8485-5c7b0c68171e",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "Hindi",
+                                       "score":  47,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "ee376601-0e02-4f14-b215-b191a19ab8f5",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "Sanskrit",
+                                       "score":  30,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "dd5cd11c-b520-4521-9f11-d492196d9708",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "Mathematics",
+                                       "score":  56,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "b4cf1166-1106-4dfc-b610-81aeb470a6ae",
+                                       "student_id":  "135cbf76-61ad-45f9-a30d-5c6a09b6c8c0",
+                                       "subject":  "English",
+                                       "score":  18,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  411,
+                     "total_max":  800,
+                     "percentage":  51,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                     "full_name":  "Sneha Desai",
+                     "roll_number":  "10A03",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "cc8611af-8173-410c-a0a9-0c46938a2d70",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "Science",
+                                       "score":  35,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "ded35a70-8197-4ba1-a0b8-c202890762ae",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "Social Science",
+                                       "score":  56,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "e857f1fe-99b4-4d0b-8963-2748113da7c4",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "Gujarati",
+                                       "score":  41,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "e7de66b2-3fc4-4c5d-81ee-ce8daea42015",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "Computer",
+                                       "score":  28,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "4e6e0b0f-e978-49b3-9add-5c24b6c21294",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "Hindi",
+                                       "score":  11,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "821e0724-0348-4d0e-918b-8804881817b4",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "Sanskrit",
+                                       "score":  59,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "e712655e-4811-4d50-9b0f-e0475c18f0de",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "Mathematics",
+                                       "score":  74,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "77d81b82-3556-4af8-bdcf-c183b5a771f9",
+                                       "student_id":  "54251498-c08f-4234-b9bb-63ef34029bef",
+                                       "subject":  "English",
+                                       "score":  44,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  348,
+                     "total_max":  800,
+                     "percentage":  44,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                     "full_name":  "Arjun Nair",
+                     "roll_number":  "10A04",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "93af7a10-1f50-4771-bd0f-c815733b119a",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "Science",
+                                       "score":  57,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "e7d18d65-f21c-43ca-bc13-71e7eb88a10a",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "Social Science",
+                                       "score":  18,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "3b629120-ad77-467c-a71c-0a13f83bbc3e",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "Gujarati",
+                                       "score":  65,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "2d9aa16d-5d75-4ee4-8052-37d9f08653a3",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "Computer",
+                                       "score":  42,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "f074a60e-ba57-49b5-beec-e097615c894f",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "Hindi",
+                                       "score":  62,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "7582c93d-a43e-46ad-8dfa-9310607e8c39",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "Sanskrit",
+                                       "score":  67,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "d6910edc-579e-4302-ad2d-65d34d222d42",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "Mathematics",
+                                       "score":  24,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "47e35a57-9d6d-47ea-b4e3-2b9624af1c1b",
+                                       "student_id":  "e2ec6e5f-812b-4d46-9294-a09f8f3be943",
+                                       "subject":  "English",
+                                       "score":  54,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  389,
+                     "total_max":  800,
+                     "percentage":  49,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                     "full_name":  "Meera Iyer",
+                     "roll_number":  "10A05",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "0c13abf4-afae-4f44-909f-35f61dc24283",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "Science",
+                                       "score":  78,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "919144f3-8386-433e-b4c0-93d7f8c044c1",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "Social Science",
+                                       "score":  49,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "468c7243-6a40-4271-9e78-03b9344d1371",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "Gujarati",
+                                       "score":  35,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "bc8be7bd-3e1a-44a4-a86e-f44fc5935f6a",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "Computer",
+                                       "score":  50,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "003e2090-073a-49ff-afdc-834f58d0de36",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "Hindi",
+                                       "score":  55,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "97887812-43bc-436f-92cd-b3b10908d03a",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "Sanskrit",
+                                       "score":  29,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "56e92c4c-48d0-4b45-9de0-41ebccfa49b7",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "Mathematics",
+                                       "score":  44,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "2599d992-5724-4437-ab73-04e2efbe832d",
+                                       "student_id":  "9655542a-49eb-4a9d-94ca-0d564f8f1642",
+                                       "subject":  "English",
+                                       "score":  11,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  351,
+                     "total_max":  800,
+                     "percentage":  44,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                     "full_name":  "Diya Shah",
+                     "roll_number":  "R002",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "3cc0d1f9-3e6d-4a99-94db-bdf57b68f61f",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "Mathematics",
+                                       "score":  71,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "1d0c2095-2133-40bf-b4c3-fee821f85dc4",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "Science",
+                                       "score":  31,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "f109fb01-3228-4c37-a130-0d0c47b50435",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "Gujarati",
+                                       "score":  57,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "5e14b2f5-9e5f-43dd-ac1d-8a9e0088d2e7",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "Hindi",
+                                       "score":  81,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "50462340-16ab-41f4-ac02-92fe28c5be9a",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "English",
+                                       "score":  42,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "c031a859-435a-454b-b18c-8c38dc399aef",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "Social Science",
+                                       "score":  53,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "b83d9400-fa54-4e85-9f7c-9c2acdb88974",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "Computer",
+                                       "score":  18,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "32a19b89-4d12-4ca4-b3ef-f08953313ec1",
+                                       "student_id":  "d03fe60c-6221-4bb6-aa37-3ced566167a5",
+                                       "subject":  "Sanskrit",
+                                       "score":  57,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  410,
+                     "total_max":  800,
+                     "percentage":  51,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                     "full_name":  "Reyansh Modi",
+                     "roll_number":  "R007",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "33a4df79-e93b-4cd9-bf03-ea5d7a3a0cf7",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "Mathematics",
+                                       "score":  28,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "0058f331-df73-49f4-af62-24dfc8d5aa02",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "Science",
+                                       "score":  55,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "2cc47e13-4170-4e40-95d9-8bf110350a85",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "Gujarati",
+                                       "score":  73,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "c1ab2caf-1273-4177-9d26-4ca7781225f0",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "Hindi",
+                                       "score":  31,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "b6b9df97-dd6b-44f7-8c45-063f2071ae0d",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "English",
+                                       "score":  58,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "b5aa9684-af0c-48ed-9819-a32ae45a7bf2",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "Social Science",
+                                       "score":  73,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "d3364d65-4bda-41d1-ad12-e1a66c8df71a",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "Computer",
+                                       "score":  58,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "53a06b9e-cc05-4b91-a895-4b5c5514692f",
+                                       "student_id":  "60dc2033-cb69-41ac-9177-a81e8a6a3f2e",
+                                       "subject":  "Sanskrit",
+                                       "score":  48,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  424,
+                     "total_max":  800,
+                     "percentage":  53,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                     "full_name":  "Riya Kapoor",
+                     "roll_number":  "R012",
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "33b5d5d1-2994-4897-a072-67b8533dee9d",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "Mathematics",
+                                       "score":  57,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "6255c3da-3313-4e0e-909b-d1bf285b1f43",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "Science",
+                                       "score":  75,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "43c02705-4b04-475e-9f44-b4161455a936",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "Gujarati",
+                                       "score":  24,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "f7a643bc-2bef-4f19-8c28-f3cf58659b53",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "Hindi",
+                                       "score":  39,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "b12da330-fa81-4ab1-915c-b62308fa9c59",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "English",
+                                       "score":  67,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "ba963a54-1188-467b-94bf-02fa25140029",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "Social Science",
+                                       "score":  43,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "dbf2b047-033c-4e63-8c59-3557e17901e8",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "Computer",
+                                       "score":  52,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "73c82e9c-1cc4-4233-bafa-16c85378b9ab",
+                                       "student_id":  "da3fe2ef-705c-4c7b-ae3a-b6719f4cf1dd",
+                                       "subject":  "Sanskrit",
+                                       "score":  14,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  371,
+                     "total_max":  800,
+                     "percentage":  46,
+                     "test_submissions":  0
+                 },
+                 {
+                     "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                     "full_name":  "Aarav Patel",
+                     "roll_number":  null,
+                     "class_name":  "10",
+                     "section":  "A",
+                     "marks":  [
+                                   {
+                                       "id":  "52378c69-483f-4cd7-ae00-ce0b77cf2a48",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "Hindi",
+                                       "score":  75,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "eb158348-407c-4c28-8a5f-4a961b0ef4cc",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "Sanskrit",
+                                       "score":  53,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "901055aa-9192-4024-a7a3-bdbf67ad0c8a",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "Mathematics",
+                                       "score":  48,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "3f9a5fd5-b46b-405c-a3cd-234c37fdfeea",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "English",
+                                       "score":  30,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "717fb9d8-1275-4e4d-b706-c0d5b4f36596",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "Science",
+                                       "score":  25,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "727969fa-738f-42fa-a85f-dbd73353d98f",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "Social Science",
+                                       "score":  57,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "5b6d6532-c0f6-447b-918a-bde52c43b8ef",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "Gujarati",
+                                       "score":  45,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   },
+                                   {
+                                       "id":  "1f30af5e-f346-4f7f-a47f-adf8a40458f7",
+                                       "student_id":  "b6c4feca-75a0-4949-b2e6-17b1dae589f6",
+                                       "subject":  "Computer",
+                                       "score":  67,
+                                       "max_score":  100,
+                                       "term":  "term_1",
+                                       "exam_type":  "final",
+                                       "notes":  "Demo mark — Final Exam Term 1",
+                                       "created_at":  "2026-06-14T18:30:00+00:00"
+                                   }
+                               ],
+                     "total_obtained":  400,
+                     "total_max":  800,
+                     "percentage":  50,
+                     "test_submissions":  0
+                 }
+             ]
+}

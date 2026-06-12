@@ -11,8 +11,10 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuthStore } from '../../store/authStore';
+import { useChildStore } from '../../store/childStore';
 import apiClient from '../../api/client';
 import { ParentTabParamList } from '../../navigation/AppNavigator';
+import StreakWidget from '../../components/StreakWidget';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -150,6 +152,9 @@ function AttendanceBadge({ child }: { child: Child }) {
 export default function ParentDashboardScreen() {
   const user = useAuthStore((state) => state.student);
   const navigation = useNavigation<ParentNavProp>();
+  const { linkedChildren, activeChildIndex } = useChildStore();
+
+  const activeLinkedChild = linkedChildren.length > 0 ? linkedChildren[activeChildIndex] : null;
 
   const [children, setChildren] = useState<Child[]>([]);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
@@ -208,9 +213,9 @@ export default function ParentDashboardScreen() {
       setUnreadCount(unread.length);
       setNotifications(unread.slice(0, 3));
 
-      // Announcements — endpoint may not exist yet; fail gracefully
+      // Announcements — fetch latest school announcement for parent's children
       try {
-        const annRes = await apiClient.get('/api/announcements', {
+        const annRes = await apiClient.get('/api/announcements/student', {
           params: { limit: 1 },
         });
         const items: Announcement[] = annRes.data.data ?? [];
@@ -348,10 +353,22 @@ export default function ParentDashboardScreen() {
           ))
         )}
 
-        {/* ── Latest Announcement ─────────────────────────────────────────── */}
-        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Latest Announcement</Text>
+        {/* ── Streak widget ────────────────────────────────────────────────── */}
+        {/* Only shown when parent has a linked child (student token available) */}
+        {activeLinkedChild && (
+          <>
+            <Text style={[styles.sectionTitle, { marginTop: 24, marginBottom: 8 }]}>
+              🔥 {activeLinkedChild.name.split(' ')[0]}'s Learning Streak
+            </Text>
+            <StreakWidget
+              studentId={activeLinkedChild.id}
+              studentToken={activeLinkedChild.token}
+            />
+          </>
+        )}
 
-        {loading ? (
+        {/* ── Latest Announcement ─────────────────────────────────────────── */}
+        <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Latest Announcement</Text>        {loading ? (
           <AnnouncementSkeleton />
         ) : announcement ? (
           <View style={styles.announcementBanner}>

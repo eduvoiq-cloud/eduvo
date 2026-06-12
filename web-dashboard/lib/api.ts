@@ -1153,6 +1153,150 @@ export const adminApi = {
     request<AdminStudent>(`/api/admin/students/restore/${id}`, { method: 'POST' }, token),
 };
 
+// ── Premium / parent subscriptions ───────────────────────────────────────────
+
+export interface ParentSubscription {
+  id: string;
+  student_id: string;
+  school_id: string;
+  plan_type: 'premium_junior' | 'premium_senior';
+  status: 'active' | 'inactive';
+  activated_by_admin_id: string | null;
+  activated_at: string | null;
+  starts_at: string | null;
+  expires_at: string | null;
+  last_renewed_at: string | null;
+  renewed_by_admin_id: string | null;
+  deactivated_at: string | null;
+  created_at: string;
+  updated_at: string;
+  students?: {
+    id: string;
+    full_name: string;
+    class_name: string;
+    section: string;
+  } | null;
+  /** Joined admin user name — populated by some list endpoints */
+  activator?: { name: string } | null;
+}
+
+export interface RevenueShare {
+  id: string;
+  school_id: string;
+  month: string; // YYYY-MM-DD (first of month)
+  total_active_premium_count: number;
+  rate_per_student: number;
+  amount_owed: number;
+  payout_status: 'pending' | 'invoiced' | 'paid';
+  invoiced_at: string | null;
+  created_at: string;
+  schools?: { id: string; name: string } | null;
+}
+
+export interface PremiumSubscriptionsResponse {
+  data: ParentSubscription[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
+export const premiumApi = {
+  /** List all subscriptions for the current school (admin) */
+  listSubscriptions: (
+    token: string,
+    params?: { status?: string; class_name?: string; page?: number; limit?: number }
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.class_name) qs.set('class_name', params.class_name);
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<PremiumSubscriptionsResponse>(`/api/premium/subscriptions${query}`, { method: 'GET' }, token);
+  },
+
+  /** Activate premium for a single student */
+  activate: (token: string, studentId: string) =>
+    request<ParentSubscription>(`/api/premium/subscriptions/${studentId}/activate`, { method: 'POST' }, token),
+
+  /** Deactivate premium for a single student */
+  deactivate: (token: string, studentId: string) =>
+    request<ParentSubscription>(`/api/premium/subscriptions/${studentId}/deactivate`, { method: 'POST' }, token),
+
+  /** Renew premium for a single student by 1 month */
+  renew: (token: string, studentId: string) =>
+    request<ParentSubscription>(`/api/premium/subscriptions/${studentId}/renew`, { method: 'POST' }, token),
+
+  /** Revenue ledger for the current school (admin) */
+  getRevenue: (token: string, params?: { year?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.year) qs.set('year', params.year);
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<RevenueShare[]>(`/api/premium/revenue${query}`, { method: 'GET' }, token);
+  },
+
+  // ── Superadmin ──────────────────────────────────────────────────────────────
+
+  /** All schools' revenue (superadmin) */
+  getAllRevenue: (token: string, params?: { year?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.year) qs.set('year', params.year);
+    if (params?.status) qs.set('status', params.status);
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<RevenueShare[]>(`/api/premium/revenue/all${query}`, { method: 'GET' }, token);
+  },
+
+  /** Calculate / upsert a month's revenue row (superadmin) */
+  calculateRevenue: (
+    token: string,
+    payload: { month: string; school_id?: string; rate_per_student?: number }
+  ) =>
+    request<RevenueShare[]>('/api/premium/revenue/calculate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  /** Update payout_status for a revenue_share row (superadmin) */
+  updatePayoutStatus: (
+    token: string,
+    id: string,
+    payout_status: 'pending' | 'invoiced' | 'paid'
+  ) =>
+    request<RevenueShare>(`/api/premium/revenue/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ payout_status }),
+    }, token),
+
+  /** List subscriptions for a specific school (superadmin — passes school_id via query) */
+  listSchoolSubscriptions: (
+    token: string,
+    schoolId: string,
+    params?: { status?: string; page?: number; limit?: number }
+  ) => {
+    const qs = new URLSearchParams({ school_id: schoolId });
+    if (params?.status) qs.set('status', params.status);
+    if (params?.page !== undefined) qs.set('page', String(params.page));
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    return request<PremiumSubscriptionsResponse>(`/api/premium/subscriptions?${qs.toString()}`, { method: 'GET' }, token);
+  },
+
+  /** Schools summary with live premium counts (superadmin) */
+  getSchoolsSummary: (token: string) =>
+    request<Array<{
+      school_id: string;
+      school_name: string;
+      subscription_status: boolean;
+      total_students: number;
+      active_premium_count: number;
+      junior_count: number;
+      senior_count: number;
+      rate_per_student: number;
+      amount_owed: number;
+      this_month_status: 'pending' | 'invoiced' | 'paid' | null;
+    }>>('/api/premium/schools/summary', { method: 'GET' }, token),
+};
+
 // ── Monthly Performance Snapshot types ───────────────────────────────────────
 
 export interface ClassRankingRow {
@@ -1198,4 +1342,94 @@ export const performanceApi = {
       token
     );
   },
+};
+
+// ── Daily Tests API ───────────────────────────────────────────────────────────
+
+export interface DailyTestQuestion {
+  question_text: string;
+  options: [string, string, string, string];
+  correct_index: number;
+  explanation: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  marks: number;
+}
+
+export interface DailyTest {
+  id: string;
+  school_id: string;
+  teacher_id: string;
+  class: string;
+  section: string;
+  subject: string;
+  topic: string;
+  questions: DailyTestQuestion[];
+  test_date: string;
+  created_at: string;
+}
+
+export interface DailyTestAttempt {
+  id: string;
+  daily_test_id: string;
+  student_id: string;
+  answers: Record<string, unknown>;
+  score: number | null;
+  total_questions: number;
+  status: 'pending' | 'completed' | 'missed';
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface DailyTestAdminStats {
+  tests_created_today: number;
+  class_completion: Record<string, { total: number; completed: number }>;
+  inactive_teachers: Array<{ teacher_id: string; teacher_name: string }>;
+}
+
+export const dailyTestsApi = {
+  /** Check if the current teacher has daily test permission */
+  checkPermission: (token: string) =>
+    request<{ can_create_daily_tests: boolean }>('/api/daily-tests/permission', { method: 'GET' }, token),
+
+  /** Generate 10 MCQ questions using Gemini */
+  generate: (token: string, payload: {
+    class: string;
+    subject: string;
+    topic: string;
+    board?: string;
+  }) =>
+    request<{ questions: DailyTestQuestion[] }>('/api/daily-tests/generate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  /** Create and assign a daily test */
+  create: (token: string, payload: {
+    class: string;
+    section: string;
+    subject: string;
+    topic: string;
+    test_date: string;
+    questions: DailyTestQuestion[];
+  }) =>
+    request<DailyTest>('/api/daily-tests', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  /** List teacher's own daily tests */
+  list: (token: string, params?: { date?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.date) qs.set('date', params.date);
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<DailyTest[]>(`/api/daily-tests${query}`, { method: 'GET' }, token);
+  },
+
+  /** Admin stats widget data */
+  getAdminStats: (token: string) =>
+    request<DailyTestAdminStats>('/api/daily-tests/admin/stats', { method: 'GET' }, token),
+
+  /** Get attempt results for a test */
+  getResults: (token: string, testId: string) =>
+    request<DailyTestAttempt[]>(`/api/daily-tests/${testId}/results`, { method: 'GET' }, token),
 };

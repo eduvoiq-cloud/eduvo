@@ -36,6 +36,7 @@ import {
 } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 
 const router = Router();
 
@@ -61,24 +62,6 @@ function getResend(): Resend {
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Write a row to audit_logs. Failures are swallowed so they never break a request. */
-async function logAudit(
-  userId: string | null,
-  action: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch {
-    // audit failure must never crash the request
-  }
-}
 
 /** Sign a student JWT. Requires JWT_SECRET in env. */
 function signStudentToken(studentId: string, schoolId: string): string {

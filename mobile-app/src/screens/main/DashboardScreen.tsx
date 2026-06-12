@@ -17,6 +17,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useChildStore } from '../../store/childStore';
 import apiClient from '../../api/client';
 import { MainTabParamList } from '../../navigation/AppNavigator';
+import StreakWidget from '../../components/StreakWidget';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -516,6 +517,18 @@ export default function DashboardScreen() {
 
         {/* Child switcher */}
         <ChildSwitcher />
+
+        {/* Streak widget — uses student token (own) or active child's token */}
+        {activeStudent && (
+          <StreakWidget
+            studentId={activeStudent.id}
+            studentToken={
+              linkedChildren.length > 0
+                ? (linkedChildren[activeChildIndex]?.token ?? token ?? '')
+                : (token ?? '')
+            }
+          />
+        )}
 
         {/* Cards grid */}
         {loading ? (

@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 import { getTokensForStudents, sendPush } from '../services/fcmService';
 
 const router = Router();
@@ -78,12 +79,6 @@ const updatePaymentSchema = z.object({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-async function logAudit(userId: string, action: string, details: Record<string, unknown> = {}) {
-  await supabaseAdmin.from('audit_logs').insert({
-    user_id: userId, action, details, created_at: new Date().toISOString(),
-  });
-}
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 

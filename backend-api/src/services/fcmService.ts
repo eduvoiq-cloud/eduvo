@@ -261,3 +261,85 @@ export async function getTokensForUsers(userIds: string[]): Promise<string[]> {
 
   return Array.from(tokenSet);
 }
+
+/**
+ * Reusable high-level helper: send a push notification to a single user by ID.
+ *
+ * Fetches all registered FCM tokens for the user (supports multi-device),
+ * sends to each token, and automatically removes invalid/expired tokens.
+ *
+ * @param id       The user's UUID (student_id or user_id depending on `tokenOwner`)
+ * @param title    Notification title
+ * @param body     Notification body
+ * @param data     Optional key-value payload delivered alongside the notification
+ * @param tokenOwner  'student' to look up in students table, 'user' for staff/parents
+ * @returns        Object with successCount and failureCount
+ */
+export async function sendPushNotification(
+  id: string,
+  title: string,
+  body: string,
+  data?: Record<string, string>,
+  tokenOwner: 'student' | 'user' = 'user'
+): Promise<{ successCount: number; failureCount: number }> {
+  if (!isFcmReady()) return { successCount: 0, failureCount: 0 };
+
+  const tokens =
+    tokenOwner === 'student'
+      ? await getTokensForStudents([id])
+      : await getTokensForUsers([id]);
+
+  if (tokens.length === 0) return { successCount: 0, failureCount: 0 };
+
+  return sendPushMulticast(tokens, title, body, data);
+}
+
+/**
+ * Streak milestone values at which we send a congratulatory notification.
+ * Trigger after each streak update to check if a milestone was just reached.
+ */
+export const STREAK_MILESTONES = new Set([3, 7, 14, 30, 50, 100]);
+
+/**
+ * Check if a streak update crossed a milestone and send FCM if so.
+ * Call this after any streak update (daily test or activity pack completion).
+ *
+ * @param studentId     The student's UUID
+ * @param newStreak     The updated streak value
+ * @param studentName   Student's display name (for parent notification)
+ * @param parentId      Parent's user UUID (optional — skip parent push if null)
+ */
+export async function checkAndSendStreakMilestone(
+  studentId: string,
+  newStreak: number,
+  studentName: string,
+  parentId: string | null
+): Promise<void> {
+  if (!STREAK_MILESTONES.has(newStreak)) return;
+
+  try {
+    // Notify student
+    await sendPushNotification(
+      studentId,
+      `🔥 ${newStreak}-Day Streak!`,
+      `Amazing! You've hit a ${newStreak}-day streak! Keep going! 💪`,
+      { type: 'streak_milestone', streak: String(newStreak) },
+      'student'
+    );
+
+    // Notify parent
+    if (parentId) {
+      await sendPushNotification(
+        parentId,
+        `🔥 ${studentName} hit a ${newStreak}-day streak!`,
+        `Amazing! ${studentName} has maintained a ${newStreak}-day learning streak! Celebrate this win! 🎉`,
+        { type: 'streak_milestone', streak: String(newStreak), student_id: studentId },
+        'user'
+      );
+    }
+
+    console.log(`[FCM] Streak milestone ${newStreak} sent for student ${studentId}`);
+  } catch (err) {
+    console.error('[FCM] Failed to send streak milestone notification:', err);
+  }
+}

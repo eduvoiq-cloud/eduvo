@@ -8,6 +8,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 import { templateDownloadRateLimit } from '../middleware/rateLimit';
 import { sendSMS } from '../services/smsService';
 
@@ -109,25 +110,6 @@ const upload = multer({
     }
   },
 });
-
-// ── Audit logging helper ──────────────────────────────────────────────────────
-async function logAudit(
-  userId: string,
-  action: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      table_name: 'bulk_import',
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[audit] Failed to write audit log:', err);
-  }
-}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface PreviewRow {

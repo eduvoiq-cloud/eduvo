@@ -64,6 +64,12 @@ import timetableRoutes from './routes/timetable';
 import homeworkRoutes from './routes/homework';
 import marksViewRoutes from './routes/marksView';
 import announcementRoutes from './routes/announcements';
+import premiumRoutes from './routes/premium';
+import dailyTestsRoutes from './routes/dailyTests';
+import activityPacksRoutes from './routes/activityPacks';
+import studentProgressRoutes from './routes/studentProgress';
+import weeklyAnalysisRoutes from './routes/weeklyAnalysis';
+import cronNotificationRoutes from './routes/cronNotifications';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -284,6 +290,12 @@ async function startServer() {
   app.use('/api/homework', homeworkRoutes);
   app.use('/api/marks-view', marksViewRoutes);
   app.use('/api/announcements', announcementRoutes);
+  app.use('/api/premium', premiumRoutes);
+  app.use('/api/daily-tests', dailyTestsRoutes);
+  app.use('/api/activity-packs', activityPacksRoutes);
+  app.use('/api/student-progress', studentProgressRoutes);
+  app.use('/api/weekly-analysis', weeklyAnalysisRoutes);
+  app.use('/api/cron/notifications', cronNotificationRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

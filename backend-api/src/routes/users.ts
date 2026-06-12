@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 
 const router = Router();
 
@@ -75,18 +76,6 @@ router.use(authenticate);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function logAudit(
-  userId: string,
-  action: string,
-  details: Record<string, unknown> = {}
-) {
-  await supabaseAdmin.from('audit_logs').insert({
-    user_id: userId,
-    action,
-    details,
-    created_at: new Date().toISOString(),
-  });
-}
 
 // ── Staff FCM token ────────────────────────────────────────────────────────────
 

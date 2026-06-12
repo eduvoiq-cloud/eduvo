@@ -5,6 +5,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 
 const router = Router();
 
@@ -40,28 +41,6 @@ const updateStatusSchema = z.object({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * Insert a row into audit_logs. Errors are swallowed so they never break the main flow.
- * Privacy: message content is NEVER logged — only metadata.
- */
-async function logAudit(
-  userId: string | null,
-  action: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      table_name: 'complaints',
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[audit] Failed to write audit log:', err);
-  }
-}
 
 /**
  * Create an in-app notification for a staff user (teacher or school_admin).

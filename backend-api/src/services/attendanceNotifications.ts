@@ -8,41 +8,9 @@
  * blocks the HTTP response.
  */
 
-import * as admin from 'firebase-admin';
+import { sendPush, isFcmReady } from './fcmService';
 import { supabaseAdmin } from '../config/supabase';
-
-// ── Firebase Admin initialisation ─────────────────────────────────────────────
-// Initialise once; guard against double-init in hot-reload environments.
-// Wrapped in try/catch so a missing or invalid key never crashes the server —
-// it just disables push notifications gracefully.
-if (!admin.apps.length) {
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-
-  const isConfigured =
-    process.env.FIREBASE_PROJECT_ID &&
-    process.env.FIREBASE_CLIENT_EMAIL &&
-    privateKey &&
-    !privateKey.includes('YOUR_PRIVATE_KEY_HERE') &&
-    privateKey.includes('BEGIN');
-
-  if (!isConfigured) {
-    console.warn(
-      '[FCM] Firebase env vars not set or contain placeholder values. Push notifications will be skipped.'
-    );
-  } else {
-    try {
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-          privateKey,
-        }),
-      });
-    } catch (err) {
-      console.warn('[FCM] Firebase init failed — push notifications disabled:', err instanceof Error ? err.message : err);
-    }
-  }
-}
+import { logAudit } from '../utils/audit';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,51 +57,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Write to audit_logs. Errors are swallowed so they never break the caller. */
-async function logAudit(
-  action: string,
-  details: Record<string, unknown>
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: null,
-      action,
-      table_name: 'attendance',
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[FCM] Failed to write audit log:', err);
-  }
-}
-
-/**
- * Send a single FCM message.
- * Returns true on success, false on any error (invalid token, network, etc.).
- */
-async function sendFcmMessage(
-  token: string,
-  title: string,
-  body: string
-): Promise<boolean> {
-  try {
-    await admin.messaging().send({
-      token,
-      notification: { title, body },
-      android: { priority: 'high' },
-      apns: { payload: { aps: { sound: 'default' } } },
-    });
-    return true;
-  } catch (err: unknown) {
-    // firebase-admin throws MessagingError; log and continue
-    const code =
-      err && typeof err === 'object' && 'code' in err
-        ? (err as { code: string }).code
-        : 'unknown';
-    console.error(`[FCM] Failed to send to token (${code}):`, err);
-    return false;
-  }
-}
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
@@ -285,7 +208,7 @@ export async function sendAttendanceNotifications(
     const BATCH_SIZE = 100;
     const BATCH_DELAY_MS = 100;
 
-    const fcmEnabled = admin.apps.length > 0;
+    const fcmEnabled = isFcmReady();
 
     for (let i = 0; i < payloads.length; i += BATCH_SIZE) {
       const batch = payloads.slice(i, i + BATCH_SIZE);
@@ -306,7 +229,7 @@ export async function sendAttendanceNotifications(
           // 6a. Send FCM push notification (if token available and Firebase is configured)
           let fcmSuccess = false;
           if (fcmEnabled && fcmToken) {
-            fcmSuccess = await sendFcmMessage(fcmToken, title, body);
+            fcmSuccess = await sendPush(fcmToken, title, body);
             if (fcmSuccess) {
               sentCount++;
             } else {
@@ -364,7 +287,7 @@ export async function sendAttendanceNotifications(
     }
 
     // ── 7. Audit log ──────────────────────────────────────────────────────────
-    await logAudit('attendance_notifications_sent', {
+    await logAudit(null, 'attendance_notifications_sent', 'attendance', {
       sent_count: sentCount,
       failed_count: failedCount,
       class: className,
@@ -381,7 +304,7 @@ export async function sendAttendanceNotifications(
     console.error('[FCM] Unexpected error in sendAttendanceNotifications:', err);
 
     // Best-effort audit log for the failure
-    await logAudit('attendance_notifications_error', {
+    await logAudit(null, 'attendance_notifications_error', 'attendance', {
       class: className,
       section,
       date,

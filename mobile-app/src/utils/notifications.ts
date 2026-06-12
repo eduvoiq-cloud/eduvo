@@ -106,6 +106,30 @@ export async function sendFcmTokenToBackend(
   }
 }
 
+/**
+ * Registers the device push token with the backend for a staff/parent user.
+ *
+ * Endpoint: POST /api/users/fcm-token
+ * Body:     { fcm_token: string }
+ *
+ * Call this after a parent/staff user logs in and a token is obtained.
+ * Requires the apiClient to have a staff/parent auth token set in headers.
+ */
+export async function sendFcmTokenToBackendForUser(
+  token: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  apiClient: any
+): Promise<void> {
+  try {
+    await apiClient.post('/api/users/fcm-token', {
+      fcm_token: token,
+    });
+    console.log('[Notifications] FCM token registered for user with backend.');
+  } catch (error: any) {
+    console.warn('[Notifications] Failed to register user FCM token:', error.message);
+  }
+}
+
 // ── Foreground notification listener ─────────────────────────────────────────
 
 /**

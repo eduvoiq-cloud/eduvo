@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 
 const router = Router();
 
@@ -12,26 +13,6 @@ router.use(authenticate);
 router.use(requireRole('parent'));
 
 // -- Helpers ------------------------------------------------------------------
-
-/** Insert a row into audit_logs. Errors are swallowed so they never break the main flow. */
-async function logAudit(
-  userId: string,
-  action: string,
-  tableName: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      table_name: tableName,
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[audit] Failed to write audit log:', err);
-  }
-}
 
 /** Returns today as YYYY-MM-DD. */
 function todayDate(): string {

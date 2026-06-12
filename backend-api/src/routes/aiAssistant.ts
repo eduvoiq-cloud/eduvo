@@ -7,6 +7,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 import {
   extractFromFile,
   generateQuestions,
@@ -118,24 +119,6 @@ const generateRateLimit = rateLimit({
 /** Sanitise a string: trim and strip control characters. */
 function sanitise(value: string): string {
   return value.trim().replace(/[\x00-\x1F\x7F]/g, '');
-}
-
-/** Insert a row into audit_logs. Errors are swallowed. */
-async function logAudit(
-  userId: string,
-  action: string,
-  details: Record<string, unknown> = {}
-): Promise<void> {
-  try {
-    await supabaseAdmin.from('audit_logs').insert({
-      user_id: userId,
-      action,
-      details,
-      created_at: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('[audit] Failed to write audit log:', err);
-  }
 }
 
 /** Count how many AI generations the teacher has used today. */

@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 import { getTokensForStudents, getTokensForUsers, sendPushMulticast } from '../services/fcmService';
 
 const router = Router();
@@ -20,19 +21,6 @@ const createNotificationSchema = z.object({
 });
 
 // -- Helpers ------------------------------------------------------------------
-
-async function logAudit(
-  userId: string,
-  action: string,
-  details: Record<string, unknown> = {}
-) {
-  await supabaseAdmin.from('audit_logs').insert({
-    user_id: userId,
-    action,
-    details,
-    created_at: new Date().toISOString(),
-  });
-}
 
 /**
  * The live DB has a 'message' column (NOT NULL) instead of 'body'.

@@ -1,0 +1,11 @@
+﻿students=9
+Ananya Gupta: marks=8 total=367/800
+Vivek Rao: marks=8 total=411/800
+Sneha Desai: marks=8 total=348/800
+Arjun Nair: marks=8 total=389/800
+Meera Iyer: marks=8 total=351/800
+Diya Shah: marks=8 total=410/800
+Reyansh Modi: marks=8 total=424/800
+Riya Kapoor: marks=8 total=371/800
+Aarav Patel: marks=8 total=400/800
+
