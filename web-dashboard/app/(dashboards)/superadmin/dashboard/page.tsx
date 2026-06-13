@@ -47,6 +47,27 @@ interface SchoolsPageResponse {
   total_pages: number;
 }
 
+interface AiCostSchool {
+  school_id: string;
+  school_name: string;
+  total_cost_inr: number;
+  gemini_calls_text: number;
+  gemini_calls_vision: number;
+  cache_hits: number;
+  student_count: number;
+  cost_per_student_inr: number;
+}
+
+interface AiCostData {
+  month: string;
+  this_month_total_inr: number;
+  cost_per_student_inr: number;
+  total_students_tracked: number;
+  within_target: boolean;
+  cost_target_inr_per_student: number;
+  per_school: AiCostSchool[];
+}
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 async function apiFetch<T>(path: string, token: string, options?: RequestInit): Promise<T> {
@@ -74,6 +95,11 @@ export default function SuperAdminDashboard() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // AI Cost state
+  const [aiCost, setAiCost] = useState<AiCostData | null>(null);
+  const [aiCostLoading, setAiCostLoading] = useState(true);
+  const [showAiCostBreakdown, setShowAiCostBreakdown] = useState(false);
 
   // Filter state for audit logs
   const [logSchoolFilter, setLogSchoolFilter] = useState('');
@@ -147,11 +173,26 @@ export default function SuperAdminDashboard() {
     }
   }, []);
 
+  const fetchAiCost = useCallback(async () => {
+    const token = getToken();
+    if (!token) return;
+    setAiCostLoading(true);
+    try {
+      const data = await apiFetch<AiCostData>('/api/superadmin/ai-cost', token);
+      setAiCost(data);
+    } catch {
+      // non-critical — widget shows empty state
+    } finally {
+      setAiCostLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSchools();
     fetchStats();
     fetchAuditLogs();
-  }, [fetchSchools, fetchStats, fetchAuditLogs]);
+    fetchAiCost();
+  }, [fetchSchools, fetchStats, fetchAuditLogs, fetchAiCost]);
 
   useEffect(() => {
     fetchAuditLogs(logSchoolFilter || undefined);
@@ -434,6 +475,101 @@ export default function SuperAdminDashboard() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ── AI Cost This Month Widget ── */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-8">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-gray-900">AI Cost This Month</h2>
+            {aiCost && !aiCostLoading && (
+              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                aiCost.within_target
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-red-100 text-red-700'
+              }`}>
+                {aiCost.within_target ? '✓ Within target' : '⚠ Over target'}
+              </span>
+            )}
+          </div>
+          {aiCost && aiCost.per_school.length > 0 && (
+            <button
+              onClick={() => setShowAiCostBreakdown((v) => !v)}
+              className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+            >
+              {showAiCostBreakdown ? 'Hide breakdown' : 'Per-school breakdown'}
+            </button>
+          )}
+        </div>
+
+        {aiCostLoading ? (
+          <div className="flex justify-center py-8">
+            <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : !aiCost || aiCost.this_month_total_inr === 0 ? (
+          <p className="px-6 py-6 text-sm text-gray-400 text-center">
+            No AI usage recorded this month yet. AI cost data accumulates nightly during batch evaluation.
+          </p>
+        ) : (
+          <div className="px-6 py-4">
+            {/* Summary row */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Total cost</p>
+                <p className="text-lg font-bold text-gray-900">₹{aiCost.this_month_total_inr.toFixed(2)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Cost per student</p>
+                <p className={`text-lg font-bold ${aiCost.within_target ? 'text-green-700' : 'text-red-700'}`}>
+                  ₹{aiCost.cost_per_student_inr.toFixed(4)}
+                  <span className="text-xs font-normal text-gray-400 ml-1">/ ₹{aiCost.cost_target_inr_per_student} target</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Students tracked</p>
+                <p className="text-lg font-bold text-gray-900">{aiCost.total_students_tracked.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Month</p>
+                <p className="text-lg font-bold text-gray-900">{aiCost.month}</p>
+              </div>
+            </div>
+
+            {/* Per-school breakdown (toggleable) */}
+            {showAiCostBreakdown && aiCost.per_school.length > 0 && (
+              <div className="border border-gray-100 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">School</th>
+                      <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Cost (₹)</th>
+                      <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">₹/Student</th>
+                      <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 hidden sm:table-cell">Text calls</th>
+                      <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 hidden sm:table-cell">Vision calls</th>
+                      <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 hidden md:table-cell">Cache hits</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {aiCost.per_school.map((school) => (
+                      <tr key={school.school_id} className="hover:bg-gray-50">
+                        <td className="px-4 py-2.5 text-gray-900 font-medium truncate max-w-[180px]">{school.school_name}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-700">{school.total_cost_inr.toFixed(4)}</td>
+                        <td className={`px-4 py-2.5 text-right font-medium ${
+                          school.cost_per_student_inr > 3 ? 'text-red-600' : 'text-green-700'
+                        }`}>
+                          {school.cost_per_student_inr.toFixed(4)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-gray-500 hidden sm:table-cell">{school.gemini_calls_text.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-500 hidden sm:table-cell">{school.gemini_calls_vision.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-right text-gray-500 hidden md:table-cell">{school.cache_hits.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Audit Log Section ── */}

@@ -1406,7 +1406,24 @@ export const performanceApi = {
   },
 };
 
-// ── Daily Tests API ───────────────────────────────────────────────────────────
+// ── Homework AI Stats ─────────────────────────────────────────────────────────
+
+export interface HomeworkAIStats {
+  total_submissions_this_week: number;
+  auto_checked_count: number;
+  auto_checked_pct: number;
+  flagged_count: number;
+  flagged_pct: number;
+  total_checked: number;
+  cache_hit_count: number;
+  teachers_with_pending: Array<{ teacher_id: string; name: string; pending_count: number }>;
+  week_start: string;
+}
+
+export const homeworkAIStatsApi = {
+  get: (token: string) =>
+    request<HomeworkAIStats>('/api/homework/ai-stats', { method: 'GET' }, token),
+};
 
 export interface DailyTestQuestion {
   question_text: string;

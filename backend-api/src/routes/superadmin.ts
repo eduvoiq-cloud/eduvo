@@ -854,4 +854,155 @@ router.get('/export/:school_id', async (req: Request, res: Response) => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// AI COST MONITORING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/superadmin/ai-cost ───────────────────────────────────────────────
+/**
+ * AI cost summary for the superadmin dashboard widget.
+ * Returns:
+ *   - this_month_total_inr: total estimated cost across all schools this month
+ *   - per_school: array of { school_id, school_name, total_cost_inr,
+ *                             gemini_calls_text, gemini_calls_vision,
+ *                             cache_hits, student_count }
+ *   - cost_per_student_inr: this_month_total_inr / total_students (target ≤ ₹3)
+ *   - month: YYYY-MM of the current (or queried) month
+ *
+ * Optional query param:
+ *   month=YYYY-MM  — defaults to current month
+ */
+router.get('/ai-cost', async (req: Request, res: Response) => {
+  const rawMonth = (req.query.month as string | undefined)?.trim();
+
+  // Validate or default month to current month
+  let year: number;
+  let month: number;
+
+  if (rawMonth) {
+    const parts = rawMonth.split('-');
+    year = parseInt(parts[0], 10);
+    month = parseInt(parts[1], 10);
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+      sendError(res, 'Invalid month format. Use YYYY-MM.', 400);
+      return;
+    }
+  } else {
+    const now = new Date();
+    year = now.getUTCFullYear();
+    month = now.getUTCMonth() + 1;
+  }
+
+  const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+  const startDate = `${monthStr}-01`;
+  // Last day of month
+  const endDate = new Date(year, month, 0).toISOString().slice(0, 10); // month 0-indexed in Date constructor
+
+  // Fetch all cost log rows for this month, joined with school names
+  const { data: costRows, error: costErr } = await supabaseAdmin
+    .from('ai_cost_log')
+    .select('school_id, gemini_calls_text, gemini_calls_vision, cache_hits, estimated_cost_inr, date')
+    .gte('date', startDate)
+    .lte('date', endDate)
+    .order('date', { ascending: true });
+
+  if (costErr) {
+    sendError(res, costErr.message, 500);
+    return;
+  }
+
+  // Aggregate per school
+  const schoolAgg = new Map<string, {
+    total_cost: number;
+    text_calls: number;
+    vision_calls: number;
+    cache_hits: number;
+  }>();
+
+  for (const row of (costRows ?? []) as Array<{
+    school_id: string;
+    gemini_calls_text: number;
+    gemini_calls_vision: number;
+    cache_hits: number;
+    estimated_cost_inr: number;
+  }>) {
+    const entry = schoolAgg.get(row.school_id) ?? {
+      total_cost: 0, text_calls: 0, vision_calls: 0, cache_hits: 0,
+    };
+    entry.total_cost += Number(row.estimated_cost_inr);
+    entry.text_calls += row.gemini_calls_text;
+    entry.vision_calls += row.gemini_calls_vision;
+    entry.cache_hits += row.cache_hits;
+    schoolAgg.set(row.school_id, entry);
+  }
+
+  // Fetch school names for all schools with cost entries
+  const schoolIds = Array.from(schoolAgg.keys());
+
+  let schoolNameMap: Record<string, string> = {};
+  if (schoolIds.length > 0) {
+    const { data: schools } = await supabaseAdmin
+      .from('schools')
+      .select('id, name')
+      .in('id', schoolIds);
+
+    for (const s of (schools ?? []) as { id: string; name: string }[]) {
+      schoolNameMap[s.id] = s.name;
+    }
+  }
+
+  // Fetch active student count per school for cost-per-student metric
+  let studentCountMap: Record<string, number> = {};
+  if (schoolIds.length > 0) {
+    const { data: studentCounts } = await supabaseAdmin
+      .from('students')
+      .select('school_id')
+      .in('school_id', schoolIds)
+      .eq('is_deleted', false);
+
+    for (const row of (studentCounts ?? []) as { school_id: string }[]) {
+      studentCountMap[row.school_id] = (studentCountMap[row.school_id] ?? 0) + 1;
+    }
+  }
+
+  // Build per-school breakdown
+  const perSchool = Array.from(schoolAgg.entries())
+    .map(([schoolId, agg]) => {
+      const studentCount = studentCountMap[schoolId] ?? 0;
+      return {
+        school_id: schoolId,
+        school_name: schoolNameMap[schoolId] ?? 'Unknown School',
+        total_cost_inr: Math.round(agg.total_cost * 10000) / 10000,
+        gemini_calls_text: agg.text_calls,
+        gemini_calls_vision: agg.vision_calls,
+        cache_hits: agg.cache_hits,
+        student_count: studentCount,
+        cost_per_student_inr: studentCount > 0
+          ? Math.round((agg.total_cost / studentCount) * 10000) / 10000
+          : 0,
+      };
+    })
+    .sort((a, b) => b.total_cost_inr - a.total_cost_inr); // highest cost first
+
+  const totalCostInr = perSchool.reduce((sum, s) => sum + s.total_cost_inr, 0);
+  const totalStudents = perSchool.reduce((sum, s) => sum + s.student_count, 0);
+  const overallCostPerStudent = totalStudents > 0
+    ? Math.round((totalCostInr / totalStudents) * 10000) / 10000
+    : 0;
+
+  // Target: ≤ ₹3 per student per month
+  const COST_TARGET_INR_PER_STUDENT = 3;
+  const withinTarget = overallCostPerStudent <= COST_TARGET_INR_PER_STUDENT;
+
+  sendSuccess(res, {
+    month: monthStr,
+    this_month_total_inr: Math.round(totalCostInr * 10000) / 10000,
+    cost_per_student_inr: overallCostPerStudent,
+    total_students_tracked: totalStudents,
+    within_target: withinTarget,
+    cost_target_inr_per_student: COST_TARGET_INR_PER_STUDENT,
+    per_school: perSchool,
+  });
+});
+
 export default router;

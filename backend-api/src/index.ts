@@ -70,6 +70,7 @@ import activityPacksRoutes from './routes/activityPacks';
 import studentProgressRoutes from './routes/studentProgress';
 import weeklyAnalysisRoutes from './routes/weeklyAnalysis';
 import cronNotificationRoutes from './routes/cronNotifications';
+import cronHomeworkRoutes from './routes/cronHomework';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -296,6 +297,7 @@ async function startServer() {
   app.use('/api/student-progress', studentProgressRoutes);
   app.use('/api/weekly-analysis', weeklyAnalysisRoutes);
   app.use('/api/cron/notifications', cronNotificationRoutes);
+  app.use('/api/cron/homework', cronHomeworkRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

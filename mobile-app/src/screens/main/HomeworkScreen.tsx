@@ -10,9 +10,30 @@ import {
   StatusBar,
   Alert,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/authStore';
 import { useChildStore } from '../../store/childStore';
+import type { HomeworkMeta } from '../../screens/student/HomeworkSubmitScreen';
+
+// ── Navigation ─────────────────────────────────────────────────────────────────
+
+type MoreStackParamList = {
+  MoreHome: undefined;
+  Homework: undefined;
+  HomeworkSubmit: { homework: HomeworkMeta };
+  Timetable: undefined;
+  Notifications: undefined;
+  Announcements: undefined;
+  Complaints: undefined;
+  FeeStatus: undefined;
+  ChangePassword: undefined;
+  LinkChild: undefined;
+  Settings: undefined;
+};
+
+type MoreNavProp = StackNavigationProp<MoreStackParamList>;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -24,6 +45,8 @@ interface HomeworkItem {
   due_date: string;
   is_acknowledged: boolean;
   created_at: string;
+  /** Submission status from homework_submissions (if ai_check_enabled) */
+  submission_status?: string | null;
 }
 
 type TabFilter = 'Pending' | 'Completed' | 'All';
@@ -76,16 +99,32 @@ function dueDateLabel(dueDate: string): string {
 function HomeworkCard({
   item,
   onAcknowledge,
+  onPress,
 }: {
   item: HomeworkItem;
   onAcknowledge: (id: string) => void;
+  onPress: (item: HomeworkItem) => void;
 }) {
   const palette = subjectPalette(item.subject);
   const dateColor = dueDateColor(item.due_date);
   const dateLabel = dueDateLabel(item.due_date);
 
+  const submissionStatusLabel: Record<string, { label: string; color: string }> = {
+    submitted:          { label: 'Submitted ✓', color: '#F59E0B' },
+    processing:         { label: 'Checking…', color: '#3B82F6' },
+    checked:            { label: 'Checked ✓', color: '#22C55E' },
+    flagged_for_review: { label: 'Under Review', color: '#F97316' },
+  };
+  const subStatus = item.submission_status ? submissionStatusLabel[item.submission_status] : null;
+
   return (
-    <View style={cardStyles.card}>
+    <TouchableOpacity
+      style={cardStyles.card}
+      onPress={() => onPress(item)}
+      activeOpacity={0.75}
+      accessibilityRole="button"
+      accessibilityLabel={`Open homework: ${item.title}`}
+    >
       {/* Subject badge */}
       <View style={[cardStyles.subjectBadge, { backgroundColor: palette.bg }]}>
         <Text style={[cardStyles.subjectText, { color: palette.text }]}>{item.subject}</Text>
@@ -104,23 +143,33 @@ function HomeworkCard({
       {/* Footer row */}
       <View style={cardStyles.footer}>
         <Text style={[cardStyles.dueDate, { color: dateColor }]}>{dateLabel}</Text>
-        {item.is_acknowledged ? (
-          <View style={cardStyles.doneRow}>
-            <Text style={cardStyles.doneCheck}>✓</Text>
-            <Text style={cardStyles.doneText}>Done</Text>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={cardStyles.doneButton}
-            onPress={() => onAcknowledge(item.id)}
-            accessibilityRole="button"
-            accessibilityLabel={`Mark ${item.title} as done`}
-          >
-            <Text style={cardStyles.doneButtonText}>Mark Done</Text>
-          </TouchableOpacity>
-        )}
+        <View style={cardStyles.footerRight}>
+          {/* Submission status badge */}
+          {subStatus && (
+            <View style={[cardStyles.subStatusBadge, { backgroundColor: subStatus.color + '22' }]}>
+              <Text style={[cardStyles.subStatusText, { color: subStatus.color }]}>
+                {subStatus.label}
+              </Text>
+            </View>
+          )}
+          {item.is_acknowledged ? (
+            <View style={cardStyles.doneRow}>
+              <Text style={cardStyles.doneCheck}>✓</Text>
+              <Text style={cardStyles.doneText}>Seen</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={cardStyles.doneButton}
+              onPress={(e) => { e.stopPropagation?.(); onAcknowledge(item.id); }}
+              accessibilityRole="button"
+              accessibilityLabel={`Mark ${item.title} as done`}
+            >
+              <Text style={cardStyles.doneButtonText}>Mark Done</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -152,6 +201,7 @@ const cardStyles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 4,
   },
+  footerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dueDate: { fontSize: 12, fontWeight: '600' },
   doneRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   doneCheck: { fontSize: 16, color: '#22C55E', fontWeight: '700' },
@@ -163,6 +213,12 @@ const cardStyles = StyleSheet.create({
     paddingVertical: 6,
   },
   doneButtonText: { fontSize: 13, color: '#FFFFFF', fontWeight: '600' },
+  subStatusBadge: {
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  subStatusText: { fontSize: 11, fontWeight: '700' },
 });
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -170,6 +226,7 @@ const cardStyles = StyleSheet.create({
 export default function HomeworkScreen() {
   const student = useAuthStore((s) => s.student);
   const { linkedChildren, activeChildIndex } = useChildStore();
+  const navigation = useNavigation<MoreNavProp>();
   const [homework, setHomework] = useState<HomeworkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -234,6 +291,18 @@ export default function HomeworkScreen() {
     }
   };
 
+  const handleOpenHomework = (item: HomeworkItem) => {
+    navigation.navigate('HomeworkSubmit', {
+      homework: {
+        id: item.id,
+        title: item.title,
+        subject_name: item.subject ?? null,
+        due_date: item.due_date,
+        teacher_name: null,
+      },
+    });
+  };
+
   // Filter by tab
   const filtered = homework.filter((h) => {
     if (activeTab === 'Pending') return !h.is_acknowledged;
@@ -286,6 +355,7 @@ export default function HomeworkScreen() {
               <HomeworkCard
                 item={item}
                 onAcknowledge={acknowledging === item.id ? () => {} : handleAcknowledge}
+                onPress={handleOpenHomework}
               />
             )}
             ListEmptyComponent={

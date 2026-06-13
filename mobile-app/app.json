@@ -31,6 +31,19 @@
     "plugins": [
       "expo-secure-store",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Eduvo to access your photos to submit homework.",
+          "cameraPermission": "Allow Eduvo to use the camera to take homework photos."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Eduvo to use the camera to capture homework photos."
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/icon.png",

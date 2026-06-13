@@ -26,6 +26,7 @@ import StudentTestsScreen from '../screens/student/TestsScreen';
 import DailyTestScreen from '../screens/student/DailyTestScreen';
 import DailyTestAttemptScreen from '../screens/student/DailyTestAttemptScreen';
 import type { DailyTestMeta } from '../screens/student/DailyTestScreen';
+import HomeworkSubmitScreen, { type HomeworkMeta } from '../screens/student/HomeworkSubmitScreen';
 
 // More home screen
 import MoreHomeScreen from '../screens/main/MoreHomeScreen';
@@ -70,6 +71,7 @@ export type MainStackParamList = {
   MainTabs: undefined;
   TestAttempt: { test: TestMeta };
   DailyTestAttempt: { test: DailyTestMeta };
+  HomeworkSubmit: { homework: HomeworkMeta };
   ChangePassword: undefined;
   LinkChild: undefined;
   Announcements: undefined;
@@ -312,6 +314,11 @@ function MoreNavigator() {
         options={{ title: 'Homework' }}
       />
       <MoreStack.Screen
+        name="HomeworkSubmit"
+        component={HomeworkSubmitScreen}
+        options={{ title: 'Submit Homework' }}
+      />
+      <MoreStack.Screen
         name="Timetable"
         component={TimetableScreen}
         options={{ title: 'Timetable' }}
@@ -419,6 +426,17 @@ function MainNavigator() {
         name="DailyTestAttempt"
         component={DailyTestAttemptScreen}
         options={{ headerShown: false }}
+      />
+      <MainStack.Screen
+        name="HomeworkSubmit"
+        component={HomeworkSubmitScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Submit Homework',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
       />
       <MainStack.Screen
         name="ChangePassword"

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { assignmentsApi, type TeacherAssignment } from '@/lib/api';
 import { getToken } from '@/lib/session';
@@ -27,11 +28,20 @@ interface HomeworkItem {
   due_date: string;
   file_url: string | null;
   created_at: string;
+  ai_check_enabled?: boolean;
 }
 
 interface AckCount {
   acknowledged_count: number;
   total_students: number;
+}
+
+interface AISettings {
+  reference_answer: string;
+  submission_type: 'typed' | 'photo' | 'either';
+  subject_type: 'theory' | 'numerical' | 'mixed' | '';
+  min_word_count: string;
+  requires_diagram: boolean;
 }
 
 interface HomeworkForm {
@@ -43,6 +53,24 @@ interface HomeworkForm {
   description: string;
   due_date: string;
   file: File | null;
+  // AI checking
+  ai_check_enabled: boolean;
+  ai_settings: AISettings;
+  // Template
+  save_as_template: boolean;
+  template_name: string;
+}
+
+interface HWTemplate {
+  id: string;
+  template_name: string;
+  subject: string;
+  reference_answer: string | null;
+  submission_type: 'typed' | 'photo' | 'either';
+  subject_type: 'theory' | 'numerical' | 'mixed' | null;
+  min_word_count: number | null;
+  requires_diagram: boolean;
+  created_at: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -57,6 +85,14 @@ const SUBJECT_COLORS = [
   'bg-yellow-100 text-yellow-700',
   'bg-red-100 text-red-700',
 ];
+
+// Auto-suggest subject_type based on subject name keywords
+function suggestSubjectType(subjectName: string): 'theory' | 'numerical' | 'mixed' | '' {
+  const name = subjectName.toLowerCase();
+  if (/math|maths|mathematics|physics|chemistry|accounts|accountancy|economics/.test(name)) return 'numerical';
+  if (/history|civics|geography|biology|english|hindi|gujarati|social|science|evs/.test(name)) return 'theory';
+  return 'mixed';
+}
 
 function subjectColor(name: string): string {
   let hash = 0;
@@ -73,6 +109,29 @@ function formatDueDate(dateStr: string): string {
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+const DEFAULT_AI_SETTINGS: AISettings = {
+  reference_answer: '',
+  submission_type: 'either',
+  subject_type: '',
+  min_word_count: '',
+  requires_diagram: false,
+};
+
+const DEFAULT_FORM: HomeworkForm = {
+  subject_id: '',
+  custom_subject: '',
+  class_name: '',
+  section: '',
+  title: '',
+  description: '',
+  due_date: '',
+  file: null,
+  ai_check_enabled: false,
+  ai_settings: { ...DEFAULT_AI_SETTINGS },
+  save_as_template: false,
+  template_name: '',
+};
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
@@ -95,6 +154,29 @@ function HomeworkSkeleton() {
   );
 }
 
+// ── Toggle ────────────────────────────────────────────────────────────────────
+
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+        checked ? 'bg-blue-600' : 'bg-gray-200'
+      }`}
+    >
+      <span
+        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${
+          checked ? 'translate-x-4' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  );
+}
+
 // ── Homework Card ─────────────────────────────────────────────────────────────
 
 function HomeworkCard({
@@ -102,11 +184,13 @@ function HomeworkCard({
   ackCount,
   onEdit,
   onDelete,
+  onViewStatus,
 }: {
   item: HomeworkItem;
   ackCount: AckCount | null;
   onEdit: (item: HomeworkItem) => void;
   onDelete: (item: HomeworkItem) => void;
+  onViewStatus: (item: HomeworkItem) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const colorClass = subjectColor(item.subject_name ?? 'General');
@@ -124,7 +208,17 @@ function HomeworkCard({
             {item.subject_name ?? 'General'}
           </span>
           <div className="flex-1 min-w-0">
-            <h3 className="text-base font-semibold text-gray-900 leading-snug">{item.title}</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-semibold text-gray-900 leading-snug">{item.title}</h3>
+              {item.ai_check_enabled && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-violet-100 text-violet-700">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.416A2 2 0 0113 21H11a2 2 0 01-1.414-2.343l-.347-.416z" />
+                  </svg>
+                  AI Checking
+                </span>
+              )}
+            </div>
             {item.description && (
               <p className="mt-1 text-sm text-gray-500 line-clamp-2">{item.description}</p>
             )}
@@ -140,7 +234,7 @@ function HomeworkCard({
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  {ackCount.acknowledged_count} / {ackCount.total_students} students acknowledged
+                  {ackCount.acknowledged_count} / {ackCount.total_students} acknowledged
                 </span>
               )}
               {item.file_url && (
@@ -158,6 +252,12 @@ function HomeworkCard({
 
         {/* Action buttons — visible on hover */}
         <div className={`flex items-center gap-2 flex-shrink-0 transition-opacity ${hovered ? 'opacity-100' : 'opacity-0'}`}>
+          {item.ai_check_enabled && (
+            <button onClick={() => onViewStatus(item)}
+              className="px-3 py-1.5 text-xs font-medium text-violet-700 border border-violet-200 rounded-lg hover:bg-violet-50 transition-colors">
+              Status
+            </button>
+          )}
           <button onClick={() => onEdit(item)}
             className="px-3 py-1.5 text-xs font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors">
             Edit
@@ -167,6 +267,244 @@ function HomeworkCard({
             Delete
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AI Check Settings Panel ───────────────────────────────────────────────────
+
+function AICheckSettings({
+  settings,
+  onChange,
+  subjectName,
+  subjectId,
+  className,
+  section,
+  token,
+  // template props
+  templates,
+  loadingTemplates,
+  onLoadTemplate,
+  saveAsTemplate,
+  onSaveAsTemplateChange,
+  templateName,
+  onTemplateNameChange,
+}: {
+  settings: AISettings;
+  onChange: (s: AISettings) => void;
+  subjectName: string;
+  subjectId: string;
+  className: string;
+  section: string;
+  token: string | null;
+  templates: HWTemplate[];
+  loadingTemplates: boolean;
+  onLoadTemplate: (t: HWTemplate) => void;
+  saveAsTemplate: boolean;
+  onSaveAsTemplateChange: (v: boolean) => void;
+  templateName: string;
+  onTemplateNameChange: (v: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [loadingYesterday, setLoadingYesterday] = useState(false);
+  const [yesterdayError, setYesterdayError] = useState('');
+
+  const set = (patch: Partial<AISettings>) => onChange({ ...settings, ...patch });
+
+  async function handleSameAsYesterday() {
+    if (!token || !subjectId || !className || !section) return;
+    setLoadingYesterday(true);
+    setYesterdayError('');
+    try {
+      const qs = new URLSearchParams({ subject_id: subjectId, class: className, section });
+      const res = await fetch(`${BASE_URL}/api/homework/last-ai-settings?${qs}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message ?? 'Failed to fetch');
+      if (!json.data) {
+        setYesterdayError('No previous AI-checked homework found for this subject + class.');
+        return;
+      }
+      const d = json.data;
+      onChange({
+        reference_answer: d.reference_answer ?? '',
+        submission_type: d.submission_type ?? 'either',
+        subject_type: d.subject_type ?? '',
+        min_word_count: d.min_word_count ? String(d.min_word_count) : '',
+        requires_diagram: d.requires_diagram ?? false,
+      });
+      setExpanded(true);
+    } catch (err: unknown) {
+      setYesterdayError(err instanceof Error ? err.message : 'Failed to load');
+    } finally {
+      setLoadingYesterday(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Quick action buttons */}
+      <div className="flex flex-wrap gap-2">
+        {/* Use Template dropdown */}
+        <div className="relative group/tmpl">
+          <button type="button"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            disabled={loadingTemplates}>
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+            Use Template
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {templates.length > 0 && (
+            <div className="absolute left-0 top-full mt-1 z-10 min-w-[200px] max-w-xs bg-white border border-gray-200 rounded-xl shadow-lg py-1 hidden group-hover/tmpl:block">
+              {templates.map((t) => (
+                <button key={t.id} type="button"
+                  onClick={() => { onLoadTemplate(t); setExpanded(true); }}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-700 hover:bg-gray-50 transition-colors truncate">
+                  <span className="font-medium">{t.template_name}</span>
+                  <span className="text-gray-400 ml-1">· {t.subject}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {templates.length === 0 && !loadingTemplates && (
+            <div className="absolute left-0 top-full mt-1 z-10 bg-white border border-gray-200 rounded-xl shadow-lg py-2 px-3 hidden group-hover/tmpl:block">
+              <p className="text-xs text-gray-400 whitespace-nowrap">No templates saved yet</p>
+            </div>
+          )}
+        </div>
+
+        {/* Same as Yesterday */}
+        <button type="button"
+          onClick={handleSameAsYesterday}
+          disabled={loadingYesterday || !subjectId || !className || !section}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          {loadingYesterday ? (
+            <span className="w-3.5 h-3.5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          )}
+          Same as Yesterday
+        </button>
+      </div>
+
+      {yesterdayError && (
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{yesterdayError}</p>
+      )}
+
+      {/* Collapsible AI settings */}
+      <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <button type="button"
+          onClick={() => setExpanded((e) => !e)}
+          className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-sm font-medium text-gray-700">
+          <span className="flex items-center gap-2">
+            <svg className="w-4 h-4 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            AI Check Settings
+            <span className="text-xs font-normal text-gray-400">(optional)</span>
+          </span>
+          <svg className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {expanded && (
+          <div className="p-4 space-y-4 bg-white">
+            {/* Reference answer */}
+            <FormField label="Reference Answer / Method Taught" htmlFor="ai-ref">
+              <textarea id="ai-ref" className={`${inputClass} resize-none`} rows={3} maxLength={5000}
+                placeholder="Paste the correct answer or method you taught in class (helps AI grade more accurately)…"
+                value={settings.reference_answer}
+                onChange={(e) => set({ reference_answer: e.target.value })} />
+              <p className="mt-1 text-xs text-gray-400 text-right">{settings.reference_answer.length}/5000</p>
+            </FormField>
+
+            {/* Submission type */}
+            <FormField label="Submission Type" htmlFor="ai-subtype">
+              <div className="flex gap-4">
+                {(['either', 'typed', 'photo'] as const).map((v) => (
+                  <label key={v} className="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
+                    <input type="radio" name="submission_type" value={v}
+                      checked={settings.submission_type === v}
+                      onChange={() => set({ submission_type: v })}
+                      className="accent-blue-600" />
+                    {v === 'either' ? 'Either' : v === 'typed' ? 'Typed answer' : 'Photo upload'}
+                  </label>
+                ))}
+              </div>
+            </FormField>
+
+            {/* Subject type */}
+            <FormField label="Subject Type" htmlFor="ai-subjtype">
+              <select id="ai-subjtype" className={inputClass}
+                value={settings.subject_type}
+                onChange={(e) => set({ subject_type: e.target.value as AISettings['subject_type'] })}>
+                <option value="">Select…</option>
+                <option value="theory">Theory</option>
+                <option value="numerical">Numerical</option>
+                <option value="mixed">Mixed</option>
+              </select>
+              {subjectName && settings.subject_type === '' && (
+                <p className="mt-1 text-xs text-gray-400">
+                  Suggested for <span className="font-medium">{subjectName}</span>:{' '}
+                  <button type="button" className="text-blue-600 underline"
+                    onClick={() => set({ subject_type: suggestSubjectType(subjectName) })}>
+                    {suggestSubjectType(subjectName)}
+                  </button>
+                </p>
+              )}
+            </FormField>
+
+            {/* Min word count (theory only) */}
+            {settings.subject_type === 'theory' && (
+              <FormField label="Minimum Word Count" htmlFor="ai-words">
+                <input id="ai-words" type="number" className={inputClass} min={1} max={5000}
+                  placeholder="e.g. 50 (optional)"
+                  value={settings.min_word_count}
+                  onChange={(e) => set({ min_word_count: e.target.value })} />
+              </FormField>
+            )}
+
+            {/* Requires diagram */}
+            <div className="flex items-center gap-3">
+              <input id="ai-diagram" type="checkbox"
+                checked={settings.requires_diagram}
+                onChange={(e) => set({ requires_diagram: e.target.checked })}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 accent-blue-600 cursor-pointer" />
+              <label htmlFor="ai-diagram" className="text-sm text-gray-700 cursor-pointer select-none">
+                Requires diagram
+              </label>
+            </div>
+
+            {/* Save as template */}
+            <div className="pt-2 border-t border-gray-100">
+              <div className="flex items-center gap-3">
+                <input id="ai-save-tmpl" type="checkbox"
+                  checked={saveAsTemplate}
+                  onChange={(e) => onSaveAsTemplateChange(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 accent-blue-600 cursor-pointer" />
+                <label htmlFor="ai-save-tmpl" className="text-sm text-gray-700 cursor-pointer select-none">
+                  Save current settings as template
+                </label>
+              </div>
+              {saveAsTemplate && (
+                <input type="text" className={`${inputClass} mt-2`} maxLength={100}
+                  placeholder="Template name (e.g. Chapter 5 Theory)"
+                  value={templateName}
+                  onChange={(e) => onTemplateNameChange(e.target.value)} />
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -199,17 +537,16 @@ function HomeworkFormModal({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<HomeworkForm>({
-    subject_id: '',
-    custom_subject: '',
+    ...DEFAULT_FORM,
     class_name: filterClass,
     section: filterSection,
-    title: '',
-    description: '',
-    due_date: '',
-    file: null,
   });
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [templates, setTemplates] = useState<HWTemplate[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
+  const token = getToken();
 
   // Pre-fill on edit or when filter changes
   useEffect(() => {
@@ -217,6 +554,7 @@ function HomeworkFormModal({
     if (mode === 'edit' && initial) {
       const matchedSubject = subjects.find((s) => s.name === initial.subject_name);
       setForm({
+        ...DEFAULT_FORM,
         subject_id: matchedSubject?.id ?? initial.subject_id ?? '',
         custom_subject: matchedSubject ? '' : (initial.subject_name ?? ''),
         class_name: filterClass,
@@ -224,63 +562,93 @@ function HomeworkFormModal({
         title: initial.title,
         description: initial.description ?? '',
         due_date: initial.due_date,
-        file: null,
       });
     } else {
       setForm({
-        subject_id: '',
-        custom_subject: '',
+        ...DEFAULT_FORM,
         class_name: filterClass,
         section: filterSection,
-        title: '',
-        description: '',
-        due_date: '',
-        file: null,
       });
     }
     setError('');
   }, [open, mode, initial, filterClass, filterSection, subjects]);
 
-  // Subjects for the selected class/section — filtered from the teacher's subjects
-  // by cross-referencing their assignments for that class/section.
+  // Fetch templates when subject changes
+  useEffect(() => {
+    if (!open || !form.subject_id || !token) return;
+    const subj = subjects.find((s) => s.id === form.subject_id);
+    if (!subj) return;
+    setLoadingTemplates(true);
+    fetch(`${BASE_URL}/api/homework/templates?subject=${encodeURIComponent(subj.name)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((j) => setTemplates((j.data as HWTemplate[]) ?? []))
+      .catch(() => {})
+      .finally(() => setLoadingTemplates(false));
+  }, [open, form.subject_id, subjects, token]);
+
+  // Auto-suggest subject_type when subject changes
+  useEffect(() => {
+    if (!form.subject_id) return;
+    const subj = subjects.find((s) => s.id === form.subject_id);
+    if (!subj) return;
+    setForm((f) => ({
+      ...f,
+      ai_settings: {
+        ...f.ai_settings,
+        subject_type: suggestSubjectType(subj.name),
+      },
+    }));
+  }, [form.subject_id, subjects]);
+
+  const setAI = (patch: Partial<AISettings>) =>
+    setForm((f) => ({ ...f, ai_settings: { ...f.ai_settings, ...patch } }));
+
+  function handleLoadTemplate(t: HWTemplate) {
+    setForm((f) => ({
+      ...f,
+      ai_settings: {
+        reference_answer: t.reference_answer ?? '',
+        submission_type: t.submission_type ?? 'either',
+        subject_type: t.subject_type ?? '',
+        min_word_count: t.min_word_count ? String(t.min_word_count) : '',
+        requires_diagram: t.requires_diagram ?? false,
+      },
+    }));
+  }
+
+  // Sections and subjects derived from teacher assignments
   const sectionsForClass = [...new Set(
     assignments.filter((a) => a.class_name === form.class_name).map((a) => a.section)
   )].sort();
 
   const subjectsForClassSection: Subject[] = (() => {
     if (!form.class_name || !form.section) return [];
-
-    // Names assigned to teacher for this class/section
     const assignedNames = new Set(
       assignments
         .filter((a) => a.class_name === form.class_name && a.section === form.section)
         .map((a) => a.subject.toLowerCase())
     );
-
-    // Match against subjects fetched from the API (case-insensitive)
     const matched = subjects.filter((s) => assignedNames.has(s.name.toLowerCase()));
-
-    // If no matches (assignments store names that differ from subjects table),
-    // show all teacher subjects so the teacher isn't blocked.
     return matched.length > 0 ? matched : subjects;
   })();
 
   const useCustomSubject = form.subject_id === '__custom__';
+  const currentSubjectName = subjects.find((s) => s.id === form.subject_id)?.name ?? '';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
 
-    // Resolve the effective subject_id and name
     let effectiveSubjectId = form.subject_id;
     const isCustom = form.subject_id === '__custom__';
     const customName = form.custom_subject.trim();
 
     if (isCustom) {
       if (!customName) { setError('Please enter a subject name.'); return; }
-      // Look up by custom name in subjects list
       const found = subjects.find((s) => s.name.toLowerCase() === customName.toLowerCase());
-      if (!found) { setError(`Subject "${customName}" is not in the school subjects list. Please ask your admin to add it first.`); return; }
+      if (!found) { setError(`Subject "${customName}" is not in the school subjects list.`); return; }
       effectiveSubjectId = found.id;
     }
 
@@ -288,14 +656,18 @@ function HomeworkFormModal({
       setError('Please fill in all required fields.');
       return;
     }
-    const token = getToken();
+
+    if (form.ai_check_enabled && form.save_as_template && !form.template_name.trim()) {
+      setError('Please enter a template name to save the template.');
+      return;
+    }
+
     if (!token) return;
     setUploading(true);
 
     try {
       let file_url: string | undefined;
 
-      // Upload file if provided
       if (form.file) {
         const fd = new FormData();
         fd.append('file', form.file);
@@ -309,6 +681,7 @@ function HomeworkFormModal({
         file_url = uploadJson.data?.url;
       }
 
+      const ai = form.ai_settings;
       const payload: Record<string, unknown> = {
         subject_id: effectiveSubjectId,
         class: form.class_name,
@@ -317,6 +690,17 @@ function HomeworkFormModal({
         description: form.description.trim() || undefined,
         due_date: form.due_date,
         ...(file_url ? { file_url } : {}),
+        // AI fields always sent so backend can default them
+        ai_check_enabled: form.ai_check_enabled,
+        ...(form.ai_check_enabled ? {
+          reference_answer: ai.reference_answer.trim() || undefined,
+          submission_type: ai.submission_type,
+          subject_type: ai.subject_type || undefined,
+          min_word_count: ai.min_word_count ? Number(ai.min_word_count) : undefined,
+          requires_diagram: ai.requires_diagram,
+          save_as_template: form.save_as_template,
+          template_name: form.save_as_template ? form.template_name.trim() : undefined,
+        } : {}),
       };
 
       const url = mode === 'edit' && initial
@@ -344,6 +728,7 @@ function HomeworkFormModal({
   return (
     <Modal open={open} onClose={onClose} title={mode === 'create' ? 'Create Homework' : 'Edit Homework'} size="lg">
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Class / Section */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField label="Class" htmlFor="hw-class" required>
             <select id="hw-class" className={inputClass} value={form.class_name}
@@ -361,6 +746,7 @@ function HomeworkFormModal({
           </FormField>
         </div>
 
+        {/* Subject */}
         <FormField label="Subject" htmlFor="hw-subject" required>
           <select id="hw-subject" className={inputClass} value={form.subject_id} disabled={!form.section}
             onChange={(e) => setForm((f) => ({ ...f, subject_id: e.target.value, custom_subject: '' }))}>
@@ -371,20 +757,18 @@ function HomeworkFormModal({
             <option value="__custom__">✏️ Type a different subject…</option>
           </select>
           {useCustomSubject && (
-            <input
-              type="text"
-              className={`${inputClass} mt-2`}
+            <input type="text" className={`${inputClass} mt-2`}
               placeholder="Enter subject name exactly as it appears in the school list…"
               value={form.custom_subject}
               onChange={(e) => setForm((f) => ({ ...f, custom_subject: e.target.value }))}
-              autoFocus
-            />
+              autoFocus />
           )}
           {!form.section && (
             <p className="mt-1 text-xs text-gray-400">Select a section first</p>
           )}
         </FormField>
 
+        {/* Title */}
         <FormField label="Title" htmlFor="hw-title" required>
           <input id="hw-title" type="text" className={inputClass} maxLength={200}
             placeholder="e.g. Chapter 5 Exercise Questions"
@@ -392,6 +776,7 @@ function HomeworkFormModal({
           <p className="mt-1 text-xs text-gray-400 text-right">{form.title.length}/200</p>
         </FormField>
 
+        {/* Description */}
         <FormField label="Description" htmlFor="hw-desc">
           <textarea id="hw-desc" className={`${inputClass} resize-none`} rows={3} maxLength={2000}
             placeholder="Optional instructions or details…"
@@ -399,11 +784,13 @@ function HomeworkFormModal({
           <p className="mt-1 text-xs text-gray-400 text-right">{form.description.length}/2000</p>
         </FormField>
 
+        {/* Due Date */}
         <FormField label="Due Date" htmlFor="hw-due" required>
           <input id="hw-due" type="date" className={inputClass} min={todayISO()}
             value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} />
         </FormField>
 
+        {/* Attachment */}
         <FormField label="Attachment (optional)" htmlFor="hw-file">
           <div className="flex items-center gap-3">
             <input ref={fileInputRef} id="hw-file" type="file" accept=".pdf,image/*" className="hidden"
@@ -423,6 +810,42 @@ function HomeworkFormModal({
             )}
           </div>
         </FormField>
+
+        {/* ── AI Checking toggle ────────────────────────────────────────── */}
+        <div className="pt-2 border-t border-gray-100">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-900">Enable AI Checking</p>
+              <p className="text-xs text-gray-400 mt-0.5">Automatically grade submissions using Gemini AI</p>
+            </div>
+            <Toggle
+              checked={form.ai_check_enabled}
+              onChange={(v) => setForm((f) => ({ ...f, ai_check_enabled: v }))}
+              label="Enable AI Checking"
+            />
+          </div>
+
+          {form.ai_check_enabled && (
+            <div className="mt-3">
+              <AICheckSettings
+                settings={form.ai_settings}
+                onChange={(s) => setForm((f) => ({ ...f, ai_settings: s }))}
+                subjectName={currentSubjectName}
+                subjectId={form.subject_id}
+                className={form.class_name}
+                section={form.section}
+                token={token}
+                templates={templates}
+                loadingTemplates={loadingTemplates}
+                onLoadTemplate={handleLoadTemplate}
+                saveAsTemplate={form.save_as_template}
+                onSaveAsTemplateChange={(v) => setForm((f) => ({ ...f, save_as_template: v }))}
+                templateName={form.template_name}
+                onTemplateNameChange={(v) => setForm((f) => ({ ...f, template_name: v }))}
+              />
+            </div>
+          )}
+        </div>
 
         {error && (
           <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
@@ -448,6 +871,7 @@ function HomeworkFormModal({
 
 export default function TeacherHomeworkPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
@@ -522,9 +946,7 @@ export default function TeacherHomeworkPage() {
       if (!res.ok) throw new Error(json.message ?? 'Failed to load homework');
 
       let list: HomeworkItem[] = (json.data as HomeworkItem[]) ?? [];
-      // Sort by due_date descending
       list = list.sort((a, b) => b.due_date.localeCompare(a.due_date));
-      // Filter by subject if selected
       if (filterSubject) {
         list = list.filter((h) => h.subject_name === filterSubject);
       }
@@ -659,6 +1081,7 @@ export default function TeacherHomeworkPage() {
               ackCount={ackCounts[hw.id] ?? null}
               onEdit={(item) => setEditItem(item)}
               onDelete={(item) => { setDeleteItem(item); setDeleteError(''); }}
+              onViewStatus={(item) => router.push(`/teacher/homework/${item.id}/status`)}
             />
           ))}
         </div>

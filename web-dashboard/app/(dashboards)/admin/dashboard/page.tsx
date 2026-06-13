@@ -14,6 +14,7 @@ import {
   attendanceApi,
   onboardingApi,
   dailyTestsApi,
+  homeworkAIStatsApi,
   type Student,
   type Teacher,
   type Complaint,
@@ -22,6 +23,7 @@ import {
   type AuditLog,
   type OnboardingProgress,
   type DailyTestAdminStats,
+  type HomeworkAIStats,
 } from '@/lib/api';
 import { getToken, saveSession } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -149,6 +151,7 @@ export default function SchoolAdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [onboarding, setOnboarding] = useState<OnboardingProgress | null>(null);
   const [dailyTestStats, setDailyTestStats] = useState<DailyTestAdminStats | null>(null);
+  const [homeworkAIStats, setHomeworkAIStats] = useState<HomeworkAIStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [auditLoading, setAuditLoading] = useState(true);
   useEffect(() => {
@@ -261,6 +264,12 @@ export default function SchoolAdminDashboard() {
       dailyTestsApi
         .getAdminStats(token!)
         .then((res) => setDailyTestStats(res.data))
+        .catch(() => {});
+
+      // Fetch homework AI stats (non-blocking)
+      homeworkAIStatsApi
+        .get(token!)
+        .then((res) => setHomeworkAIStats(res.data))
         .catch(() => {});
     }
 
@@ -406,6 +415,11 @@ export default function SchoolAdminDashboard() {
         </div>
       )}
 
+      {/* ── Homework AI Stats Widget ────────────────────────────────────────── */}
+      {homeworkAIStats !== null && homeworkAIStats.total_submissions_this_week > 0 && (
+        <HomeworkAIStatsWidget stats={homeworkAIStats} />
+      )}
+
       {/* ── Recent activity feed ────────────────────────────────────────────── */}
       <div className="bg-white rounded-xl border border-gray-200">        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 className="text-sm font-semibold text-gray-900">Recent Activity</h2>
@@ -435,6 +449,127 @@ export default function SchoolAdminDashboard() {
         )}
       </div>
     </>
+  );
+}
+
+// ── Homework AI Stats Widget ──────────────────────────────────────────────────
+
+function HomeworkAIStatsWidget({ stats }: { stats: HomeworkAIStats }) {
+  const totalChecked = stats.total_checked;
+  const autoCheckedPct = stats.auto_checked_pct;
+  const flaggedPct = stats.flagged_pct;
+  const cacheHitPct = stats.total_submissions_this_week > 0
+    ? Math.min(100, Math.round((stats.cache_hit_count / stats.total_submissions_this_week) * 100))
+    : 0;
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 mb-6">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <span className="flex items-center justify-center w-7 h-7 bg-violet-100 rounded-lg">
+            <svg className="w-4 h-4 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.347.416A2 2 0 0113 21H11a2 2 0 01-1.414-2.343l-.347-.416z" />
+            </svg>
+          </span>
+          <h2 className="text-sm font-semibold text-gray-900">Homework AI Stats</h2>
+          <span className="text-xs text-gray-400">— this week</span>
+        </div>
+        <span className="text-xs font-semibold px-2.5 py-1 bg-violet-50 text-violet-700 rounded-full">
+          {stats.total_submissions_this_week} submission{stats.total_submissions_this_week !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      <div className="px-6 py-5 space-y-5">
+        {/* Stat grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            {
+              label: 'Total Submissions',
+              value: stats.total_submissions_this_week,
+              sub: 'this week',
+              color: 'text-gray-900',
+              bg: 'bg-gray-50 border-gray-200',
+            },
+            {
+              label: 'Auto-Checked',
+              value: `${autoCheckedPct}%`,
+              sub: `${stats.auto_checked_count} submissions`,
+              color: 'text-green-700',
+              bg: 'bg-green-50 border-green-200',
+            },
+            {
+              label: 'Flagged for Review',
+              value: `${flaggedPct}%`,
+              sub: `${stats.flagged_count} need review`,
+              color: 'text-orange-700',
+              bg: 'bg-orange-50 border-orange-200',
+            },
+            {
+              label: 'Cache Hits',
+              value: stats.cache_hit_count,
+              sub: `~${cacheHitPct}% cost savings`,
+              color: 'text-blue-700',
+              bg: 'bg-blue-50 border-blue-200',
+            },
+          ].map((stat) => (
+            <div key={stat.label} className={`rounded-xl border p-4 ${stat.bg}`}>
+              <p className={`text-xl font-bold ${stat.color}`}>{stat.value}</p>
+              <p className="text-xs font-medium text-gray-700 mt-0.5">{stat.label}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{stat.sub}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Progress bars */}
+        <div className="space-y-2.5">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-36 shrink-0">Auto-checked</span>
+            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-green-500 rounded-full" style={{ width: `${autoCheckedPct}%` }} />
+            </div>
+            <span className="text-xs font-medium text-gray-600 w-10 text-right shrink-0">{autoCheckedPct}%</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-36 shrink-0">Flagged for review</span>
+            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-orange-400 rounded-full" style={{ width: `${flaggedPct}%` }} />
+            </div>
+            <span className="text-xs font-medium text-gray-600 w-10 text-right shrink-0">{flaggedPct}%</span>
+          </div>
+        </div>
+
+        {/* Teachers with pending reviews */}
+        {stats.teachers_with_pending.length > 0 && (
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide mb-3">
+              ⚑ Teachers with pending reviews
+            </p>
+            <div className="space-y-2">
+              {stats.teachers_with_pending.map((t) => (
+                <div key={t.teacher_id} className="flex items-center gap-3 px-3 py-2 bg-orange-50 border border-orange-100 rounded-lg">
+                  <div className="w-7 h-7 rounded-full bg-orange-100 flex items-center justify-center text-xs font-bold text-orange-700 shrink-0">
+                    {t.name.charAt(0).toUpperCase()}
+                  </div>
+                  <span className="text-sm text-gray-800 flex-1 min-w-0 truncate">{t.name}</span>
+                  <span className="text-xs font-semibold px-2 py-0.5 bg-orange-200 text-orange-800 rounded-full shrink-0">
+                    {t.pending_count} pending
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {totalChecked > 0 && stats.teachers_with_pending.length === 0 && (
+          <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            All flagged submissions have been reviewed. No pending reviews.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
