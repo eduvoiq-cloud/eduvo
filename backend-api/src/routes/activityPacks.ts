@@ -292,7 +292,8 @@ type must be one of: "verbal", "written", "physical"`;
       sendSuccess(res, { activities }, 'Activities generated');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error('[activity-packs/generate] Gemini error:', msg);
+      // Log full error so Railway logs show the actual Gemini failure reason
+      console.error('[activity-packs/generate] Gemini error:', err);
 
       // Quota exhausted
       if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
@@ -300,25 +301,17 @@ type must be one of: "verbal", "written", "physical"`;
         return;
       }
 
-      // Invalid / missing API key
+      // Invalid / missing API key — be specific, don't match '400' broadly
       if (
-        msg.includes('400') ||
-        msg.includes('401') ||
-        msg.includes('403') ||
         msg.includes('API_KEY_INVALID') ||
         msg.includes('API key not valid') ||
         msg.includes('invalid api key') ||
-        msg.includes('PERMISSION_DENIED')
+        msg.includes('PERMISSION_DENIED') ||
+        msg.includes('401') ||
+        msg.includes('403')
       ) {
-        console.error('[activity-packs/generate] Gemini API key is invalid or missing — check GEMINI_API_KEY in Railway env vars');
+        console.error('[activity-packs/generate] Gemini API key rejected — check GEMINI_API_KEY in Railway env vars');
         sendError(res, 'AI service is misconfigured. Please contact support.', 503);
-        return;
-      }
-
-      // Model not found / not available
-      if (msg.includes('404') || msg.includes('not found') || msg.includes('MODEL_NOT_FOUND')) {
-        console.error('[activity-packs/generate] Gemini model not found — check GEMINI_MODEL env var:', process.env.GEMINI_MODEL);
-        sendError(res, 'AI model is unavailable. Please contact support.', 503);
         return;
       }
 
