@@ -299,6 +299,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
         explanation: q.explanation ?? '',
         difficulty: q.difficulty ?? 'medium',
         marks: 1,
+        show_hint: true, // default: show hint — teacher can toggle per question on preview
       }));
 
       sendSuccess(res, { questions }, 'Questions generated');
@@ -326,6 +327,7 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
           explanation: z.string().optional().default(''),
           difficulty: z.string().optional().default('medium'),
           marks: z.number().positive().optional().default(1),
+          show_hint: z.boolean().optional().default(true),
         })
       )
       .min(1)
@@ -351,13 +353,13 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
     .from('daily_tests')
     .insert({
       school_id: schoolId,
-      teacher_id: teacherId,
-      class: cls,
+      created_by: teacherId,      // DB column is created_by (not teacher_id)
+      class_name: cls,            // DB column is class_name (not class)
       section,
       subject,
       topic,
       questions,
-      test_date,
+      assigned_date: test_date,   // DB column is assigned_date (not test_date)
     })
     .select()
     .single();
@@ -376,10 +378,9 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
           const attemptRows = premiumStudentIds.map((studentId: string) => ({
             daily_test_id: (test as Record<string, unknown>).id,
             student_id: studentId,
-            answers: {},
-            score: null,
+            answers: [],
+            score: 0,
             total_questions: questions.length,
-            status: 'pending',
           }));
 
           await supabaseAdmin.from('daily_test_attempts').insert(attemptRows);
@@ -437,12 +438,12 @@ router.get('/', authenticate, requireRole('teacher'), async (req: Request, res: 
 
   let query = supabaseAdmin
     .from('daily_tests')
-    .select('id, class, section, subject, topic, test_date, created_at')
-    .eq('teacher_id', teacherId)
+    .select('id, class_name, section, subject, topic, assigned_date, created_at')
+    .eq('created_by', teacherId)
     .eq('school_id', schoolId)
-    .order('test_date', { ascending: false });
+    .order('assigned_date', { ascending: false });
 
-  if (date) query = query.eq('test_date', date);
+  if (date) query = query.eq('assigned_date', date);
 
   const { data, error } = await query;
   if (error) { sendError(res, error.message, 500); return; }
@@ -467,13 +468,13 @@ router.get(
 
     let query = supabaseAdmin
       .from('daily_tests')
-      .select(`id, class, section, subject, topic, test_date, created_at, users ( id, name )`)
+      .select(`id, class_name, section, subject, topic, assigned_date, created_at, users ( id, name )`)
       .eq('school_id', schoolId)
-      .order('test_date', { ascending: false });
+      .order('assigned_date', { ascending: false });
 
-    if (cls) query = query.eq('class', cls);
+    if (cls) query = query.eq('class_name', cls);
     if (section) query = query.eq('section', section);
-    if (date) query = query.eq('test_date', date);
+    if (date) query = query.eq('assigned_date', date);
 
     const { data, error } = await query;
     if (error) { sendError(res, error.message, 500); return; }
@@ -496,35 +497,36 @@ router.get(
       .from('daily_tests')
       .select('id', { count: 'exact', head: true })
       .eq('school_id', schoolId)
-      .eq('test_date', today);
+      .eq('assigned_date', today);
 
     // Class-wise completion rate for today
     const { data: todayTests } = await supabaseAdmin
       .from('daily_tests')
-      .select('id, class, section')
+      .select('id, class_name, section')
       .eq('school_id', schoolId)
-      .eq('test_date', today);
+      .eq('assigned_date', today);
 
     const classStats: Record<string, { total: number; completed: number }> = {};
 
     if (todayTests && todayTests.length > 0) {
-      const testIds = (todayTests as Array<{ id: string; class: string; section: string }>).map((t) => t.id);
+      const testIds = (todayTests as Array<{ id: string; class_name: string; section: string }>).map((t) => t.id);
 
       const { data: attempts } = await supabaseAdmin
         .from('daily_test_attempts')
-        .select('daily_test_id, status')
+        .select('daily_test_id, score')
         .in('daily_test_id', testIds);
 
-      for (const test of (todayTests as Array<{ id: string; class: string; section: string }>)) {
-        const key = `${test.class} ${test.section}`;
+      for (const test of (todayTests as Array<{ id: string; class_name: string; section: string }>)) {
+        const key = `${test.class_name} ${test.section}`;
         if (!classStats[key]) classStats[key] = { total: 0, completed: 0 };
 
         const testAttempts = (attempts ?? []).filter(
-          (a: { daily_test_id: string; status: string }) => a.daily_test_id === test.id
+          (a: { daily_test_id: string; score: number | null }) => a.daily_test_id === test.id
         );
         classStats[key].total += testAttempts.length;
+        // A non-null score with a completed_at means the attempt is done
         classStats[key].completed += testAttempts.filter(
-          (a: { status: string }) => a.status === 'completed'
+          (a: { score: number | null }) => a.score !== null
         ).length;
       }
     }
@@ -536,12 +538,12 @@ router.get(
 
     const { data: activeTeachers } = await supabaseAdmin
       .from('daily_tests')
-      .select('teacher_id')
+      .select('created_by')
       .eq('school_id', schoolId)
-      .gte('test_date', threeDaysAgoStr);
+      .gte('assigned_date', threeDaysAgoStr);
 
     const activeTeacherIds = new Set(
-      (activeTeachers ?? []).map((t: { teacher_id: string }) => t.teacher_id)
+      (activeTeachers ?? []).map((t: { created_by: string }) => t.created_by)
     );
 
     // Get all teachers with permission
@@ -596,13 +598,13 @@ router.delete('/:id', authenticate, requireRole('teacher'), async (req: Request,
 
   const { data: test } = await supabaseAdmin
     .from('daily_tests')
-    .select('id, teacher_id')
+    .select('id, created_by')
     .eq('id', req.params.id)
     .eq('school_id', schoolId)
     .maybeSingle();
 
   if (!test) { sendError(res, 'Test not found', 404); return; }
-  if ((test as Record<string, unknown>).teacher_id !== teacherId) {
+  if ((test as Record<string, unknown>).created_by !== teacherId) {
     sendError(res, 'You can only delete your own tests', 403);
     return;
   }
@@ -636,7 +638,7 @@ router.get(
 
     const { data, error } = await supabaseAdmin
       .from('daily_test_attempts')
-      .select(`id, score, total_questions, status, completed_at, created_at,
+      .select(`id, score, total_questions, completed_at, created_at,
                students ( id, full_name, class_name, section )`)
       .eq('daily_test_id', req.params.id)
       .order('score', { ascending: false });
@@ -671,11 +673,11 @@ router.get(
 
     const { data: tests, error: testsErr } = await supabaseAdmin
       .from('daily_tests')
-      .select('id, subject, topic, test_date, questions')
+      .select('id, subject, topic, assigned_date, questions')
       .eq('school_id', schoolId)
-      .ilike('class', className)
+      .ilike('class_name', className)
       .ilike('section', section)
-      .eq('test_date', today);
+      .eq('assigned_date', today);
 
     if (testsErr) { sendError(res, testsErr.message, 500); return; }
 
@@ -688,7 +690,7 @@ router.get(
 
     const { data: attempts } = await supabaseAdmin
       .from('daily_test_attempts')
-      .select('daily_test_id, status, score')
+      .select('daily_test_id, completed_at, score')
       .eq('student_id', studentId)
       .in('daily_test_id', testIds);
 
@@ -697,18 +699,20 @@ router.get(
       attemptMap.set((a as Record<string, unknown>).daily_test_id as string, a as Record<string, unknown>);
     }
 
-    // Strip correct_index + explanation from questions sent to student
+    // Strip correct_index, explanation, and show_hint from questions sent to student
     const sanitized = (tests as Record<string, unknown>[]).map((t) => {
       const questions = (t.questions as Record<string, unknown>[]).map((q) => {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { correct_index, explanation, ...rest } = q;
+        const { correct_index, explanation, show_hint, ...rest } = q;
         return rest;
       });
       const attempt = attemptMap.get(t.id as string);
       return {
         ...t,
         questions,
-        attempt_status: attempt ? (attempt.status as string) : 'pending',
+        attempt_status: attempt
+          ? ((attempt.completed_at as string | null) ? 'completed' : 'pending')
+          : 'pending',
         attempt_score: attempt ? (attempt.score as number | null) : null,
       };
     });
@@ -745,7 +749,7 @@ router.post(
 
     const { data: test, error: testErr } = await supabaseAdmin
       .from('daily_tests')
-      .select('id, questions, school_id, class, section, subject, topic')
+      .select('id, questions, school_id, class_name, section, subject, topic')
       .eq('id', req.params.id)
       .eq('school_id', schoolId)
       .maybeSingle();
@@ -758,7 +762,7 @@ router.post(
     const studentClass = req.student!.class_name ?? '';
     const studentSection = req.student!.section ?? '';
     if (
-      (testRecord.class as string).toLowerCase() !== studentClass.toLowerCase() ||
+      (testRecord.class_name as string).toLowerCase() !== studentClass.toLowerCase() ||
       (testRecord.section as string).toLowerCase() !== studentSection.toLowerCase()
     ) {
       sendError(res, 'This test is not assigned to your class', 403);
@@ -767,12 +771,13 @@ router.post(
 
     const { data: existingAttempt } = await supabaseAdmin
       .from('daily_test_attempts')
-      .select('id, status')
+      .select('id, completed_at')
       .eq('daily_test_id', req.params.id)
       .eq('student_id', studentId)
       .maybeSingle();
 
-    if (existingAttempt && (existingAttempt as Record<string, unknown>).status === 'completed') {
+    // If completed_at is set, the student already submitted
+    if (existingAttempt && (existingAttempt as Record<string, unknown>).completed_at) {
       sendError(res, 'You have already submitted this test', 409);
       return;
     }
@@ -791,7 +796,6 @@ router.post(
 
     const totalQuestions = questions.length;
     const now = new Date().toISOString();
-    const today = now.slice(0, 10);
 
     let attempt: Record<string, unknown>;
 
@@ -802,7 +806,6 @@ router.post(
           answers: gradedAnswers,
           score: correctCount,
           total_questions: totalQuestions,
-          status: 'completed',
           completed_at: now,
         })
         .eq('id', (existingAttempt as Record<string, unknown>).id)
@@ -820,7 +823,6 @@ router.post(
           answers: gradedAnswers,
           score: correctCount,
           total_questions: totalQuestions,
-          status: 'completed',
           completed_at: now,
         })
         .select()
@@ -841,6 +843,7 @@ router.post(
         is_correct: studentAnswer !== undefined && studentAnswer.selected_index === (q.correct_index as number),
         explanation: (q.explanation as string) ?? '',
         difficulty: (q.difficulty as string) ?? 'medium',
+        show_hint: (q.show_hint as boolean) !== false, // default true if not set
       };
     });
 
@@ -915,8 +918,8 @@ router.get(
 
     const { data, error } = await supabaseAdmin
       .from('daily_test_attempts')
-      .select(`id, score, total_questions, status, completed_at, created_at,
-               daily_tests ( id, subject, topic, test_date, class, section )`)
+      .select(`id, score, total_questions, completed_at, created_at,
+               daily_tests ( id, subject, topic, assigned_date, class_name, section )`)
       .eq('student_id', studentId)
       .order('created_at', { ascending: false })
       .limit(limit);

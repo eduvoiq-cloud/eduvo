@@ -40,6 +40,7 @@ interface QuestionResult {
   is_correct: boolean;
   explanation: string;
   difficulty: string;
+  show_hint: boolean;
 }
 
 interface SubmitResult {
@@ -243,7 +244,7 @@ function ResultsScreen({
             </View>
           ))}
 
-          {!qr.is_correct && qr.explanation ? (
+          {!qr.is_correct && qr.explanation && qr.show_hint ? (
             <Text style={resStyles.explanation}>💡 {qr.explanation}</Text>
           ) : null}
         </View>

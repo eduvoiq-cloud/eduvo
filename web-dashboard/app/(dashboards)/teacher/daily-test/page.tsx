@@ -19,6 +19,7 @@ interface GeneratedQuestion {
   explanation: string;
   difficulty: 'easy' | 'medium' | 'hard';
   marks: number;
+  show_hint: boolean;
 }
 
 type Phase = 'setup' | 'preview' | 'success';
@@ -50,7 +51,7 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function emptyQuestion(): GeneratedQuestion {
-  return { question_text: '', options: ['', '', '', ''], correct_index: 0, explanation: '', difficulty: 'medium', marks: 1 };
+  return { question_text: '', options: ['', '', '', ''], correct_index: 0, explanation: '', difficulty: 'medium', marks: 1, show_hint: true };
 }
 
 // ── Manual question editor ────────────────────────────────────────────────────
@@ -96,11 +97,24 @@ function ManualQuestionEditor({
             <option value="hard">Hard</option>
           </select>
         </FormField>
-        <FormField label="Explanation (optional)" htmlFor={`mq-exp-${index}`}>
+        <FormField label="Explanation / Hint" htmlFor={`mq-exp-${index}`}>
           <input id={`mq-exp-${index}`} type="text" className={inputClass}
             placeholder="Brief explanation of the answer?" value={q.explanation}
             onChange={(e) => onChange({ ...q, explanation: e.target.value })} />
         </FormField>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          id={`mq-hint-${index}`}
+          checked={q.show_hint}
+          onChange={(e) => onChange({ ...q, show_hint: e.target.checked })}
+          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        <label htmlFor={`mq-hint-${index}`} className="text-sm text-gray-700">
+          Show hint to students after submission
+        </label>
       </div>
     </div>
   );
@@ -143,6 +157,18 @@ function QuestionCard({ q, index, onEdit, onRemove }: {
           <input id={`q-exp-${index}`} type="text" className={inputClass} value={draft.explanation}
             onChange={(e) => setDraft((d) => ({ ...d, explanation: e.target.value }))} />
         </FormField>
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            id={`q-hint-${index}`}
+            checked={draft.show_hint}
+            onChange={(e) => setDraft((d) => ({ ...d, show_hint: e.target.checked }))}
+            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+          <label htmlFor={`q-hint-${index}`} className="text-sm text-gray-700">
+            Show hint to students after submission
+          </label>
+        </div>
         <div className="flex justify-end gap-2">
           <button onClick={() => { setDraft({ ...q }); setEditing(false); }} className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
           <button onClick={() => { onEdit(draft); setEditing(false); }} className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg">Save</button>
@@ -177,7 +203,8 @@ function QuestionCard({ q, index, onEdit, onRemove }: {
           </div>
         ))}
       </div>
-      {q.explanation && <p className="text-xs text-gray-500 italic border-t border-gray-100 pt-2">💡 {q.explanation}</p>}
+      {q.explanation && <p className="text-xs text-gray-500 italic border-t border-gray-100 pt-2">💡 {q.explanation} {q.show_hint ? <span className="text-green-600 not-italic font-medium">(hint shown)</span> : <span className="text-red-500 not-italic font-medium">(hint hidden)</span>}</p>}
+      {!q.explanation && !q.show_hint && <p className="text-xs text-orange-500 border-t border-gray-100 pt-2">Hint hidden from students</p>}
     </div>
   );
 }
