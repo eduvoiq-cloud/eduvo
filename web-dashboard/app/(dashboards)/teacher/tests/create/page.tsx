@@ -385,6 +385,8 @@ export default function CreateTestPage() {
   const [blockedStudentIds, setBlockedStudentIds] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [publishError, setPublishError] = useState('');
+  const [published, setPublished] = useState(false);
+  const [publishedTestId, setPublishedTestId] = useState<string | null>(null);
 
   // Assignments for dropdowns
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
@@ -600,7 +602,8 @@ export default function CreateTestPage() {
         });
       }
 
-      router.push('/teacher/tests');
+      setPublishedTestId(created.data?.id ?? null);
+      setPublished(true);
     } catch (e: unknown) {
       setPublishError(e instanceof Error ? e.message : 'Failed to publish test. Please try again.');
     } finally {
@@ -609,6 +612,175 @@ export default function CreateTestPage() {
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
+
+  // ── Success screen ──────────────────────────────────────────────────────────
+  if (published) {
+    return (
+      <>
+        <PageHeader
+          title="Test Published!"
+          description="Your test is live and ready for students"
+          action={
+            <button
+              onClick={() => router.push('/teacher/tests')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Back to Tests
+            </button>
+          }
+        />
+
+        <div className="max-w-2xl">
+          {/* Success banner */}
+          <div className="flex flex-col items-center text-center py-8 px-6 bg-green-50 border border-green-200 rounded-xl mb-6">
+            <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+              <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-green-800 mb-1">Test Published Successfully!</h2>
+            <p className="text-sm text-green-700">
+              Students in <span className="font-semibold">{details.class_name} {details.section}</span> can now take this test.
+            </p>
+          </div>
+
+          {/* Test summary card */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-6">
+            <div className="px-6 py-5 border-b border-gray-100">
+              <h3 className="text-base font-semibold text-gray-900">{details.title}</h3>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {[
+                  { label: 'Class', value: `${details.class_name} · ${details.section}` },
+                  { label: 'Subject', value: details.subject },
+                  { label: 'Type', value: EXAM_TYPE_LABELS[details.exam_type] ?? details.exam_type },
+                  { label: 'Term', value: TERM_LABELS[details.term] ?? details.term },
+                  { label: 'Date', value: new Date(details.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) },
+                  ...(details.time_limit_minutes ? [{ label: 'Time Limit', value: `${details.time_limit_minutes} min` }] : []),
+                  ...(details.start_time ? [{ label: 'Opens at', value: details.start_time }] : []),
+                  ...(details.end_time ? [{ label: 'Closes at', value: details.end_time }] : []),
+                ].map((item) => (
+                  <span key={item.label} className="text-xs px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full">
+                    <span className="font-medium">{item.label}:</span> {item.value}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Stats row */}
+            <div className="grid grid-cols-3 divide-x divide-gray-100 border-b border-gray-100">
+              {[
+                { label: 'Total Marks', value: totalMarks, color: 'text-blue-600' },
+                { label: 'MCQ Questions', value: mcqCount, color: 'text-blue-500' },
+                { label: 'Theory Questions', value: theoryCount, color: 'text-purple-600' },
+              ].map((stat) => (
+                <div key={stat.label} className="px-6 py-4 text-center">
+                  <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Settings row */}
+            <div className="px-6 py-3 flex gap-4 text-xs text-gray-500">
+              <span className={`flex items-center gap-1 ${details.shuffle_questions ? 'text-green-600' : 'text-gray-400'}`}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {details.shuffle_questions
+                    ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />}
+                </svg>
+                Shuffle Questions
+              </span>
+              <span className={`flex items-center gap-1 ${details.shuffle_options ? 'text-green-600' : 'text-gray-400'}`}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {details.shuffle_options
+                    ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />}
+                </svg>
+                Shuffle Options
+              </span>
+              {blockRestrictions && blockedStudentIds.size > 0 && (
+                <span className="flex items-center gap-1 text-red-500">
+                  🔒 {blockedStudentIds.size} student{blockedStudentIds.size !== 1 ? 's' : ''} blocked
+                </span>
+              )}
+            </div>
+
+            {/* Questions list */}
+            <div className="divide-y divide-gray-50">
+              {questions.map((q, idx) => (
+                <div key={idx} className="px-6 py-4">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <p className="text-sm font-medium text-gray-900">
+                      <span className="text-gray-400 mr-2">Q{idx + 1}.</span>{q.text}
+                    </p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <QTypeBadge type={q.type} />
+                      <span className="text-xs text-gray-500 font-medium">{q.marks}m</span>
+                    </div>
+                  </div>
+                  {q.type === 'mcq' && (
+                    <div className="grid grid-cols-2 gap-1.5 mt-2 ml-5">
+                      {(q as MCQDraft).options.map((opt, oi) => (
+                        <div key={oi} className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs ${
+                          (q as MCQDraft).correct_option === oi
+                            ? 'bg-green-50 border border-green-200 text-green-700 font-medium'
+                            : 'bg-gray-50 text-gray-600'
+                        }`}>
+                          <span className="font-bold">{String.fromCharCode(65 + oi)}.</span>
+                          {opt}
+                          {(q as MCQDraft).correct_option === oi && (
+                            <svg className="w-3 h-3 ml-auto shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.push('/teacher/tests')}
+              className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+              </svg>
+              View All Tests
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPublished(false);
+                setPublishedTestId(null);
+                setStep(1);
+                setDetails({ ...EMPTY_DETAILS });
+                setQuestions([]);
+                setBlockRestrictions(false);
+                setBlockedStudentIds(new Set());
+                setPublishError('');
+              }}
+              className="flex items-center justify-center gap-2 px-5 py-3 border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm font-semibold rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Create Another Test
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
