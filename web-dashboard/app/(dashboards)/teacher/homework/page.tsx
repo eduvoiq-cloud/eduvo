@@ -52,7 +52,8 @@ interface HomeworkForm {
   title: string;
   description: string;
   due_date: string;
-  file: File | null;
+  file: File | null;               // homework task given to students (required for AI checking)
+  reference_file: File | null;     // teacher's solution/method for Gemini to compare against (optional)
   // AI checking
   ai_check_enabled: boolean;
   ai_settings: AISettings;
@@ -125,8 +126,9 @@ const DEFAULT_FORM: HomeworkForm = {
   section: '',
   title: '',
   description: '',
-  due_date: '',
+  due_date: todayISO(),
   file: null,
+  reference_file: null,
   ai_check_enabled: false,
   ai_settings: { ...DEFAULT_AI_SETTINGS },
   save_as_template: false,
@@ -536,6 +538,7 @@ function HomeworkFormModal({
   onSuccess: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const referenceFileInputRef = useRef<HTMLInputElement>(null);
   const [form, setForm] = useState<HomeworkForm>({
     ...DEFAULT_FORM,
     class_name: filterClass,
@@ -562,12 +565,15 @@ function HomeworkFormModal({
         title: initial.title,
         description: initial.description ?? '',
         due_date: initial.due_date,
+        file: null,
+        reference_file: null,
       });
     } else {
       setForm({
         ...DEFAULT_FORM,
         class_name: filterClass,
         section: filterSection,
+        due_date: todayISO(),
       });
     }
     setError('');
@@ -667,6 +673,7 @@ function HomeworkFormModal({
 
     try {
       let file_url: string | undefined;
+      let reference_file_url: string | undefined;
 
       if (form.file) {
         const fd = new FormData();
@@ -679,6 +686,19 @@ function HomeworkFormModal({
         const uploadJson = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadJson.message ?? 'File upload failed');
         file_url = uploadJson.data?.url;
+      }
+
+      if (form.reference_file) {
+        const fd = new FormData();
+        fd.append('file', form.reference_file);
+        const uploadRes = await fetch(`${BASE_URL}/api/homework/upload`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd,
+        });
+        const uploadJson = await uploadRes.json();
+        if (!uploadRes.ok) throw new Error(uploadJson.message ?? 'Reference file upload failed');
+        reference_file_url = uploadJson.data?.url;
       }
 
       const ai = form.ai_settings;
@@ -694,6 +714,7 @@ function HomeworkFormModal({
         ai_check_enabled: form.ai_check_enabled,
         ...(form.ai_check_enabled ? {
           reference_answer: ai.reference_answer.trim() || undefined,
+          reference_file_url: reference_file_url,
           submission_type: ai.submission_type,
           subject_type: ai.subject_type || undefined,
           min_word_count: ai.min_word_count ? Number(ai.min_word_count) : undefined,
@@ -790,8 +811,9 @@ function HomeworkFormModal({
             value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} />
         </FormField>
 
-        {/* Attachment */}
-        <FormField label="Attachment (optional)" htmlFor="hw-file">
+        {/* Homework File (task for students) */}
+        <FormField label="Homework File" htmlFor="hw-file">
+          <p className="mb-2 text-xs text-gray-500">Upload the homework question / task sheet that students need to complete (PDF or image, max 5 MB).</p>
           <div className="flex items-center gap-3">
             <input ref={fileInputRef} id="hw-file" type="file" accept=".pdf,image/*" className="hidden"
               onChange={(e) => {
@@ -804,7 +826,15 @@ function HomeworkFormModal({
               {form.file ? 'Change file' : 'Choose file'}
             </button>
             {form.file ? (
-              <span className="text-sm text-gray-600 truncate max-w-xs">{form.file.name}</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm text-gray-600 truncate max-w-xs">{form.file.name}</span>
+                <button type="button" onClick={() => { setForm((f) => ({ ...f, file: null })); if (fileInputRef.current) fileInputRef.current.value = ''; }}
+                  className="text-gray-400 hover:text-red-500 flex-shrink-0" aria-label="Remove file">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             ) : (
               <span className="text-xs text-gray-400">PDF or image, max 5 MB</span>
             )}
@@ -816,7 +846,7 @@ function HomeworkFormModal({
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-gray-900">Enable AI Checking</p>
-              <p className="text-xs text-gray-400 mt-0.5">Automatically grade submissions using Gemini AI</p>
+              <p className="text-xs text-gray-400 mt-0.5">Let AI review and grade student submissions</p>
             </div>
             <Toggle
               checked={form.ai_check_enabled}
@@ -826,7 +856,41 @@ function HomeworkFormModal({
           </div>
 
           {form.ai_check_enabled && (
-            <div className="mt-3">
+            <div className="mt-4 space-y-4">
+              {/* Reference solution upload */}
+              <div className="p-3 bg-violet-50 border border-violet-100 rounded-xl">
+                <p className="text-xs font-semibold text-violet-800 mb-1">Teacher's Reference Solution / Method (optional)</p>
+                <p className="text-xs text-violet-600 mb-3">
+                  Upload your solved example, answer key, or step-by-step method. Gemini will compare student submissions against this when grading.
+                </p>
+                <div className="flex items-center gap-3">
+                  <input ref={referenceFileInputRef} id="hw-ref-file" type="file" accept=".pdf,image/*" className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f && f.size > 5 * 1024 * 1024) { setError('Reference file must be under 5 MB'); return; }
+                      setForm((prev) => ({ ...prev, reference_file: f ?? null }));
+                    }} />
+                  <button type="button" onClick={() => referenceFileInputRef.current?.click()}
+                    className="px-3 py-2 text-xs border border-violet-300 rounded-lg hover:bg-violet-100 transition-colors text-violet-700 font-medium">
+                    {form.reference_file ? 'Change file' : 'Upload solution'}
+                  </button>
+                  {form.reference_file ? (
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-violet-700 truncate max-w-xs">{form.reference_file.name}</span>
+                      <button type="button"
+                        onClick={() => { setForm((f) => ({ ...f, reference_file: null })); if (referenceFileInputRef.current) referenceFileInputRef.current.value = ''; }}
+                        className="text-violet-400 hover:text-red-500 flex-shrink-0" aria-label="Remove reference file">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-violet-400">PDF or image, max 5 MB</span>
+                  )}
+                </div>
+              </div>
+
               <AICheckSettings
                 settings={form.ai_settings}
                 onChange={(s) => setForm((f) => ({ ...f, ai_settings: s }))}
