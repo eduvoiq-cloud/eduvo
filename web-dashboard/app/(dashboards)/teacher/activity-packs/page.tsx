@@ -20,12 +20,26 @@ interface Activity {
 type Phase = 'setup' | 'preview' | 'success';
 type CreationMode = 'ai' | 'manual';
 type Board = 'GSEB' | 'CBSE' | 'ICSE' | 'Other';
+type Language = 'English' | 'Gujarati' | 'Hindi' | 'Sanskrit' | 'Marathi' | 'Tamil' | 'Telugu' | 'Kannada' | 'Bengali' | 'Punjabi';
 
 const BOARDS: { value: Board; label: string }[] = [
   { value: 'GSEB', label: 'GSEB (Gujarat Board)' },
   { value: 'CBSE', label: 'CBSE' },
   { value: 'ICSE', label: 'ICSE' },
   { value: 'Other', label: 'Other' },
+];
+
+const LANGUAGES: { value: Language; label: string }[] = [
+  { value: 'English',   label: 'English' },
+  { value: 'Gujarati',  label: 'ગુજરાતી (Gujarati)' },
+  { value: 'Hindi',     label: 'हिंदी (Hindi)' },
+  { value: 'Sanskrit',  label: 'Sanskrit' },
+  { value: 'Marathi',   label: 'मराठी (Marathi)' },
+  { value: 'Tamil',     label: 'தமிழ் (Tamil)' },
+  { value: 'Telugu',    label: 'తెలుగు (Telugu)' },
+  { value: 'Kannada',   label: 'ಕನ್ನಡ (Kannada)' },
+  { value: 'Bengali',   label: 'বাংলা (Bengali)' },
+  { value: 'Punjabi',   label: 'ਪੰਜਾਬੀ (Punjabi)' },
 ];
 
 const TYPE_BADGE: Record<Activity['type'], { label: string; cls: string; icon: string }> = {
@@ -213,6 +227,7 @@ export default function ActivityPacksPage() {
   const [topic, setTopic] = useState('');
   const [board, setBoard] = useState<Board>('GSEB');
   const [chapter, setChapter] = useState('');
+  const [language, setLanguage] = useState<Language>('English');
 
   // AI options
   const [activityCount, setActivityCount] = useState(5);
@@ -312,6 +327,7 @@ export default function ActivityPacksPage() {
           board,
           chapter: chapter.trim(),
           count: activityCount,
+          language,
         }),
       });
       const json = await res.json();
@@ -427,6 +443,7 @@ export default function ActivityPacksPage() {
                 setManualActivities([emptyActivity()]);
                 setCreationMode('ai');
                 setActivityCount(5);
+                setLanguage('English');
               }}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
             >
@@ -627,6 +644,20 @@ export default function ActivityPacksPage() {
               </select>
             </FormField>
           </div>
+
+          {/* Language */}
+          <FormField label="Activity Language" htmlFor="ap-language" required>
+            <select
+              id="ap-language"
+              className={inputClass}
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as Language)}
+            >
+              {LANGUAGES.map((l) => (
+                <option key={l.value} value={l.value}>{l.label}</option>
+              ))}
+            </select>
+          </FormField>
 
           {/* Topic */}
           <FormField label="What topic did you teach today?" htmlFor="ap-topic" required>

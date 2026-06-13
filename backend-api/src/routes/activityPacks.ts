@@ -137,6 +137,7 @@ router.post(
       board: z.enum(['GSEB', 'CBSE', 'ICSE', 'Other']).optional().default('CBSE'),
       chapter: z.string().optional().default(''),
       count: z.number().int().min(1).max(10).optional().default(5),
+      language: z.enum(['English', 'Gujarati', 'Hindi', 'Sanskrit', 'Marathi', 'Tamil', 'Telugu', 'Kannada', 'Bengali', 'Punjabi']).optional().default('English'),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -151,7 +152,7 @@ router.post(
       return;
     }
 
-    const { class: cls, subject, topic, board, chapter, count } = parsed.data;
+    const { class: cls, subject, topic, board, chapter, count, language } = parsed.data;
     const age = classToAge(cls);
 
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
@@ -162,16 +163,41 @@ router.post(
 
     const chapterLine = chapter ? `Chapter/Unit: '${chapter}'` : '';
     const boardContext = board === 'GSEB'
-      ? 'Gujarat State Education Board (GSEB) curriculum, medium may be Gujarati or English'
+      ? 'Gujarat State Education Board (GSEB) curriculum'
       : board === 'ICSE'
       ? 'ICSE curriculum'
       : board === 'CBSE'
       ? 'CBSE (Central Board of Secondary Education) curriculum'
       : 'Indian school curriculum';
 
+    // Language instruction — be explicit so non-English outputs are actually in that script/language
+    const languageInstruction = language === 'English'
+      ? 'Write all activity instructions in English.'
+      : language === 'Gujarati'
+      ? 'Write all activity instructions in Gujarati language using Gujarati script (e.g. ગુજરાતી). Do NOT write in English or transliteration.'
+      : language === 'Hindi'
+      ? 'Write all activity instructions in Hindi language using Devanagari script (e.g. हिंदी). Do NOT write in English or transliteration.'
+      : language === 'Sanskrit'
+      ? 'Write all activity instructions in Sanskrit language using Devanagari script. Do NOT write in English or transliteration.'
+      : language === 'Marathi'
+      ? 'Write all activity instructions in Marathi language using Devanagari script (e.g. मराठी). Do NOT write in English or transliteration.'
+      : language === 'Tamil'
+      ? 'Write all activity instructions in Tamil language using Tamil script (e.g. தமிழ்). Do NOT write in English or transliteration.'
+      : language === 'Telugu'
+      ? 'Write all activity instructions in Telugu language using Telugu script (e.g. తెలుగు). Do NOT write in English or transliteration.'
+      : language === 'Kannada'
+      ? 'Write all activity instructions in Kannada language using Kannada script (e.g. ಕನ್ನಡ). Do NOT write in English or transliteration.'
+      : language === 'Bengali'
+      ? 'Write all activity instructions in Bengali language using Bengali script (e.g. বাংলা). Do NOT write in English or transliteration.'
+      : language === 'Punjabi'
+      ? 'Write all activity instructions in Punjabi language using Gurmukhi script (e.g. ਪੰਜਾਬੀ). Do NOT write in English or transliteration.'
+      : 'Write all activity instructions in English.';
+
     const prompt = `You are an expert Indian school teacher creating home activities for parents.
 Create exactly ${count} home activities for a Class ${cls} student (age ~${age}) following the ${boardContext}.
 Topic taught today: '${topic}' (Subject: ${subject})${chapterLine ? `. ${chapterLine}` : ''}.
+
+IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}
 
 Each activity must:
 - Take 3-5 minutes (total ~${count * 3}-${count * 5} minutes)

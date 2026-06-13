@@ -10,7 +10,7 @@ import FormField, { inputClass } from '@/components/FormField';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
-// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Types ---------------------------------------------------------------------
 
 interface GeneratedQuestion {
   question_text: string;
@@ -30,7 +30,7 @@ const DIFFICULTY_BADGE: Record<string, { label: string; cls: string }> = {
   hard:   { label: 'Hard',   cls: 'bg-red-100 text-red-700' },
 };
 
-// â”€â”€ Empty manual question factory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Empty manual question factory ---------------------------------------------
 
 function emptyQuestion(): GeneratedQuestion {
   return {
@@ -43,7 +43,7 @@ function emptyQuestion(): GeneratedQuestion {
   };
 }
 
-// â”€â”€ Manual question editor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Manual question editor ----------------------------------------------------
 
 function ManualQuestionEditor({
   q,
@@ -74,7 +74,7 @@ function ManualQuestionEditor({
           id={`mq-text-${index}`}
           rows={2}
           className={`${inputClass} resize-none`}
-          placeholder="Enter the questionâ€¦"
+          placeholder="Enter the question?"
           value={q.question_text}
           onChange={(e) => onChange({ ...q, question_text: e.target.value })}
         />
@@ -130,7 +130,7 @@ function ManualQuestionEditor({
             id={`mq-exp-${index}`}
             type="text"
             className={inputClass}
-            placeholder="Brief explanation of the answerâ€¦"
+            placeholder="Brief explanation of the answer?"
             value={q.explanation}
             onChange={(e) => onChange({ ...q, explanation: e.target.value })}
           />
@@ -140,7 +140,7 @@ function ManualQuestionEditor({
   );
 }
 
-// â”€â”€ Question card (preview mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Question card (preview mode) ----------------------------------------------
 
 function QuestionCard({
   q,
@@ -166,7 +166,7 @@ function QuestionCard({
     return (
       <div className="border border-blue-200 bg-blue-50/40 rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-gray-800">Q{index + 1} â€” Editing</span>
+          <span className="text-sm font-semibold text-gray-800">Q{index + 1} ? Editing</span>
           <button
             onClick={() => { setDraft({ ...q }); setEditing(false); }}
             className="text-xs text-gray-500 hover:text-red-500"
@@ -291,14 +291,14 @@ function QuestionCard({
 
       {q.explanation && (
         <p className="text-xs text-gray-500 italic border-t border-gray-100 pt-2">
-          ðŸ’¡ {q.explanation}
+          ?? {q.explanation}
         </p>
       )}
     </div>
   );
 }
 
-// â”€â”€ Main page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// -- Main page -----------------------------------------------------------------
 
 export default function DailyTestPage() {
   const { user } = useAuth();
@@ -338,7 +338,7 @@ export default function DailyTestPage() {
   const [assignError, setAssignError] = useState('');
   const [assignedResult, setAssignedResult] = useState<{ students_assigned: number } | null>(null);
 
-  // â”€â”€ Check permission â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Check permission ------------------------------------------------------
 
   useEffect(() => {
     const token = getToken();
@@ -353,7 +353,7 @@ export default function DailyTestPage() {
       .catch(() => setHasPermission(false));
   }, [user]);
 
-  // â”€â”€ Fetch assignments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Fetch assignments -----------------------------------------------------
 
   const fetchAssignments = useCallback(async () => {
     const token = getToken();
@@ -368,9 +368,9 @@ export default function DailyTestPage() {
 
   useEffect(() => { fetchAssignments(); }, [fetchAssignments]);
 
-  // â”€â”€ Derived dropdowns â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Derived dropdowns -----------------------------------------------------
 
-  // Only show classes 7â€“12 (daily test is for senior premium)
+  // Only show classes 7?12 (daily test is for senior premium)
   const seniorClasses = ['7', '8', '9', '10', '11', '12'];
   const myClasses = [...new Set(assignments.map((a) => a.class_name))]
     .filter((c) => seniorClasses.some((s) => c === s || c === `Class ${s}` || c.endsWith(` ${s}`)))
@@ -386,7 +386,7 @@ export default function DailyTestPage() {
       .map((a) => a.subject)
   )].sort();
 
-  // â”€â”€ Validate setup fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Validate setup fields -------------------------------------------------
 
   function validateSetup(): string | null {
     if (!className) return 'Please select a class.';
@@ -396,7 +396,7 @@ export default function DailyTestPage() {
     return null;
   }
 
-  // â”€â”€ Generate questions (AI) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Generate questions (AI) -----------------------------------------------
 
   async function handleGenerate() {
     const err = validateSetup();
@@ -424,7 +424,7 @@ export default function DailyTestPage() {
     }
   }
 
-  // â”€â”€ Submit manual questions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Submit manual questions -----------------------------------------------
 
   function handleManualSubmit() {
     const err = validateSetup();
@@ -448,7 +448,7 @@ export default function DailyTestPage() {
     setPhase('preview');
   }
 
-  // â”€â”€ Assign test â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Assign test -----------------------------------------------------------
 
   async function handleAssign() {
     setAssignError('');
@@ -482,7 +482,7 @@ export default function DailyTestPage() {
     }
   }
 
-  // â”€â”€ Loading / permission gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Loading / permission gate ---------------------------------------------
 
   if (hasPermission === null) {
     return (
@@ -500,7 +500,7 @@ export default function DailyTestPage() {
           description="Generate and assign AI-powered daily tests"
         />
         <div className="max-w-lg mx-auto mt-8 text-center py-16 px-6 bg-white rounded-xl border border-gray-200">
-          <div className="text-5xl mb-4">ðŸ”’</div>
+          <div className="text-5xl mb-4">??</div>
           <h2 className="text-lg font-semibold text-gray-900 mb-2">Access Required</h2>
           <p className="text-sm text-gray-500">
             Your school admin needs to grant you Daily Test access. Contact your administrator.
@@ -510,14 +510,14 @@ export default function DailyTestPage() {
     );
   }
 
-  // â”€â”€ Success screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Success screen --------------------------------------------------------
 
   if (phase === 'success') {
     return (
       <>
         <PageHeader title="Daily AI Test" description="Test assigned successfully" />
         <div className="max-w-lg mx-auto mt-8 text-center py-16 px-6 bg-white rounded-xl border border-gray-200">
-          <div className="text-5xl mb-4">ðŸŽ‰</div>
+          <div className="text-5xl mb-4">??</div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Test Assigned!</h2>
           <p className="text-sm text-gray-600 mb-6">
             Today&apos;s <strong>{subject}</strong> test on &quot;<strong>{topic}</strong>&quot; has been assigned to{' '}
@@ -549,14 +549,14 @@ export default function DailyTestPage() {
     );
   }
 
-  // â”€â”€ Preview screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Preview screen --------------------------------------------------------
 
   if (phase === 'preview') {
     return (
       <>
         <PageHeader
           title="Daily AI Test"
-          description={`Preview â€” ${subject} Â· ${topic}`}
+          description={`Preview ? ${subject} ? ${topic}`}
           action={
             <button
               onClick={() => setPhase('setup')}
@@ -573,7 +573,7 @@ export default function DailyTestPage() {
         {/* Summary bar */}
         <div className="flex items-center gap-4 px-4 py-3 bg-white border border-gray-200 rounded-xl mb-5 text-sm">
           <span className="font-semibold text-gray-900">{questions.length} questions</span>
-          <span className="text-gray-300">Â·</span>
+          <span className="text-gray-300">?</span>
           <span className="text-green-600 font-medium">
             {questions.filter((q) => q.difficulty === 'easy').length} easy
           </span>
@@ -583,7 +583,7 @@ export default function DailyTestPage() {
           <span className="text-red-600 font-medium">
             {questions.filter((q) => q.difficulty === 'hard').length} hard
           </span>
-          <span className="text-gray-300">Â·</span>
+          <span className="text-gray-300">?</span>
           <span className="text-gray-500">Class {className} {section}</span>
         </div>
 
@@ -621,7 +621,7 @@ export default function DailyTestPage() {
             onClick={() => setPhase('setup')}
             className="px-4 py-2.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
           >
-            â† Back
+            ? Back
           </button>
           <button
             onClick={handleAssign}
@@ -631,7 +631,7 @@ export default function DailyTestPage() {
             {assigning ? (
               <>
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Assigningâ€¦
+                Assigning?
               </>
             ) : (
               <>
@@ -647,7 +647,7 @@ export default function DailyTestPage() {
     );
   }
 
-  // â”€â”€ Setup screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // -- Setup screen ----------------------------------------------------------
 
   return (
     <>
@@ -657,7 +657,7 @@ export default function DailyTestPage() {
       />
 
       <div className="max-w-2xl space-y-6">
-        {/* â”€â”€ Common setup fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* -- Common setup fields ------------------------------------------- */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
           <h2 className="text-sm font-semibold text-gray-900">Test Setup</h2>
 
@@ -670,7 +670,7 @@ export default function DailyTestPage() {
                 value={className}
                 onChange={(e) => { setClassName(e.target.value); setSection(''); setSubject(''); }}
               >
-                <option value="">{loadingAssignments ? 'Loadingâ€¦' : 'Select classâ€¦'}</option>
+                <option value="">{loadingAssignments ? 'Loading?' : 'Select class?'}</option>
                 {myClasses.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </FormField>
@@ -683,7 +683,7 @@ export default function DailyTestPage() {
                 value={section}
                 onChange={(e) => { setSection(e.target.value); setSubject(''); }}
               >
-                <option value="">Select sectionâ€¦</option>
+                <option value="">Select section?</option>
                 {sectionsForClass.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </FormField>
@@ -698,7 +698,7 @@ export default function DailyTestPage() {
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
               >
-                <option value="">Select subjectâ€¦</option>
+                <option value="">Select subject?</option>
                 {subjectsForClassSection.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </FormField>
@@ -722,7 +722,7 @@ export default function DailyTestPage() {
               id="dt-topic"
               type="text"
               className={inputClass}
-              placeholder="e.g. Laws of Motion, Photosynthesis, Linear Equationsâ€¦"
+              placeholder="e.g. Laws of Motion, Photosynthesis, Linear Equations?"
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && creationMode === 'ai') handleGenerate(); }}
@@ -730,11 +730,11 @@ export default function DailyTestPage() {
           </FormField>
 
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-700">
-            <strong>Note:</strong> This test will be assigned to all students in Class {className || 'â€”'} {section || 'â€”'} with an active <strong>Premium Senior</strong> subscription. They will be notified via the app.
+            <strong>Note:</strong> This test will be assigned to all students in Class {className || '?'} {section || '?'} with an active <strong>Premium Senior</strong> subscription. They will be notified via the app.
           </div>
         </div>
 
-        {/* â”€â”€ Mode toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* -- Mode toggle -------------------------------------------------- */}
         <div className="flex items-center gap-3">
           <button
             onClick={() => { setCreationMode('ai'); setGenerateError(''); }}
@@ -744,7 +744,7 @@ export default function DailyTestPage() {
                 : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
             }`}
           >
-            âœ¨ Generate with AI
+            ? Generate with AI
           </button>
           <button
             onClick={() => { setCreationMode('manual'); setGenerateError(''); }}
@@ -754,11 +754,11 @@ export default function DailyTestPage() {
                 : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
             }`}
           >
-            âœï¸ Create Manually
+            ?? Create Manually
           </button>
         </div>
 
-        {/* â”€â”€ AI mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* -- AI mode ----------------------------------------------------- */}
         {creationMode === 'ai' && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
             <p className="text-xs text-gray-500">AI will generate 10 MCQ questions (4 easy, 4 medium, 2 hard) based on your topic and board.</p>
@@ -772,7 +772,7 @@ export default function DailyTestPage() {
                     disabled={generating}
                     className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-red-300"
                   >
-                    {generating ? 'Retryingâ€¦' : 'Retry'}
+                    {generating ? 'Retrying?' : 'Retry'}
                   </button>
                   <button
                     onClick={() => { setCreationMode('manual'); setGenerateError(''); }}
@@ -793,7 +793,7 @@ export default function DailyTestPage() {
                 {generating ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Generatingâ€¦
+                    Generating?
                   </>
                 ) : (
                   <>
@@ -809,7 +809,7 @@ export default function DailyTestPage() {
           </div>
         )}
 
-        {/* â”€â”€ Manual mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* -- Manual mode ------------------------------------------------- */}
         {creationMode === 'manual' && (
           <div className="space-y-4">
             <div className="bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 text-xs text-amber-700">
@@ -853,7 +853,7 @@ export default function DailyTestPage() {
                 disabled={!className || !section || !subject || !topic.trim()}
                 className="flex items-center gap-2 px-6 py-2.5 bg-green-600 hover:bg-green-700 disabled:bg-green-300 text-white text-sm font-semibold rounded-lg"
               >
-                Preview & Assign â†’
+                Preview & Assign ?
               </button>
             </div>
           </div>
