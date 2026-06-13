@@ -398,6 +398,24 @@ export default function DailyTestAttemptScreen({ route, navigation }: Props) {
             <Text style={preStyles.detailLabel}>Total Marks</Text>
             <Text style={preStyles.detailValue}>{questions.reduce((s, q) => s + (q.marks ?? 1), 0)}</Text>
           </View>
+          {test.time_limit_minutes ? (
+            <>
+              <View style={preStyles.divider} />
+              <View style={preStyles.detailRow}>
+                <Text style={preStyles.detailLabel}>Time Limit</Text>
+                <Text style={preStyles.detailValue}>{test.time_limit_minutes} minutes</Text>
+              </View>
+            </>
+          ) : null}
+          {test.available_from && test.available_until ? (
+            <>
+              <View style={preStyles.divider} />
+              <View style={preStyles.detailRow}>
+                <Text style={preStyles.detailLabel}>Available</Text>
+                <Text style={preStyles.detailValue}>{test.available_from} – {test.available_until}</Text>
+              </View>
+            </>
+          ) : null}
           <View style={preStyles.divider} />
           <View style={preStyles.detailRow}>
             <Text style={preStyles.detailLabel}>Date</Text>

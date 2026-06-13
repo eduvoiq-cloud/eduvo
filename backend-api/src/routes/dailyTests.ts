@@ -318,6 +318,9 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
     subject: z.string().min(1),
     topic: z.string().min(1),
     test_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    time_limit_minutes: z.number().int().min(1).optional().nullable(),
+    available_from: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+    available_until: z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
     questions: z
       .array(
         z.object({
@@ -346,7 +349,7 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
     return;
   }
 
-  const { class: cls, section, subject, topic, test_date, questions } = parsed.data;
+  const { class: cls, section, subject, topic, test_date, time_limit_minutes, available_from, available_until, questions } = parsed.data;
 
   // Insert the daily test
   const { data: test, error: testErr } = await supabaseAdmin
@@ -360,6 +363,9 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
       topic,
       questions,
       assigned_date: test_date,   // DB column is assigned_date (not test_date)
+      time_limit_minutes: time_limit_minutes ?? null,
+      available_from: available_from ?? null,
+      available_until: available_until ?? null,
     })
     .select()
     .single();
@@ -438,7 +444,7 @@ router.get('/', authenticate, requireRole('teacher'), async (req: Request, res: 
 
   let query = supabaseAdmin
     .from('daily_tests')
-    .select('id, class_name, section, subject, topic, assigned_date, created_at')
+    .select('id, class_name, section, subject, topic, assigned_date, time_limit_minutes, available_from, available_until, created_at')
     .eq('created_by', teacherId)
     .eq('school_id', schoolId)
     .order('assigned_date', { ascending: false });
@@ -673,7 +679,7 @@ router.get(
 
     const { data: tests, error: testsErr } = await supabaseAdmin
       .from('daily_tests')
-      .select('id, subject, topic, assigned_date, questions')
+      .select('id, subject, topic, assigned_date, questions, time_limit_minutes, available_from, available_until')
       .eq('school_id', schoolId)
       .ilike('class_name', className)
       .ilike('section', section)

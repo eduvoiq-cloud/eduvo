@@ -25,6 +25,9 @@ export interface DailyTestMeta {
   subject: string;
   topic: string;
   test_date: string;
+  time_limit_minutes?: number | null;
+  available_from?: string | null;
+  available_until?: string | null;
   questions: Array<{
     question_text: string;
     options: string[];
@@ -84,6 +87,15 @@ function TestCard({ test, onPress }: { test: DailyTestMeta; onPress: () => void 
           <Text style={styles.metaLabel}>MARKS</Text>
           <Text style={styles.metaValue}>{test.questions.reduce((s, q) => s + (q.marks ?? 1), 0)}</Text>
         </View>
+        {test.time_limit_minutes ? (
+          <>
+            <View style={styles.metaDivider} />
+            <View style={styles.metaItem}>
+              <Text style={styles.metaLabel}>TIME LIMIT</Text>
+              <Text style={styles.metaValue}>{test.time_limit_minutes} min</Text>
+            </View>
+          </>
+        ) : null}
         {completed && test.attempt_score !== null && (
           <>
             <View style={styles.metaDivider} />
@@ -94,6 +106,12 @@ function TestCard({ test, onPress }: { test: DailyTestMeta; onPress: () => void 
           </>
         )}
       </View>
+
+      {!completed && test.available_from && test.available_until && (
+        <View style={styles.windowRow}>
+          <Text style={styles.windowText}>🕐 Available {test.available_from} – {test.available_until}</Text>
+        </View>
+      )}
 
       <View style={styles.ctaRow}>
         <Text style={[styles.ctaText, completed && styles.ctaTextCompleted]}>
@@ -271,6 +289,9 @@ const styles = StyleSheet.create({
   ctaRow: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingVertical: 10, paddingHorizontal: 16, alignItems: 'flex-end' },
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
   ctaTextCompleted: { color: '#15803D' },
+
+  windowRow: { borderTopWidth: 1, borderTopColor: '#F3F4F6', paddingVertical: 7, paddingHorizontal: 16 },
+  windowText: { fontSize: 12, color: '#6B7280' },
 
   emptyState: { alignItems: 'center', marginTop: 60 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },

@@ -299,6 +299,11 @@ export default function DailyTestPage() {
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState('');
 
+  // Time limit + test window
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState('');
+  const [availableFrom, setAvailableFrom] = useState('');
+  const [availableUntil, setAvailableUntil] = useState('');
+
   // custom difficulty sync — keep sum equal to questionCount
   const customTotal = easyCount + mediumCount + hardCount;
   const customSumError = difficultyMode === 'custom' && customTotal !== questionCount
@@ -412,15 +417,30 @@ export default function DailyTestPage() {
   // ── Assign test ────────────────────────────────────────────────────────────
 
   async function handleAssign() {
+    if (availableFrom && availableUntil && availableFrom === availableUntil) {
+      setAssignError('"Opens at" and "Closes at" cannot be the same time.');
+      return;
+    }
     setAssignError('');
     setAssigning(true);
     try {
       const token = getToken();
       const today = new Date().toISOString().slice(0, 10);
+      const body: Record<string, unknown> = {
+        class: className,
+        section,
+        subject,
+        topic: topic.trim(),
+        test_date: today,
+        questions,
+        time_limit_minutes: timeLimitMinutes ? parseInt(timeLimitMinutes, 10) : null,
+        available_from: availableFrom || null,
+        available_until: availableUntil || null,
+      };
       const res = await fetch(`${BASE_URL}/api/daily-tests`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ class: className, section, subject, topic: topic.trim(), test_date: today, questions }),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Failed to assign test');
@@ -474,7 +494,7 @@ export default function DailyTestPage() {
                 setPhase('setup'); setQuestions([]); setTopic(''); setChapter('');
                 setManualQuestions([emptyQuestion()]); setCreationMode('ai');
                 setLanguage('English'); setQuestionCount(10); setDifficultyMode('mixed');
-                setUploadedFile(null);
+                setUploadedFile(null); setTimeLimitMinutes(''); setAvailableFrom(''); setAvailableUntil('');
               }}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
             >
@@ -642,6 +662,59 @@ export default function DailyTestPage() {
 
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-700">
             <strong>Note:</strong> This test will be assigned to all students in Class {className || '—'} {section || '—'} with an active <strong>Premium Senior</strong> subscription. They will be notified via the app.
+          </div>
+
+          {/* Time limit + test window */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Time Limit (minutes)" htmlFor="dt-time-limit">
+              <input
+                id="dt-time-limit"
+                type="number"
+                min={1}
+                step={1}
+                className={inputClass}
+                placeholder="e.g. 30 (optional)"
+                value={timeLimitMinutes}
+                onChange={(e) => setTimeLimitMinutes(e.target.value)}
+              />
+            </FormField>
+            <div />
+          </div>
+
+          {/* Schedule window */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-gray-700">Test Window</p>
+              <span className="text-xs text-gray-400">(optional — restricts when students can open the test)</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <FormField label="Opens at" htmlFor="dt-from">
+                <input
+                  id="dt-from"
+                  type="time"
+                  className={inputClass}
+                  value={availableFrom}
+                  onChange={(e) => setAvailableFrom(e.target.value)}
+                />
+              </FormField>
+              <FormField label="Closes at" htmlFor="dt-until">
+                <input
+                  id="dt-until"
+                  type="time"
+                  className={inputClass}
+                  value={availableUntil}
+                  onChange={(e) => setAvailableUntil(e.target.value)}
+                />
+              </FormField>
+            </div>
+            {availableFrom && availableUntil && availableFrom === availableUntil && (
+              <p className="text-xs text-red-500">⚠️ &quot;Closes at&quot; cannot equal &quot;Opens at&quot;.</p>
+            )}
+            {(availableFrom || availableUntil) && !(availableFrom && availableUntil && availableFrom === availableUntil) && (
+              <p className="text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
+                🕐 Students can only start this test between <strong>{availableFrom || '—'}</strong> and <strong>{availableUntil || '—'}</strong>.
+              </p>
+            )}
           </div>
         </div>
 

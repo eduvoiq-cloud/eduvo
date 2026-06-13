@@ -140,26 +140,11 @@ export default function PremiumManagementPage() {
     setLoading(true);
     setError(null);
     try {
-      // Fetch all students (paginated, max 200/page) + all subscriptions in parallel
-      const PAGE = 200;
-      const firstStudentRes = await adminApi.listStudents(token, { limit: PAGE, page: 1 });
-      const firstStudents = firstStudentRes.data as AdminStudent[];
-
-      // Determine total pages from the response header-style data
-      // adminApi.listStudents returns AdminStudent[] (no envelope) — fetch by pages
-      // Backend caps at 200, so fetch subsequent pages if needed
-      let allStudents: AdminStudent[] = [...firstStudents];
-      if (firstStudents.length === PAGE) {
-        // There might be more — fetch subsequent pages
-        let page = 2;
-        while (true) {
-          const res = await adminApi.listStudents(token, { limit: PAGE, page });
-          const batch = res.data as AdminStudent[];
-          allStudents = allStudents.concat(batch);
-          if (batch.length < PAGE) break;
-          page++;
-        }
-      }
+      // Fetch ALL students in one shot using limit=0 (backend returns a plain array)
+      const studentRes = await adminApi.listStudents(token, { limit: 0 });
+      const allStudents: AdminStudent[] = Array.isArray(studentRes.data)
+        ? (studentRes.data as AdminStudent[])
+        : ((studentRes.data as unknown as { data: AdminStudent[] }).data ?? []);
 
       // Fetch all subscriptions (also paginated)
       const firstSubsRes = await premiumApi.listSubscriptions(token, { limit: 200, page: 1 });
