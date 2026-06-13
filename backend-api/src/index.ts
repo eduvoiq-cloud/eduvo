@@ -259,9 +259,10 @@ async function startServer() {
   );
 
   // ── Body parsing ─────────────────────────────────────────────────────────────
-  // 2MB limit to support bulk operations (attendance arrays, test questions, etc.)
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+  // 10MB limit: activity pack generation accepts base64-encoded images/PDFs
+  // which inflate ~33% over raw file size; a 6MB PDF becomes ~8MB in base64.
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // ── Global rate limit (applies to every route) ───────────────────────────────
   app.use(globalRateLimit);
