@@ -34,6 +34,7 @@ interface HomeworkRow {
   school_id: string;
   subject_type: string | null;
   reference_answer: string | null;
+  reference_file_url: string | null;
   min_word_count: number | null;
   requires_diagram: boolean;
   check_suspicious: boolean;
@@ -440,7 +441,8 @@ export async function evaluatePhotoAnswer(
   referenceAnswer: string | null,
   imageUrls: string[],
   requiresDiagram: boolean,
-  minWordCount: number | null
+  minWordCount: number | null,
+  referenceFileUrl: string | null = null
 ): Promise<EvalResult> {
   const model = getGeminiModel();
 
@@ -453,11 +455,14 @@ export async function evaluatePhotoAnswer(
   if (minWordCount) reqParts.push(`minimum ${minWordCount} words`);
   const reqNote = reqParts.length > 0 ? `Requirements: ${reqParts.join(', ')}` : '';
 
+  const hasReferenceImage = !!referenceFileUrl;
+
   const promptText = `This is a photo of a Class ${className} student's handwritten homework for ${subjectName}.
 
 Question: ${question}
 ${refNote}
 ${reqNote}
+${hasReferenceImage ? 'Note: The teacher has also provided a reference solution image (shown first below). Compare the student\'s work against it.' : ''}
 
 Analyze the image and evaluate:
 1. Is the work shown correct based on the reference?
@@ -472,7 +477,29 @@ Return ONLY valid JSON:
 
   // Fetch image as base64 for Gemini vision
   const parts: Part[] = [];
-  for (const url of imageUrls.slice(0, 3)) { // max 3 images per eval
+
+  // Optionally prepend teacher's reference image first
+  if (referenceFileUrl) {
+    try {
+      const resp = await fetch(referenceFileUrl);
+      if (resp.ok) {
+        const buffer = await resp.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        const contentType = resp.headers.get('content-type') ?? 'image/jpeg';
+        parts.push({ inlineData: { mimeType: contentType, data: base64 } });
+        // Label part so model understands context
+        parts.push({ text: '[Above image: Teacher reference solution]' });
+      }
+    } catch (err) {
+      console.warn('[homeworkEval] Could not fetch reference image:', referenceFileUrl, err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Student submission images (max 3)
+  if (parts.length > 0) {
+    parts.push({ text: '[Below: Student submission]' });
+  }
+  for (const url of imageUrls.slice(0, 3)) {
     try {
       const resp = await fetch(url);
       if (!resp.ok) continue;
@@ -485,7 +512,7 @@ Return ONLY valid JSON:
     }
   }
 
-  if (parts.length === 0) {
+  if (parts.filter(p => 'inlineData' in p).length === 0) {
     return { result: 'unclear', confidence: 0.0, feedback: 'Could not load submission images for evaluation.' };
   }
 
@@ -621,6 +648,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
         school_id,
         subject_type,
         reference_answer,
+        reference_file_url,
         min_word_count,
         requires_diagram,
         check_suspicious,
@@ -713,7 +741,8 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
           hw.reference_answer,
           row.submission_image_urls!,
           hw.requires_diagram,
-          hw.min_word_count
+          hw.min_word_count,
+          hw.reference_file_url
         );
         addCost(hw.school_id, 'vision');
         // Photos are never cached

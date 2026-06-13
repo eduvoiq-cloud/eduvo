@@ -216,6 +216,8 @@ const createHomeworkSchema = z.object({
   // answers and flags them for teacher review. Teacher sees a soft flag —
   // they decide whether to penalise. Default: false (no suspicious check).
   check_suspicious: z.boolean().optional().default(false),
+  // Teacher reference solution file (URL after upload)
+  reference_file_url: z.string().url('reference_file_url must be a valid URL').optional(),
   // Template saving
   save_as_template: z.boolean().optional().default(false),
   template_name: z.string().max(100).optional(),
@@ -426,7 +428,7 @@ router.post(
 
     const {
       subject_id, class: className, section, title, description, due_date, file_url,
-      ai_check_enabled, reference_answer, submission_type, subject_type, min_word_count, requires_diagram,
+      ai_check_enabled, reference_answer, reference_file_url, submission_type, subject_type, min_word_count, requires_diagram,
       check_suspicious,
       save_as_template, template_name,
     } = parsed.data;
@@ -442,6 +444,12 @@ router.post(
     // Validate file_url is a Supabase Storage URL if provided
     if (file_url && !isValidSupabaseStorageUrl(file_url)) {
       sendError(res, 'file_url must be a valid Supabase Storage URL', 400);
+      return;
+    }
+
+    // Validate reference_file_url is a Supabase Storage URL if provided
+    if (reference_file_url && !isValidSupabaseStorageUrl(reference_file_url)) {
+      sendError(res, 'reference_file_url must be a valid Supabase Storage URL', 400);
       return;
     }
 
@@ -524,6 +532,7 @@ router.post(
         // AI checking fields
         ai_check_enabled: ai_check_enabled ?? false,
         reference_answer: reference_answer ?? null,
+        reference_file_url: reference_file_url ?? null,
         submission_type: submission_type ?? 'either',
         subject_type: subject_type ?? null,
         min_word_count: min_word_count ?? null,
@@ -532,7 +541,7 @@ router.post(
       })
       .select(`
         id, title, description, due_date, file_url, created_at,
-        ai_check_enabled, reference_answer, submission_type, subject_type, min_word_count, requires_diagram, check_suspicious,
+        ai_check_enabled, reference_answer, reference_file_url, submission_type, subject_type, min_word_count, requires_diagram, check_suspicious,
         subjects ( name ),
         users ( name )
       `)

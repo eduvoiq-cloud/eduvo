@@ -322,6 +322,11 @@ export default function HomeworkStatusPage() {
                   {s.flagged_reason && (
                     <p className="text-xs text-orange-500 mt-0.5">⚑ {s.flagged_reason.replace(/_/g, ' ')}</p>
                   )}
+                  {s.ai_feedback && s.status === 'checked' && (
+                    <p className="text-xs text-gray-400 mt-0.5 line-clamp-1" title={s.ai_feedback}>
+                      {s.ai_feedback}
+                    </p>
+                  )}
                 </div>
 
                 {/* Status */}
@@ -334,7 +339,10 @@ export default function HomeworkStatusPage() {
                 {/* AI Result */}
                 <div className="col-span-2">
                   {s.ai_result ? (
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${aiResultBadgeClass(s.ai_result)}`}>
+                    <span
+                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${aiResultBadgeClass(s.ai_result)}`}
+                      title={s.ai_feedback ?? undefined}
+                    >
                       {AI_RESULT_LABELS[s.ai_result]}
                     </span>
                   ) : (
@@ -357,8 +365,6 @@ export default function HomeworkStatusPage() {
         </div>
       )}
 
-      {/* AI Feedback drawer (per row tooltip on hover - mobile friendly note) */}
-      {/* Full AI feedback is shown via title attr for brevity; can be expanded to a modal later */}
     </>
   );
 }
