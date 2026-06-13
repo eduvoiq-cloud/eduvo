@@ -30,7 +30,6 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
     { label: 'Performance', href: '/admin/performance' },
     { label: 'Premium', href: '/admin/premium-management' },
     { label: 'AI Insights', href: '/admin/premium-insights' },
-    { label: 'Activity Packs', href: '/admin/activity-packs' },
     { label: 'Streak Board', href: '/admin/streak-leaderboard' },
     { label: 'Settings', href: '/admin/settings' },
   ],
