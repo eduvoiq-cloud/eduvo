@@ -286,6 +286,83 @@ router.post(
   }
 );
 
+// ── Admin: student activation summary (read-only overview) ───────────────────
+// GET /api/premium/student-summary
+// Returns all students with their activation status (for admin read-only view).
+router.get(
+  '/student-summary',
+  authenticate,
+  requireRole('schooladmin', 'superadmin'),
+  async (req: Request, res: Response) => {
+    const schoolId = req.user!.school_id!;
+
+    // Fetch all non-deleted students
+    const { data: students, error: studErr } = await supabaseAdmin
+      .from('students')
+      .select('id, full_name, class_name, section')
+      .eq('school_id', schoolId)
+      .eq('is_deleted', false)
+      .order('class_name')
+      .order('full_name');
+
+    if (studErr) { sendError(res, studErr.message, 500); return; }
+
+    const allStudents = (students ?? []) as Record<string, unknown>[];
+    if (allStudents.length === 0) {
+      sendSuccess(res, { total: 0, activated: 0, not_activated: 0, students: [] });
+      return;
+    }
+
+    // Fetch active subscriptions for this school
+    const studentIds = allStudents.map((s) => s.id as string);
+    const { data: subs } = await supabaseAdmin
+      .from('parent_subscriptions')
+      .select('student_id, status, expires_at, activated_at')
+      .eq('school_id', schoolId)
+      .in('student_id', studentIds);
+
+    const subMap: Record<string, Record<string, unknown>> = {};
+    for (const sub of (subs ?? []) as Record<string, unknown>[]) {
+      subMap[sub.student_id as string] = sub;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const result = allStudents.map((s) => {
+      const sub = subMap[s.id as string] ?? null;
+      const isActive = sub && sub.status === 'active';
+      let daysLeft: number | null = null;
+      if (isActive && sub.expires_at) {
+        const expiry = new Date(sub.expires_at as string);
+        expiry.setHours(0, 0, 0, 0);
+        daysLeft = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysLeft < 0) daysLeft = 0;
+      }
+      return {
+        id:           s.id,
+        full_name:    s.full_name,
+        class_name:   s.class_name,
+        section:      s.section,
+        is_activated: !!isActive,
+        activated_at: sub?.activated_at ?? null,
+        expires_at:   sub?.expires_at ?? null,
+        days_left:    daysLeft,
+      };
+    });
+
+    const activated     = result.filter((r) => r.is_activated).length;
+    const not_activated = result.length - activated;
+
+    sendSuccess(res, {
+      total:         result.length,
+      activated,
+      not_activated,
+      students:      result,
+    });
+  }
+);
+
 // ── Admin: list all subscriptions for school ──────────────────────────────────
 // GET /api/premium/subscriptions?status=active&class_name=5&page=1&limit=50
 // Superadmin can pass school_id query param to view any school.

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { complaintsApi, testsApi, type TeacherAssignment, type Student } from '@/lib/api';
+import { complaintsApi, testsApi, teacherPremiumApi, type TeacherAssignment, type Student } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
@@ -16,10 +16,10 @@ export default function TeacherDashboard() {
   const [students, setStudents] = useState<Student[]>([]);
   const [pendingComplaints, setPendingComplaints] = useState(0);
   const [testsThisMonth, setTestsThisMonth] = useState(0);
+  const [expiringSoonCount, setExpiringSoonCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Wait for auth to finish rehydrating before fetching
     if (authLoading) return;
 
     const token = getToken();
@@ -30,7 +30,6 @@ export default function TeacherDashboard() {
 
     async function fetchDashboard() {
       try {
-        // If school_id is missing from the cached session, fetch fresh profile first
         let schoolId = user?.school_id ?? null;
         if (!schoolId) {
           try {
@@ -42,35 +41,35 @@ export default function TeacherDashboard() {
         }
 
         if (!schoolId) {
-          // Still no school_id — account not linked to a school
           setLoading(false);
           return;
         }
-        // Fetch classes, complaints, and tests in parallel.
-        // Each call is individually guarded so one failure never kills the whole dashboard.
-        const [classesRes, complaintsRes, testsRes] = await Promise.all([
+
+        const [classesRes, complaintsRes, testsRes, premiumRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
           complaintsApi.list(token!, { status: 'pending', role: user!.role }).catch(() => ({ data: [] })),
           testsApi.list(token!).catch(() => ({ data: [] })),
+          teacherPremiumApi.listStudents(token!).catch(() => ({ data: [] })),
         ]);
 
         const myAssignments: TeacherAssignment[] = classesRes?.data ?? [];
         setAssignments(myAssignments);
 
-        // Fetch students scoped to this teacher's assigned classes.
-        // If the teacher has assignments, fetch per class+section via the
-        // teacher-scoped endpoint. If no assignments exist yet (e.g. newly
-        // created teacher), fall back to fetching all students in the school
-        // so the dashboard never shows 0 when students do exist.
+        // Count students expiring within 5 days
+        const premiumStudents = Array.isArray(premiumRes.data) ? premiumRes.data : [];
+        const expiring = premiumStudents.filter(
+          (s: { premium_status: string; days_left: number | null }) =>
+            s.premium_status === 'active' && s.days_left !== null && s.days_left <= 5
+        ).length;
+        setExpiringSoonCount(expiring);
+
         let uniqueStudents: Student[] = [];
 
         const classKeys = [
           ...new Map(
             myAssignments.map((a) => {
-              // DB column is `class` but we normalise to `class_name` in the API response.
-              // Guard against both shapes just in case.
               const cn = (a.class_name ?? (a as unknown as Record<string, string>).class) as string;
               return [`${cn}||${a.section}`, { ...a, class_name: cn }];
             })
@@ -78,7 +77,6 @@ export default function TeacherDashboard() {
         ];
 
         if (classKeys.length > 0) {
-          // Teacher has assignments — fetch students per assigned class/section
           const studentResults = await Promise.all(
             classKeys.map((a) =>
               fetch(
@@ -89,17 +87,11 @@ export default function TeacherDashboard() {
           );
 
           const allStudents: Student[] = studentResults.flatMap((r) => r?.data ?? []);
-          // Deduplicate by id in case a student appears in multiple results
           uniqueStudents = [...new Map(allStudents.map((s) => [s.id, s])).values()];
         }
-        // No else fallback — if a teacher has no assignments, student count is 0.
-        // The admin needs to assign classes before the teacher can see students.
 
         setStudents(uniqueStudents);
-
         setPendingComplaints(complaintsRes.data.length);
-
-        // Count all tests created by this teacher
         setTestsThisMonth((testsRes.data ?? []).length);
       } catch (err) {
         console.error('[TeacherDashboard] fetch error:', err);
@@ -111,7 +103,6 @@ export default function TeacherDashboard() {
     fetchDashboard();
   }, [user, authLoading]);
 
-  // Students are already fetched scoped to teacher's classes — no client-side filter needed
   const uniqueClasses = [...new Set(assignments.map((a) => {
     const cn = a.class_name ?? (a as unknown as Record<string, string>).class;
     return `${cn} ${a.section}`;
@@ -134,6 +125,31 @@ export default function TeacherDashboard() {
         <StatCard label="Tests Created" value={loading ? '—' : testsThisMonth}
           sub="Created by you" icon={<TestIcon />} />
       </div>
+
+      {/* Premium expiry alert */}
+      {!loading && expiringSoonCount > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-6 py-4 mb-6 flex items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-red-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-red-800">
+                {expiringSoonCount} student{expiringSoonCount !== 1 ? 's' : ''} have premium expiring within 5 days
+              </p>
+              <p className="text-xs text-red-600 mt-0.5">
+                Go to Premium Management to renew or send a reminder to parents.
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/teacher/premium"
+            className="shrink-0 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+          >
+            Manage Premium →
+          </Link>
+        </div>
+      )}
 
       {/* No assignments notice */}
       {!loading && assignments.length === 0 && (
@@ -161,15 +177,15 @@ export default function TeacherDashboard() {
             {assignments.map((a) => {
               const cn = a.class_name ?? (a as unknown as Record<string, string>).class;
               return (
-              <div key={a.id} className="flex items-center justify-between px-6 py-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-900">{cn} · {a.section}</p>
-                  <p className="text-xs text-gray-400">{a.subject}</p>
+                <div key={a.id} className="flex items-center justify-between px-6 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{cn} · {a.section}</p>
+                    <p className="text-xs text-gray-400">{a.subject}</p>
+                  </div>
+                  <span className="text-xs text-gray-500">
+                    {students.filter((s) => s.class_name === cn && (s.section ?? '') === a.section).length} students
+                  </span>
                 </div>
-                <span className="text-xs text-gray-500">
-                  {students.filter((s) => s.class_name === cn && (s.section ?? '') === a.section).length} students
-                </span>
-              </div>
               );
             })}
           </div>
@@ -179,13 +195,14 @@ export default function TeacherDashboard() {
       {/* Quick actions */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
             { href: '/teacher/marks', label: 'Enter Marks' },
             { href: '/teacher/attendance', label: 'Mark Attendance' },
             { href: '/teacher/fees', label: 'Fee Status' },
             { href: '/teacher/tests', label: 'Create Test' },
             { href: '/teacher/complaints', label: 'View Complaints' },
+            { href: '/teacher/premium', label: 'Premium' },
           ].map((a) => (
             <Link key={a.href} href={a.href}
               className="flex items-center justify-between px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 text-sm font-medium text-gray-700 hover:text-blue-700 transition-colors">
@@ -207,10 +224,6 @@ function StudentsIcon() {
 function ClassIcon() {
   return <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>;
 }
-function SubjectIcon() {
-  return <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>;
-}
-
 function ComplaintIcon() {
   return <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>;
 }
