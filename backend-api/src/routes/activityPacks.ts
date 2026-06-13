@@ -157,6 +157,13 @@ router.post(
     }
 
     const { class: cls, subject, topic, board, chapter, count, language, file_data, file_mime } = parsed.data;
+
+    // Reject files that are too large (base64 string > ~7.5MB ≈ ~5.6MB raw file)
+    if (file_data && file_data.length > 7_500_000) {
+      sendError(res, 'File is too large. Please upload an image or PDF smaller than 5 MB.', 413);
+      return;
+    }
+
     const age = classToAge(cls);
 
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
