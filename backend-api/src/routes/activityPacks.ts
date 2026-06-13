@@ -186,7 +186,8 @@ type must be one of: "verbal", "written", "physical"`;
 
     const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
 
-    // Structured output schema
+    // Structured output schema — keep simple (no nested enum) for compatibility
+    // with gemini-2.0-flash. Type values are validated/normalised below anyway.
     const responseSchema = {
       type: 'object' as const,
       properties: {
@@ -196,7 +197,7 @@ type must be one of: "verbal", "written", "physical"`;
             type: 'object' as const,
             properties: {
               instruction: { type: 'string' as const },
-              type:        { type: 'string' as const, enum: ['verbal', 'written', 'physical'] },
+              type:        { type: 'string' as const },
             },
             required: ['instruction', 'type'],
           },
@@ -240,9 +241,10 @@ type must be one of: "verbal", "written", "physical"`;
       }));
 
       sendSuccess(res, { activities }, 'Activities generated');
-    } catch (err) {
-      console.error('[activity-packs/generate] Gemini error:', err);
-      sendError(res, 'Failed to generate activities. Please try again.', 500);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[activity-packs/generate] Gemini error:', msg);
+      sendError(res, `Failed to generate activities: ${msg}`, 500);
     }
   }
 );
