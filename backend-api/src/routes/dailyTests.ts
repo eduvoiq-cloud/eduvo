@@ -127,7 +127,8 @@ router.post(
       class: z.string().min(1),
       subject: z.string().min(1),
       topic: z.string().min(1),
-      board: z.string().optional().default('CBSE'),
+      board: z.string().optional().default('GSEB'),
+      language: z.enum(['English', 'Gujarati', 'Hindi', 'Sanskrit', 'Marathi', 'Tamil', 'Telugu', 'Kannada', 'Bengali', 'Punjabi']).optional().default('English'),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -142,7 +143,7 @@ router.post(
       return;
     }
 
-    const { class: cls, subject, topic, board } = parsed.data;
+    const { class: cls, subject, topic, board, language } = parsed.data;
 
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
     if (!apiKey) {
@@ -150,13 +151,37 @@ router.post(
       return;
     }
 
+    // Language instruction — be explicit so non-English outputs are actually in that script/language
+    const languageInstruction = language === 'English'
+      ? 'Write all questions and options in English.'
+      : language === 'Gujarati'
+      ? 'Write all questions and options in Gujarati language using Gujarati script (e.g. ગુજરાતી). Do NOT write in English or transliteration.'
+      : language === 'Hindi'
+      ? 'Write all questions and options in Hindi language using Devanagari script (e.g. हिंदी). Do NOT write in English or transliteration.'
+      : language === 'Sanskrit'
+      ? 'Write all questions and options in Sanskrit language using Devanagari script. Do NOT write in English or transliteration.'
+      : language === 'Marathi'
+      ? 'Write all questions and options in Marathi language using Devanagari script (e.g. मराठी). Do NOT write in English or transliteration.'
+      : language === 'Tamil'
+      ? 'Write all questions and options in Tamil language using Tamil script (e.g. தமிழ்). Do NOT write in English or transliteration.'
+      : language === 'Telugu'
+      ? 'Write all questions and options in Telugu language using Telugu script (e.g. తెలుగు). Do NOT write in English or transliteration.'
+      : language === 'Kannada'
+      ? 'Write all questions and options in Kannada language using Kannada script (e.g. ಕನ್ನಡ). Do NOT write in English or transliteration.'
+      : language === 'Bengali'
+      ? 'Write all questions and options in Bengali language using Bengali script (e.g. বাংলা). Do NOT write in English or transliteration.'
+      : language === 'Punjabi'
+      ? 'Write all questions and options in Punjabi language using Gurmukhi script (e.g. ਪੰਜਾਬੀ). Do NOT write in English or transliteration.'
+      : 'Write all questions and options in English.';
+
     const prompt = `You are an experienced ${subject} teacher for Class ${cls} following ${board} curriculum in India. Generate exactly 10 multiple choice questions for this topic taught today: '${topic}'.
 Requirements:
 - 4 easy, 4 medium, 2 hard questions
 - Each question has exactly 4 options
 - Mark correct answer index (0-3)
 - One-line explanation per question
-- Test understanding, not just recall`;
+- Test understanding, not just recall
+IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
 
     const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 

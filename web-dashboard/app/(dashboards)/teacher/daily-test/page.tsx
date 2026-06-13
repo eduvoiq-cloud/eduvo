@@ -316,7 +316,8 @@ export default function DailyTestPage() {
   const [section, setSection] = useState('');
   const [subject, setSubject] = useState('');
   const [topic, setTopic] = useState('');
-  const [board, setBoard] = useState('CBSE');
+  const [board, setBoard] = useState('GSEB');
+  const [language, setLanguage] = useState('English');
 
   // Creation mode
   const [creationMode, setCreationMode] = useState<CreationMode>('ai');
@@ -411,7 +412,7 @@ export default function DailyTestPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ class: className, subject, topic: topic.trim(), board }),
+        body: JSON.stringify({ class: className, subject, topic: topic.trim(), board, language }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Generation failed');
@@ -532,6 +533,7 @@ export default function DailyTestPage() {
                 setAssignedResult(null);
                 setManualQuestions([emptyQuestion()]);
                 setCreationMode('ai');
+                setLanguage('English');
               }}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
             >
@@ -710,9 +712,37 @@ export default function DailyTestPage() {
                 value={board}
                 onChange={(e) => setBoard(e.target.value)}
               >
-                {['CBSE', 'ICSE', 'State Board', 'IB', 'IGCSE'].map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
+                <option value="GSEB">GSEB (Gujarat)</option>
+                <option value="CBSE">CBSE</option>
+                <option value="ICSE">ICSE</option>
+                <option value="MSBSHSE">MSBSHSE (Maharashtra)</option>
+                <option value="RBSE">RBSE (Rajasthan)</option>
+                <option value="BSEB">BSEB (Bihar)</option>
+                <option value="MPBSE">MPBSE (Madhya Pradesh)</option>
+                <option value="IB">IB</option>
+                <option value="IGCSE">IGCSE</option>
+              </select>
+            </FormField>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Question Language" htmlFor="dt-language">
+              <select
+                id="dt-language"
+                className={inputClass}
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+              >
+                <option value="English">English</option>
+                <option value="Gujarati">ગુજરાતી (Gujarati)</option>
+                <option value="Hindi">हिंदी (Hindi)</option>
+                <option value="Marathi">मराठी (Marathi)</option>
+                <option value="Bengali">বাংলা (Bengali)</option>
+                <option value="Tamil">தமிழ் (Tamil)</option>
+                <option value="Telugu">తెలుగు (Telugu)</option>
+                <option value="Kannada">ಕನ್ನಡ (Kannada)</option>
+                <option value="Punjabi">ਪੰਜਾਬੀ (Punjabi)</option>
+                <option value="Sanskrit">Sanskrit</option>
               </select>
             </FormField>
           </div>
