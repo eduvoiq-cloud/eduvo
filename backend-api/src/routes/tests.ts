@@ -127,6 +127,13 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     return;
   }
 
+  // Reject past dates
+  const todayStr = new Date().toISOString().slice(0, 10);
+  if (testFields.date < todayStr) {
+    sendError(res, 'Test date cannot be in the past', 400);
+    return;
+  }
+
   // Teachers must be assigned to the class they're creating a test for
   if (req.user!.role === 'teacher') {
     const allowed = await teacherOwnsClass(
@@ -1368,6 +1375,13 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
   const questionTypes = new Set(questions.map((q) => q.type));
   if (questionTypes.size > 1) {
     sendError(res, 'A test must contain only MCQ questions or only Theory questions, not both. Please create separate tests for each type.', 400);
+    return;
+  }
+
+  // Reject past dates
+  const todayStr2 = new Date().toISOString().slice(0, 10);
+  if (rest.date < todayStr2) {
+    sendError(res, 'Test date cannot be in the past', 400);
     return;
   }
 

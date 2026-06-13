@@ -51,7 +51,7 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function emptyQuestion(): GeneratedQuestion {
-  return { question_text: '', options: ['', '', '', ''], correct_index: 0, explanation: '', difficulty: 'medium', marks: 1, show_hint: true };
+  return { question_text: '', options: ['', '', '', ''], correct_index: 0, explanation: '', difficulty: 'medium', marks: 1, show_hint: false };
 }
 
 // ── Manual question editor ────────────────────────────────────────────────────
@@ -104,17 +104,24 @@ function ManualQuestionEditor({
         </FormField>
       </div>
 
-      <div className="flex items-center gap-3">
-        <input
-          type="checkbox"
-          id={`mq-hint-${index}`}
-          checked={q.show_hint}
-          onChange={(e) => onChange({ ...q, show_hint: e.target.checked })}
-          className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-        />
-        <label htmlFor={`mq-hint-${index}`} className="text-sm text-gray-700">
-          Show hint to students after submission
-        </label>
+      <div className="flex items-center justify-between py-1">
+        <div>
+          <p className="text-sm font-medium text-gray-700">Show Hint to Students</p>
+          <p className="text-xs text-gray-400 mt-0.5">Display the explanation after submission</p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={q.show_hint}
+          onClick={() => onChange({ ...q, show_hint: !q.show_hint })}
+          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+            q.show_hint ? 'bg-blue-600' : 'bg-gray-300'
+          }`}
+        >
+          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+            q.show_hint ? 'translate-x-6' : 'translate-x-1'
+          }`} />
+        </button>
       </div>
     </div>
   );
@@ -157,17 +164,24 @@ function QuestionCard({ q, index, onEdit, onRemove }: {
           <input id={`q-exp-${index}`} type="text" className={inputClass} value={draft.explanation}
             onChange={(e) => setDraft((d) => ({ ...d, explanation: e.target.value }))} />
         </FormField>
-        <div className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            id={`q-hint-${index}`}
-            checked={draft.show_hint}
-            onChange={(e) => setDraft((d) => ({ ...d, show_hint: e.target.checked }))}
-            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-          />
-          <label htmlFor={`q-hint-${index}`} className="text-sm text-gray-700">
-            Show hint to students after submission
-          </label>
+        <div className="flex items-center justify-between py-1">
+          <div>
+            <p className="text-sm font-medium text-gray-700">Show Hint to Students</p>
+            <p className="text-xs text-gray-400 mt-0.5">Display the explanation after submission</p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={draft.show_hint}
+            onClick={() => setDraft((d) => ({ ...d, show_hint: !d.show_hint }))}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+              draft.show_hint ? 'bg-blue-600' : 'bg-gray-300'
+            }`}
+          >
+            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+              draft.show_hint ? 'translate-x-6' : 'translate-x-1'
+            }`} />
+          </button>
         </div>
         <div className="flex justify-end gap-2">
           <button onClick={() => { setDraft({ ...q }); setEditing(false); }} className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">Cancel</button>
@@ -203,8 +217,15 @@ function QuestionCard({ q, index, onEdit, onRemove }: {
           </div>
         ))}
       </div>
-      {q.explanation && <p className="text-xs text-gray-500 italic border-t border-gray-100 pt-2">💡 {q.explanation} {q.show_hint ? <span className="text-green-600 not-italic font-medium">(hint shown)</span> : <span className="text-red-500 not-italic font-medium">(hint hidden)</span>}</p>}
-      {!q.explanation && !q.show_hint && <p className="text-xs text-orange-500 border-t border-gray-100 pt-2">Hint hidden from students</p>}
+      <div className="border-t border-gray-100 pt-2 flex items-start justify-between gap-2">
+        {q.explanation
+          ? <p className="text-xs text-gray-500 italic flex-1">💡 {q.explanation}</p>
+          : <p className="text-xs text-gray-400 italic flex-1">No explanation added</p>
+        }
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${q.show_hint ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+          {q.show_hint ? '💡 Hint ON' : 'Hint OFF'}
+        </span>
+      </div>
     </div>
   );
 }
@@ -298,6 +319,9 @@ export default function DailyTestPage() {
   const [phase, setPhase] = useState<Phase>('setup');
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState('');
+
+  // Test date (defaults to today, teacher can change to any future date)
+  const [testDate, setTestDate] = useState(() => new Date().toISOString().slice(0, 10));
 
   // Time limit + test window
   const [timeLimitMinutes, setTimeLimitMinutes] = useState('');
@@ -417,6 +441,15 @@ export default function DailyTestPage() {
   // ── Assign test ────────────────────────────────────────────────────────────
 
   async function handleAssign() {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (!testDate) {
+      setAssignError('Please select a test date.');
+      return;
+    }
+    if (testDate < todayStr) {
+      setAssignError('Test date cannot be in the past.');
+      return;
+    }
     if (availableFrom && availableUntil && availableFrom === availableUntil) {
       setAssignError('"Opens at" and "Closes at" cannot be the same time.');
       return;
@@ -425,13 +458,12 @@ export default function DailyTestPage() {
     setAssigning(true);
     try {
       const token = getToken();
-      const today = new Date().toISOString().slice(0, 10);
       const body: Record<string, unknown> = {
         class: className,
         section,
         subject,
         topic: topic.trim(),
-        test_date: today,
+        test_date: testDate,
         questions,
         time_limit_minutes: timeLimitMinutes ? parseInt(timeLimitMinutes, 10) : null,
         available_from: availableFrom || null,
@@ -485,8 +517,8 @@ export default function DailyTestPage() {
           <div className="text-5xl mb-4">🎉</div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Test Assigned!</h2>
           <p className="text-sm text-gray-600 mb-6">
-            Today&apos;s <strong>{subject}</strong> test on &quot;<strong>{topic}</strong>&quot; has been assigned to
-            Class {className} {section}. Premium students have been notified.
+            Your <strong>{subject}</strong> test on &quot;<strong>{topic}</strong>&quot; has been assigned to
+            Class {className} {section} for <strong>{new Date(testDate + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</strong>. Premium students have been notified.
           </p>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             <button
@@ -495,6 +527,7 @@ export default function DailyTestPage() {
                 setManualQuestions([emptyQuestion()]); setCreationMode('ai');
                 setLanguage('English'); setQuestionCount(10); setDifficultyMode('mixed');
                 setUploadedFile(null); setTimeLimitMinutes(''); setAvailableFrom(''); setAvailableUntil('');
+                setTestDate(new Date().toISOString().slice(0, 10));
               }}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
             >
@@ -538,6 +571,8 @@ export default function DailyTestPage() {
           <span className="text-gray-300">·</span>
           <span className="text-gray-500">Class {className} {section}</span>
           {chapter && <><span className="text-gray-300">·</span><span className="text-gray-500">{chapter}</span></>}
+          <span className="text-gray-300">·</span>
+          <span className="text-blue-600 font-medium">📅 {new Date(testDate + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
         </div>
 
         <div className="space-y-4 mb-6">
@@ -664,8 +699,18 @@ export default function DailyTestPage() {
             <strong>Note:</strong> This test will be assigned to all students in Class {className || '—'} {section || '—'} with an active <strong>Premium Senior</strong> subscription. They will be notified via the app.
           </div>
 
-          {/* Time limit + test window */}
+          {/* Date + Time limit */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Test Date" htmlFor="dt-date" required>
+              <input
+                id="dt-date"
+                type="date"
+                className={inputClass}
+                min={new Date().toISOString().slice(0, 10)}
+                value={testDate}
+                onChange={(e) => setTestDate(e.target.value)}
+              />
+            </FormField>
             <FormField label="Time Limit (minutes)" htmlFor="dt-time-limit">
               <input
                 id="dt-time-limit"
@@ -678,7 +723,6 @@ export default function DailyTestPage() {
                 onChange={(e) => setTimeLimitMinutes(e.target.value)}
               />
             </FormField>
-            <div />
           </div>
 
           {/* Schedule window */}

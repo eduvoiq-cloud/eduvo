@@ -716,6 +716,7 @@ export default function CreateTestPage() {
               <FormField label="Test Date" htmlFor="d-date" required>
                 <input
                   id="d-date" type="date" className={inputClass}
+                  min={new Date().toISOString().slice(0, 10)}
                   value={details.date}
                   onChange={(e) => setDetails((d) => ({ ...d, date: e.target.value }))}
                 />

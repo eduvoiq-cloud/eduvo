@@ -299,7 +299,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
         explanation: q.explanation ?? '',
         difficulty: q.difficulty ?? 'medium',
         marks: 1,
-        show_hint: true, // default: show hint — teacher can toggle per question on preview
+        show_hint: false, // default: no hint — teacher can enable per question on preview
       }));
 
       sendSuccess(res, { questions }, 'Questions generated');
@@ -330,7 +330,7 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
           explanation: z.string().optional().default(''),
           difficulty: z.string().optional().default('medium'),
           marks: z.number().positive().optional().default(1),
-          show_hint: z.boolean().optional().default(true),
+          show_hint: z.boolean().optional().default(false),
         })
       )
       .min(1)
@@ -350,6 +350,13 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
   }
 
   const { class: cls, section, subject, topic, test_date, time_limit_minutes, available_from, available_until, questions } = parsed.data;
+
+  // Reject past dates — test_date must be today or in the future
+  const today = new Date().toISOString().slice(0, 10);
+  if (test_date < today) {
+    sendError(res, 'Test date cannot be in the past', 400);
+    return;
+  }
 
   // Insert the daily test
   const { data: test, error: testErr } = await supabaseAdmin
@@ -849,7 +856,7 @@ router.post(
         is_correct: studentAnswer !== undefined && studentAnswer.selected_index === (q.correct_index as number),
         explanation: (q.explanation as string) ?? '',
         difficulty: (q.difficulty as string) ?? 'medium',
-        show_hint: (q.show_hint as boolean) !== false, // default true if not set
+        show_hint: (q.show_hint as boolean) === true, // only show hint if explicitly set to true
       };
     });
 
