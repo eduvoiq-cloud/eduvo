@@ -47,6 +47,10 @@ async function requirePremiumJunior(studentId: string, schoolId: string): Promis
   return data !== null;
 }
 
+/** Check teacher has activity pack creation permission.
+ *  If no explicit row exists, access is granted by default.
+ *  A row with can_create_activity_packs = false is the only way to block a teacher.
+ */
 async function hasActivityPermission(teacherId: string, schoolId: string): Promise<boolean> {
   const { data } = await supabaseAdmin
     .from('teacher_premium_access')
@@ -54,7 +58,9 @@ async function hasActivityPermission(teacherId: string, schoolId: string): Promi
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
     .maybeSingle();
-  return (data as Record<string, unknown> | null)?.can_create_activity_packs === true;
+  // No row means unrestricted — only an explicit false blocks access
+  if (data === null) return true;
+  return (data as Record<string, unknown>).can_create_activity_packs !== false;
 }
 
 /**
