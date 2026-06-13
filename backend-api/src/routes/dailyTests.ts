@@ -158,7 +158,7 @@ Requirements:
 - One-line explanation per question
 - Test understanding, not just recall`;
 
-    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
     // Structured output schema — guarantees well-formed JSON from the model
     const responseSchema = {

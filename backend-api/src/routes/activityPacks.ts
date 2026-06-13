@@ -184,7 +184,7 @@ Each activity must:
 
 type must be one of: "verbal", "written", "physical"`;
 
-    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
     // Structured output schema — keep simple (no nested enum) for compatibility
     // with gemini-2.0-flash. Type values are validated/normalised below anyway.
@@ -244,7 +244,14 @@ type must be one of: "verbal", "written", "physical"`;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[activity-packs/generate] Gemini error:', msg);
-      sendError(res, `Failed to generate activities: ${msg}`, 500);
+
+      // Gemini quota exhausted — return 429 so the client can show a friendly message
+      if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
+        sendError(res, 'AI quota limit reached. Please try again later or contact support.', 429);
+        return;
+      }
+
+      sendError(res, 'Failed to generate activities. Please try again.', 500);
     }
   }
 );

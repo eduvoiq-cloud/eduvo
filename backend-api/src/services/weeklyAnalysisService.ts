@@ -377,7 +377,7 @@ Return as JSON: {"report_text": "<your summary here>"}`;
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
     if (!apiKey) throw new Error('Gemini API key not configured');
 
-    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
     // Structured output schema — weekly report is a single text field
     const responseSchema = {
