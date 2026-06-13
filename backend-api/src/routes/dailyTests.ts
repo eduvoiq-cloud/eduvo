@@ -117,7 +117,8 @@ router.get(
   }
 );
 
-// POST /api/daily-tests/generate  — call Gemini to generate 10 MCQ questions
+// POST /api/daily-tests/generate  — call Gemini to generate MCQ questions
+// Supports text-based generation and image/PDF upload via base64
 router.post(
   '/generate',
   authenticate,
@@ -128,7 +129,18 @@ router.post(
       subject: z.string().min(1),
       topic: z.string().min(1),
       board: z.string().optional().default('GSEB'),
+      chapter: z.string().optional().default(''),
       language: z.enum(['English', 'Gujarati', 'Hindi', 'Sanskrit', 'Marathi', 'Tamil', 'Telugu', 'Kannada', 'Bengali', 'Punjabi']).optional().default('English'),
+      // Question count and difficulty
+      count: z.number().int().min(1).max(30).optional().default(10),
+      difficulty_mode: z.enum(['mixed', 'easy', 'medium', 'hard', 'custom']).optional().default('mixed'),
+      // custom breakdown — only used when difficulty_mode = 'custom'
+      easy_count:   z.number().int().min(0).optional().default(0),
+      medium_count: z.number().int().min(0).optional().default(0),
+      hard_count:   z.number().int().min(0).optional().default(0),
+      // Image/PDF upload — base64 encoded content + mime type
+      file_data: z.string().optional(),   // base64 encoded file
+      file_mime: z.string().optional(),   // e.g. 'image/jpeg', 'image/png', 'application/pdf'
     });
 
     const parsed = schema.safeParse(req.body);
@@ -143,7 +155,8 @@ router.post(
       return;
     }
 
-    const { class: cls, subject, topic, board, language } = parsed.data;
+    const { class: cls, subject, topic, board, chapter, language, count, difficulty_mode,
+            easy_count, medium_count, hard_count, file_data, file_mime } = parsed.data;
 
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
     if (!apiKey) {
@@ -151,7 +164,32 @@ router.post(
       return;
     }
 
-    // Language instruction — be explicit so non-English outputs are actually in that script/language
+    // Build difficulty requirement text
+    let difficultyLine: string;
+    if (difficulty_mode === 'easy') {
+      difficultyLine = `All ${count} questions must be easy level.`;
+    } else if (difficulty_mode === 'medium') {
+      difficultyLine = `All ${count} questions must be medium level.`;
+    } else if (difficulty_mode === 'hard') {
+      difficultyLine = `All ${count} questions must be hard level.`;
+    } else if (difficulty_mode === 'custom') {
+      const total = easy_count + medium_count + hard_count;
+      if (total !== count) {
+        sendError(res, `Custom difficulty counts (${easy_count}+${medium_count}+${hard_count}=${total}) must add up to ${count}`, 400);
+        return;
+      }
+      difficultyLine = `Exactly ${easy_count} easy, ${medium_count} medium, and ${hard_count} hard questions.`;
+    } else {
+      // mixed: auto distribute
+      const hard = Math.max(1, Math.round(count * 0.2));
+      const easy = Math.max(1, Math.round(count * 0.4));
+      const medium = count - easy - hard;
+      difficultyLine = `Approximately ${easy} easy, ${medium} medium, and ${hard} hard questions.`;
+    }
+
+    const chapterLine = chapter ? ` Chapter/Unit: '${chapter}'.` : '';
+
+    // Language instruction
     const languageInstruction = language === 'English'
       ? 'Write all questions and options in English.'
       : language === 'Gujarati'
@@ -174,9 +212,14 @@ router.post(
       ? 'Write all questions and options in Punjabi language using Gurmukhi script (e.g. ਪੰਜਾਬੀ). Do NOT write in English or transliteration.'
       : 'Write all questions and options in English.';
 
-    const prompt = `You are an experienced ${subject} teacher for Class ${cls} following ${board} curriculum in India. Generate exactly 10 multiple choice questions for this topic taught today: '${topic}'.
+    const fileContext = file_data
+      ? ' Use the provided image/document as the primary source for generating questions.'
+      : '';
+
+    const prompt = `You are an experienced ${subject} teacher for Class ${cls} following ${board} curriculum in India.${chapterLine}
+Generate exactly ${count} multiple choice questions based on the topic: '${topic}'.${fileContext}
 Requirements:
-- 4 easy, 4 medium, 2 hard questions
+- ${difficultyLine}
 - Each question has exactly 4 options
 - Mark correct answer index (0-3)
 - One-line explanation per question
@@ -185,7 +228,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
 
     const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
-    // Structured output schema — guarantees well-formed JSON from the model
+    // Structured output schema
     const responseSchema = {
       type: 'object' as const,
       properties: {
@@ -217,7 +260,15 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
         } as Record<string, unknown>,
       });
 
-      const result = await model.generateContent(prompt);
+      // Build content parts — include file if provided
+      const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+        { text: prompt },
+      ];
+      if (file_data && file_mime) {
+        contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+      }
+
+      const result = await model.generateContent(contentParts);
       const raw = result.response.text().trim();
 
       let parsed2: { questions: Array<{

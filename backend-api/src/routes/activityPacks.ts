@@ -125,6 +125,7 @@ router.get(
 );
 
 // POST /api/activity-packs/generate — Gemini generates home activities
+// Supports image/PDF upload via base64 for content-based activity generation
 router.post(
   '/generate',
   authenticate,
@@ -138,6 +139,9 @@ router.post(
       chapter: z.string().optional().default(''),
       count: z.number().int().min(1).max(10).optional().default(5),
       language: z.enum(['English', 'Gujarati', 'Hindi', 'Sanskrit', 'Marathi', 'Tamil', 'Telugu', 'Kannada', 'Bengali', 'Punjabi']).optional().default('English'),
+      // Image/PDF upload — base64 encoded content + mime type
+      file_data: z.string().optional(),   // base64 encoded file
+      file_mime: z.string().optional(),   // e.g. 'image/jpeg', 'image/png', 'application/pdf'
     });
 
     const parsed = schema.safeParse(req.body);
@@ -152,7 +156,7 @@ router.post(
       return;
     }
 
-    const { class: cls, subject, topic, board, chapter, count, language } = parsed.data;
+    const { class: cls, subject, topic, board, chapter, count, language, file_data, file_mime } = parsed.data;
     const age = classToAge(cls);
 
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
@@ -193,9 +197,13 @@ router.post(
       ? 'Write all activity instructions in Punjabi language using Gurmukhi script (e.g. ਪੰਜਾਬੀ). Do NOT write in English or transliteration.'
       : 'Write all activity instructions in English.';
 
+    const fileContext = file_data
+      ? ' Use the provided image/document as the primary source for the activities.'
+      : '';
+
     const prompt = `You are an expert Indian school teacher creating home activities for parents.
 Create exactly ${count} home activities for a Class ${cls} student (age ~${age}) following the ${boardContext}.
-Topic taught today: '${topic}' (Subject: ${subject})${chapterLine ? `. ${chapterLine}` : ''}.
+Topic taught today: '${topic}' (Subject: ${subject})${chapterLine ? `. ${chapterLine}` : ''}.${fileContext}
 
 IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}
 
@@ -242,7 +250,15 @@ type must be one of: "verbal", "written", "physical"`;
         } as Record<string, unknown>,
       });
 
-      const result = await model.generateContent(prompt);
+      // Build content parts — include file if provided
+      const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+        { text: prompt },
+      ];
+      if (file_data && file_mime) {
+        contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+      }
+
+      const result = await model.generateContent(contentParts);
       const raw = result.response.text().trim();
 
       let parsed2: { activities: Array<{ instruction: string; type: string }> };

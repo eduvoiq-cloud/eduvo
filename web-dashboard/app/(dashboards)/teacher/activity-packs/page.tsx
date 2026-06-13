@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { assignmentsApi, type TeacherAssignment } from '@/lib/api';
@@ -48,10 +48,69 @@ const TYPE_BADGE: Record<Activity['type'], { label: string; cls: string; icon: s
   physical: { label: 'Physical', cls: 'bg-green-100 text-green-700',   icon: '🤸' },
 };
 
-// ── Empty activity factory ─────────────────────────────────────────────────────
+const ACCEPTED_FILE_TYPES = 'image/jpeg,image/png,image/webp,image/gif,application/pdf';
+const MAX_FILE_MB = 10;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1] ?? '');
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 function emptyActivity(): Activity {
   return { instruction: '', type: 'verbal' };
+}
+
+// ── File upload widget ─────────────────────────────────────────────────────────
+
+function FileUpload({ onFile, onClear, fileName }: {
+  onFile: (file: File) => void; onClear: () => void; fileName: string | null;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      alert(`File must be under ${MAX_FILE_MB} MB`);
+      return;
+    }
+    onFile(file);
+  }
+
+  return (
+    <div>
+      {fileName ? (
+        <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
+          <svg className="w-5 h-5 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+          </svg>
+          <span className="text-sm text-blue-800 font-medium flex-1 truncate">{fileName}</span>
+          <button type="button" onClick={onClear} className="text-xs text-red-500 hover:text-red-700 font-medium shrink-0">Remove</button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => ref.current?.click()}
+          className="w-full flex items-center gap-3 px-4 py-3 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50/40 transition-colors"
+        >
+          <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          <span>Upload image or PDF to generate activities from (optional, max {MAX_FILE_MB} MB)</span>
+        </button>
+      )}
+      <input ref={ref} type="file" accept={ACCEPTED_FILE_TYPES} className="hidden" onChange={handleChange} />
+    </div>
+  );
 }
 
 // ── Manual activity editor ─────────────────────────────────────────────────────
@@ -232,6 +291,9 @@ export default function ActivityPacksPage() {
   // AI options
   const [activityCount, setActivityCount] = useState(5);
 
+  // File upload
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+
   // Creation mode
   const [creationMode, setCreationMode] = useState<CreationMode>('ai');
 
@@ -314,6 +376,15 @@ export default function ActivityPacksPage() {
     setGenerating(true);
     try {
       const token = getToken();
+
+      // Prepare file data if uploaded
+      let file_data: string | undefined;
+      let file_mime: string | undefined;
+      if (uploadedFile) {
+        file_data = await fileToBase64(uploadedFile);
+        file_mime = uploadedFile.type;
+      }
+
       const res = await fetch(`${BASE_URL}/api/activity-packs/generate`, {
         method: 'POST',
         headers: {
@@ -328,6 +399,7 @@ export default function ActivityPacksPage() {
           chapter: chapter.trim(),
           count: activityCount,
           language,
+          ...(file_data ? { file_data, file_mime } : {}),
         }),
       });
       const json = await res.json();
@@ -444,6 +516,7 @@ export default function ActivityPacksPage() {
                 setCreationMode('ai');
                 setActivityCount(5);
                 setLanguage('English');
+                setUploadedFile(null);
               }}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
             >
@@ -743,6 +816,19 @@ export default function ActivityPacksPage() {
               <p className="text-xs text-gray-400">
                 AI will generate exactly {activityCount} activities, each ~3-5 minutes, designed for a parent and child together.
               </p>
+            </div>
+
+            {/* File upload */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">Generate from Image / PDF</label>
+              <FileUpload
+                onFile={(f) => setUploadedFile(f)}
+                onClear={() => setUploadedFile(null)}
+                fileName={uploadedFile?.name ?? null}
+              />
+              {uploadedFile && (
+                <p className="text-xs text-blue-600">📎 AI will use the uploaded file as the source for activities.</p>
+              )}
             </div>
 
             {generateError && (
