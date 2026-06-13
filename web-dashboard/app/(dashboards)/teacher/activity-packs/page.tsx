@@ -501,7 +501,7 @@ export default function ActivityPacksPage() {
             onClick={() => setPhase('setup')}
             className="px-4 py-2.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
           >
-            <- Back
+            &larr; Back
           </button>
           <button
             onClick={handleSend}
@@ -719,7 +719,7 @@ export default function ActivityPacksPage() {
                 disabled={!className || !section || !subject || !topic.trim()}
                 className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-sm font-semibold rounded-lg"
               >
-                Preview & Send →
+                Preview &amp; Send &rarr;
               </button>
             </div>
           </div>
