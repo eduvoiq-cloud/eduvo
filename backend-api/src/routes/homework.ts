@@ -1028,24 +1028,33 @@ router.get(
 
 // ── POST /api/homework/upload ─────────────────────────────────────────────────
 /**
- * Upload a homework attachment (PDF or image) to Supabase Storage.
+ * Upload homework attachment(s) (PDF or image) to Supabase Storage.
  * Auth: teacher, schooladmin, superadmin.
  *
- * - Accepts multipart/form-data with a single 'file' field.
+ * - Accepts multipart/form-data with up to 5 files via the 'files' field
+ *   (or a single 'file' field for backward compatibility).
  * - Stores in the 'homework-uploads' bucket under <school_id>/<timestamp>_<filename>.
- * - Returns { url } — a public URL to store in homework.file_url.
+ * - Returns { files: [{ url, storage_path, file_name, file_size }] }.
  *
- * Max file size: 5 MB. Allowed types: PDF, JPEG, PNG, WebP, GIF.
+ * Max file size: 5 MB per file. Allowed types: PDF, JPEG, PNG, WebP, GIF.
  */
 router.post(
   '/upload',
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   (req: Request, res: Response, next) => {
-    homeworkUpload.single('file')(req, res, (err) => {
+    // Accept up to 5 files via 'files' array field OR single 'file' field
+    homeworkUpload.fields([
+      { name: 'files', maxCount: 5 },
+      { name: 'file', maxCount: 1 },
+    ])(req, res, (err) => {
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-          sendError(res, 'File must be under 5 MB.', 400);
+          sendError(res, 'Each file must be under 5 MB.', 400);
+          return;
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          sendError(res, 'You can upload a maximum of 5 files at once.', 400);
           return;
         }
         sendError(res, err.message, 400);
@@ -1059,8 +1068,15 @@ router.post(
     });
   },
   async (req: Request, res: Response) => {
-    if (!req.file) {
-      sendError(res, 'No file provided. Send a multipart/form-data request with a "file" field.', 400);
+    const fields = req.files as Record<string, Express.Multer.File[]> | undefined;
+    // Support both 'files' (new multi-upload) and 'file' (legacy single upload)
+    const uploadedFiles: Express.Multer.File[] = [
+      ...(fields?.['files'] ?? []),
+      ...(fields?.['file'] ?? []),
+    ];
+
+    if (uploadedFiles.length === 0) {
+      sendError(res, 'No file provided. Send a multipart/form-data request with a "files" field.', 400);
       return;
     }
 
@@ -1071,36 +1087,50 @@ router.post(
     }
 
     const BUCKET = 'homework-uploads';
-    const ts = Date.now();
-    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `${schoolId}/${ts}_${safeName}`;
+    const results: Array<{ url: string | null; storage_path: string; file_name: string; file_size: number }> = [];
 
-    const { error: uploadError } = await supabaseAdmin.storage
-      .from(BUCKET)
-      .upload(storagePath, req.file.buffer, {
-        contentType: req.file.mimetype,
-        upsert: false,
+    for (const file of uploadedFiles) {
+      const ts = Date.now();
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `${schoolId}/${ts}_${safeName}`;
+
+      const { error: uploadError } = await supabaseAdmin.storage
+        .from(BUCKET)
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        console.error('[homework/upload] Storage error:', uploadError.message);
+        sendError(res, `Failed to store file "${file.originalname}": ${uploadError.message}`, 500);
+        return;
+      }
+
+      const { data: urlData } = supabaseAdmin.storage
+        .from(BUCKET)
+        .getPublicUrl(storagePath);
+
+      results.push({
+        url: urlData?.publicUrl ?? null,
+        storage_path: storagePath,
+        file_name: file.originalname,
+        file_size: file.size,
       });
-
-    if (uploadError) {
-      console.error('[homework/upload] Storage error:', uploadError.message);
-      sendError(res, `Failed to store file: ${uploadError.message}`, 500);
-      return;
     }
-
-    const { data: urlData } = supabaseAdmin.storage
-      .from(BUCKET)
-      .getPublicUrl(storagePath);
 
     sendSuccess(
       res,
       {
-        url: urlData?.publicUrl ?? null,
-        storage_path: storagePath,
-        file_name: req.file.originalname,
-        file_size: req.file.size,
+        // Legacy single-file compat: expose first file's url at top level
+        url: results[0]?.url ?? null,
+        storage_path: results[0]?.storage_path ?? null,
+        file_name: results[0]?.file_name ?? null,
+        file_size: results[0]?.file_size ?? null,
+        // New: all files
+        files: results,
       },
-      'File uploaded successfully.',
+      'File(s) uploaded successfully.',
       201
     );
   }

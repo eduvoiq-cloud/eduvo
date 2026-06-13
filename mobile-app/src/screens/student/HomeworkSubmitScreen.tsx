@@ -27,6 +27,7 @@ import {
   ActivityIndicator,
   Alert,
   StatusBar,
+  Linking,
 } from 'react-native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RouteProp } from '@react-navigation/native';
@@ -843,6 +844,27 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
               <Text style={styles.aiBadgeText}>🤖 AI-checked homework</Text>
             </View>
           )}
+
+          {/* Teacher's uploaded files — split on ||| for multi-file support */}
+          {detail.file_url && (
+            <View style={styles.attachmentsSection}>
+              <Text style={styles.attachmentsLabel}>📎 Homework Files</Text>
+              {detail.file_url.split('|||').map((url, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={styles.attachmentBtn}
+                  onPress={() => Linking.openURL(url)}
+                  accessibilityRole="link"
+                  accessibilityLabel={`Open attachment ${i + 1}`}
+                >
+                  <Text style={styles.attachmentBtnText}>
+                    {detail.file_url!.includes('|||') ? `📄 File ${i + 1}` : '📄 View Attachment'}
+                  </Text>
+                  <Text style={styles.attachmentArrow}>↗</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
 
         {/* ── Already submitted: show AI result if available ────────────── */}
@@ -1116,6 +1138,32 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   aiBadgeText: { fontSize: 12, color: '#5B21B6', fontWeight: '600' },
+
+  // Attachment files
+  attachmentsSection: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 12,
+  },
+  attachmentsLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginBottom: 6,
+  },
+  attachmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 6,
+  },
+  attachmentBtnText: { fontSize: 13, color: '#1D4ED8', fontWeight: '600' },
+  attachmentArrow: { fontSize: 14, color: '#1D4ED8', fontWeight: '700' },
 
   // Re-submit banner
   resubmitBanner: {

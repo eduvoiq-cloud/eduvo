@@ -52,8 +52,8 @@ interface HomeworkForm {
   title: string;
   description: string;
   due_date: string;
-  file: File | null;               // homework task given to students (required for AI checking)
-  reference_file: File | null;     // teacher's solution/method for Gemini to compare against (optional)
+  files: File[];               // homework task files given to students (up to 5)
+  reference_files: File[];     // teacher's solution/method files for AI to compare against (up to 5)
   // AI checking
   ai_check_enabled: boolean;
   ai_settings: AISettings;
@@ -127,8 +127,8 @@ const DEFAULT_FORM: HomeworkForm = {
   title: '',
   description: '',
   due_date: todayISO(),
-  file: null,
-  reference_file: null,
+  files: [],
+  reference_files: [],
   ai_check_enabled: false,
   ai_settings: { ...DEFAULT_AI_SETTINGS },
   save_as_template: false,
@@ -240,13 +240,17 @@ function HomeworkCard({
                 </span>
               )}
               {item.file_url && (
-                <a href={item.file_url} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-blue-600 hover:underline">
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                  </svg>
-                  Attachment
-                </a>
+                <span className="flex items-center gap-1.5 flex-wrap">
+                  {item.file_url.split('|||').map((url, i) => (
+                    <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-blue-600 hover:underline">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                      </svg>
+                      {item.file_url.includes('|||') ? `File ${i + 1}` : 'Attachment'}
+                    </a>
+                  ))}
+                </span>
               )}
             </div>
           </div>
@@ -565,8 +569,8 @@ function HomeworkFormModal({
         title: initial.title,
         description: initial.description ?? '',
         due_date: initial.due_date,
-        file: null,
-        reference_file: null,
+        files: [],
+        reference_files: [],
       });
     } else {
       setForm({
@@ -675,9 +679,10 @@ function HomeworkFormModal({
       let file_url: string | undefined;
       let reference_file_url: string | undefined;
 
-      if (form.file) {
+      // Upload homework task files (up to 5)
+      if (form.files.length > 0) {
         const fd = new FormData();
-        fd.append('file', form.file);
+        form.files.forEach((f) => fd.append('files', f));
         const uploadRes = await fetch(`${BASE_URL}/api/homework/upload`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
@@ -685,12 +690,14 @@ function HomeworkFormModal({
         });
         const uploadJson = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadJson.message ?? 'File upload failed');
-        file_url = uploadJson.data?.url;
+        const uploadedFiles: Array<{ url: string }> = uploadJson.data?.files ?? [];
+        file_url = uploadedFiles.map((f) => f.url).filter(Boolean).join('|||') || undefined;
       }
 
-      if (form.reference_file) {
+      // Upload reference solution files (up to 5)
+      if (form.reference_files.length > 0) {
         const fd = new FormData();
-        fd.append('file', form.reference_file);
+        form.reference_files.forEach((f) => fd.append('files', f));
         const uploadRes = await fetch(`${BASE_URL}/api/homework/upload`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
@@ -698,7 +705,8 @@ function HomeworkFormModal({
         });
         const uploadJson = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadJson.message ?? 'Reference file upload failed');
-        reference_file_url = uploadJson.data?.url;
+        const uploadedFiles: Array<{ url: string }> = uploadJson.data?.files ?? [];
+        reference_file_url = uploadedFiles.map((f) => f.url).filter(Boolean).join('|||') || undefined;
       }
 
       const ai = form.ai_settings;
@@ -811,34 +819,52 @@ function HomeworkFormModal({
             value={form.due_date} onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))} />
         </FormField>
 
-        {/* Homework File (task for students) */}
-        <FormField label="Homework File" htmlFor="hw-file">
-          <p className="mb-2 text-xs text-gray-500">Upload the homework question / task sheet that students need to complete (PDF or image, max 5 MB).</p>
-          <div className="flex items-center gap-3">
-            <input ref={fileInputRef} id="hw-file" type="file" accept=".pdf,image/*" className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f && f.size > 5 * 1024 * 1024) { setError('File must be under 5 MB'); return; }
-                setForm((prev) => ({ ...prev, file: f ?? null }));
-              }} />
-            <button type="button" onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700">
-              {form.file ? 'Change file' : 'Choose file'}
-            </button>
-            {form.file ? (
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-sm text-gray-600 truncate max-w-xs">{form.file.name}</span>
-                <button type="button" onClick={() => { setForm((f) => ({ ...f, file: null })); if (fileInputRef.current) fileInputRef.current.value = ''; }}
-                  className="text-gray-400 hover:text-red-500 flex-shrink-0" aria-label="Remove file">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        {/* Homework Files (task for students) */}
+        <FormField label="Homework Files" htmlFor="hw-file">
+          <p className="mb-2 text-xs text-gray-500">
+            Upload the homework question / task sheet (PDF or images, up to 5 files, max 5 MB each).
+          </p>
+          {/* Existing file list */}
+          {form.files.length > 0 && (
+            <div className="mb-2 space-y-1.5">
+              {form.files.map((f, idx) => (
+                <div key={idx} className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg">
+                  <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                   </svg>
-                </button>
-              </div>
-            ) : (
-              <span className="text-xs text-gray-400">PDF or image, max 5 MB</span>
-            )}
-          </div>
+                  <span className="text-sm text-gray-700 truncate flex-1">{f.name}</span>
+                  <span className="text-xs text-gray-400 flex-shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                  <button type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, files: prev.files.filter((_, i) => i !== idx) }))}
+                    className="text-gray-400 hover:text-red-500 flex-shrink-0" aria-label="Remove file">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {form.files.length < 5 && (
+            <div className="flex items-center gap-3">
+              <input ref={fileInputRef} id="hw-file" type="file" accept=".pdf,image/*" multiple className="hidden"
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []);
+                  const oversized = picked.filter((f) => f.size > 5 * 1024 * 1024);
+                  if (oversized.length) { setError(`File "${oversized[0].name}" exceeds 5 MB limit`); return; }
+                  setForm((prev) => {
+                    const combined = [...prev.files, ...picked].slice(0, 5);
+                    return { ...prev, files: combined };
+                  });
+                  if (fileInputRef.current) fileInputRef.current.value = '';
+                }} />
+              <button type="button" onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-gray-700">
+                {form.files.length === 0 ? 'Choose files' : 'Add more'}
+              </button>
+              <span className="text-xs text-gray-400">{form.files.length}/5 files</span>
+            </div>
+          )}
         </FormField>
 
         {/* ── AI Checking toggle ────────────────────────────────────────── */}
@@ -863,32 +889,47 @@ function HomeworkFormModal({
                 <p className="text-xs text-violet-600 mb-3">
                   Upload your solved example, answer key, or step-by-step method. AI will compare student submissions against this when grading.
                 </p>
-                <div className="flex items-center gap-3">
-                  <input ref={referenceFileInputRef} id="hw-ref-file" type="file" accept=".pdf,image/*" className="hidden"
-                    onChange={(e) => {
-                      const f = e.target.files?.[0];
-                      if (f && f.size > 5 * 1024 * 1024) { setError('Reference file must be under 5 MB'); return; }
-                      setForm((prev) => ({ ...prev, reference_file: f ?? null }));
-                    }} />
-                  <button type="button" onClick={() => referenceFileInputRef.current?.click()}
-                    className="px-3 py-2 text-xs border border-violet-300 rounded-lg hover:bg-violet-100 transition-colors text-violet-700 font-medium">
-                    {form.reference_file ? 'Change file' : 'Upload solution'}
-                  </button>
-                  {form.reference_file ? (
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-violet-700 truncate max-w-xs">{form.reference_file.name}</span>
-                      <button type="button"
-                        onClick={() => { setForm((f) => ({ ...f, reference_file: null })); if (referenceFileInputRef.current) referenceFileInputRef.current.value = ''; }}
-                        className="text-violet-400 hover:text-red-500 flex-shrink-0" aria-label="Remove reference file">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                {/* Existing reference files list */}
+                {form.reference_files.length > 0 && (
+                  <div className="mb-2 space-y-1.5">
+                    {form.reference_files.map((f, idx) => (
+                      <div key={idx} className="flex items-center gap-2 px-3 py-1.5 bg-violet-100 border border-violet-200 rounded-lg">
+                        <svg className="w-4 h-4 text-violet-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                         </svg>
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-violet-400">PDF or image, max 5 MB</span>
-                  )}
-                </div>
+                        <span className="text-xs text-violet-800 truncate flex-1">{f.name}</span>
+                        <span className="text-xs text-violet-400 flex-shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                        <button type="button"
+                          onClick={() => setForm((prev) => ({ ...prev, reference_files: prev.reference_files.filter((_, i) => i !== idx) }))}
+                          className="text-violet-400 hover:text-red-500 flex-shrink-0" aria-label="Remove reference file">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {form.reference_files.length < 5 && (
+                  <div className="flex items-center gap-3">
+                    <input ref={referenceFileInputRef} id="hw-ref-file" type="file" accept=".pdf,image/*" multiple className="hidden"
+                      onChange={(e) => {
+                        const picked = Array.from(e.target.files ?? []);
+                        const oversized = picked.filter((f) => f.size > 5 * 1024 * 1024);
+                        if (oversized.length) { setError(`Reference file "${oversized[0].name}" exceeds 5 MB limit`); return; }
+                        setForm((prev) => {
+                          const combined = [...prev.reference_files, ...picked].slice(0, 5);
+                          return { ...prev, reference_files: combined };
+                        });
+                        if (referenceFileInputRef.current) referenceFileInputRef.current.value = '';
+                      }} />
+                    <button type="button" onClick={() => referenceFileInputRef.current?.click()}
+                      className="px-3 py-2 text-xs border border-violet-300 rounded-lg hover:bg-violet-100 transition-colors text-violet-700 font-medium">
+                      {form.reference_files.length === 0 ? 'Upload solution' : 'Add more'}
+                    </button>
+                    <span className="text-xs text-violet-400">{form.reference_files.length}/5 files · PDF or image</span>
+                  </div>
+                )}
               </div>
 
               <AICheckSettings
