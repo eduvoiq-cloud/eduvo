@@ -294,9 +294,31 @@ type must be one of: "verbal", "written", "physical"`;
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[activity-packs/generate] Gemini error:', msg);
 
-      // Gemini quota exhausted — return 429 so the client can show a friendly message
+      // Quota exhausted
       if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota')) {
         sendError(res, 'AI quota limit reached. Please try again later or contact support.', 429);
+        return;
+      }
+
+      // Invalid / missing API key
+      if (
+        msg.includes('400') ||
+        msg.includes('401') ||
+        msg.includes('403') ||
+        msg.includes('API_KEY_INVALID') ||
+        msg.includes('API key not valid') ||
+        msg.includes('invalid api key') ||
+        msg.includes('PERMISSION_DENIED')
+      ) {
+        console.error('[activity-packs/generate] Gemini API key is invalid or missing — check GEMINI_API_KEY in Railway env vars');
+        sendError(res, 'AI service is misconfigured. Please contact support.', 503);
+        return;
+      }
+
+      // Model not found / not available
+      if (msg.includes('404') || msg.includes('not found') || msg.includes('MODEL_NOT_FOUND')) {
+        console.error('[activity-packs/generate] Gemini model not found — check GEMINI_MODEL env var:', process.env.GEMINI_MODEL);
+        sendError(res, 'AI model is unavailable. Please contact support.', 503);
         return;
       }
 
