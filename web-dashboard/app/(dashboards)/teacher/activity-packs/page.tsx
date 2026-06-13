@@ -10,7 +10,7 @@ import FormField, { inputClass } from '@/components/FormField';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
-// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Activity {
   instruction: string;
@@ -19,20 +19,28 @@ interface Activity {
 
 type Phase = 'setup' | 'preview' | 'success';
 type CreationMode = 'ai' | 'manual';
+type Board = 'GSEB' | 'CBSE' | 'ICSE' | 'Other';
+
+const BOARDS: { value: Board; label: string }[] = [
+  { value: 'GSEB', label: 'GSEB (Gujarat Board)' },
+  { value: 'CBSE', label: 'CBSE' },
+  { value: 'ICSE', label: 'ICSE' },
+  { value: 'Other', label: 'Other' },
+];
 
 const TYPE_BADGE: Record<Activity['type'], { label: string; cls: string; icon: string }> = {
-  verbal:   { label: 'Verbal',   cls: 'bg-blue-100 text-blue-700',   icon: '💬' },
+  verbal:   { label: 'Verbal',   cls: 'bg-blue-100 text-blue-700',    icon: '💬' },
   written:  { label: 'Written',  cls: 'bg-purple-100 text-purple-700', icon: '✏️' },
-  physical: { label: 'Physical', cls: 'bg-green-100 text-green-700',  icon: '🤸' },
+  physical: { label: 'Physical', cls: 'bg-green-100 text-green-700',   icon: '🤸' },
 };
 
-// â”€â”€ Empty activity factory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Empty activity factory ─────────────────────────────────────────────────────
 
 function emptyActivity(): Activity {
   return { instruction: '', type: 'verbal' };
 }
 
-// â”€â”€ Manual activity editor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Manual activity editor ─────────────────────────────────────────────────────
 
 function ManualActivityEditor({
   activity,
@@ -85,7 +93,7 @@ function ManualActivityEditor({
   );
 }
 
-// â”€â”€ Activity card (preview mode) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Activity card (preview mode) ───────────────────────────────────────────────
 
 function ActivityCard({
   activity,
@@ -111,7 +119,7 @@ function ActivityCard({
     return (
       <div className="border border-blue-200 bg-blue-50/40 rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-gray-800">Activity {index + 1}  --  Editing</span>
+          <span className="text-sm font-semibold text-gray-800">Activity {index + 1} — Editing</span>
           <button
             onClick={() => { setDraft({ ...activity }); setEditing(false); }}
             className="text-xs text-gray-500 hover:text-red-500"
@@ -187,7 +195,7 @@ function ActivityCard({
   );
 }
 
-// â”€â”€ Main page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function ActivityPacksPage() {
   const { user } = useAuth();
@@ -198,11 +206,16 @@ export default function ActivityPacksPage() {
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
 
-  // Form state
+  // Pack setup fields
   const [className, setClassName] = useState('');
   const [section, setSection] = useState('');
   const [subject, setSubject] = useState('');
   const [topic, setTopic] = useState('');
+  const [board, setBoard] = useState<Board>('GSEB');
+  const [chapter, setChapter] = useState('');
+
+  // AI options
+  const [activityCount, setActivityCount] = useState(5);
 
   // Creation mode
   const [creationMode, setCreationMode] = useState<CreationMode>('ai');
@@ -222,9 +235,8 @@ export default function ActivityPacksPage() {
   // Send state
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState('');
-  const [sentResult, setSentResult] = useState<{ students_notified: number } | null>(null);
 
-  // â”€â”€ Check permission â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Check permission ───────────────────────────────────────────────────────
 
   useEffect(() => {
     const token = getToken();
@@ -239,7 +251,7 @@ export default function ActivityPacksPage() {
       .catch(() => setHasPermission(false));
   }, [user]);
 
-  // â”€â”€ Fetch assignments â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Fetch assignments ──────────────────────────────────────────────────────
 
   const fetchAssignments = useCallback(async () => {
     const token = getToken();
@@ -254,7 +266,7 @@ export default function ActivityPacksPage() {
 
   useEffect(() => { fetchAssignments(); }, [fetchAssignments]);
 
-  // â”€â”€ Derived dropdowns (Classes 1-6 only for junior premium) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Derived dropdowns ──────────────────────────────────────────────────────
 
   const myClasses = [...new Set(assignments.map((a) => a.class_name))].sort();
 
@@ -268,7 +280,7 @@ export default function ActivityPacksPage() {
       .map((a) => a.subject)
   )].sort();
 
-  // â”€â”€ Validate setup fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Validate setup fields ──────────────────────────────────────────────────
 
   function validateSetup(): string | null {
     if (!className) return 'Please select a class.';
@@ -278,7 +290,7 @@ export default function ActivityPacksPage() {
     return null;
   }
 
-  // â”€â”€ Generate activities (AI) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Generate activities (AI) ───────────────────────────────────────────────
 
   async function handleGenerate() {
     const err = validateSetup();
@@ -293,7 +305,14 @@ export default function ActivityPacksPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ class: className, subject, topic: topic.trim() }),
+        body: JSON.stringify({
+          class: className,
+          subject,
+          topic: topic.trim(),
+          board,
+          chapter: chapter.trim(),
+          count: activityCount,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Generation failed');
@@ -306,7 +325,7 @@ export default function ActivityPacksPage() {
     }
   }
 
-  // â”€â”€ Submit manual activities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Submit manual activities ───────────────────────────────────────────────
 
   function handleManualSubmit() {
     const err = validateSetup();
@@ -324,7 +343,7 @@ export default function ActivityPacksPage() {
     setPhase('preview');
   }
 
-  // â”€â”€ Send to parents â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Send to parents ────────────────────────────────────────────────────────
 
   async function handleSend() {
     setSendError('');
@@ -349,7 +368,6 @@ export default function ActivityPacksPage() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Failed to send activity pack');
-      setSentResult({ students_notified: 0 }); // FCM is fire-and-forget
       setPhase('success');
     } catch (e) {
       setSendError(e instanceof Error ? e.message : 'Failed to send. Please try again.');
@@ -358,7 +376,7 @@ export default function ActivityPacksPage() {
     }
   }
 
-  // â”€â”€ Loading / permission gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Loading / permission gate ──────────────────────────────────────────────
 
   if (hasPermission === null) {
     return (
@@ -386,7 +404,7 @@ export default function ActivityPacksPage() {
     );
   }
 
-  // â”€â”€ Success screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Success screen ─────────────────────────────────────────────────────────
 
   if (phase === 'success') {
     return (
@@ -405,9 +423,10 @@ export default function ActivityPacksPage() {
                 setPhase('setup');
                 setActivities([]);
                 setTopic('');
-                setSentResult(null);
+                setChapter('');
                 setManualActivities([emptyActivity()]);
                 setCreationMode('ai');
+                setActivityCount(5);
               }}
               className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg"
             >
@@ -425,7 +444,7 @@ export default function ActivityPacksPage() {
     );
   }
 
-  // â”€â”€ Preview screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Preview screen ─────────────────────────────────────────────────────────
 
   if (phase === 'preview') {
     const typeCounts = activities.reduce<Record<string, number>>((acc, a) => {
@@ -452,19 +471,28 @@ export default function ActivityPacksPage() {
         />
 
         {/* Summary bar */}
-        <div className="flex flex-wrap items-center gap-4 px-4 py-3 bg-white border border-gray-200 rounded-xl mb-5 text-sm">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 bg-white border border-gray-200 rounded-xl mb-5 text-sm">
           <span className="font-semibold text-gray-900">{activities.length} activities</span>
           <span className="text-gray-300">·</span>
-          {typeCounts.verbal && <span className="text-blue-600 font-medium">💬 {typeCounts.verbal} verbal</span>}
-          {typeCounts.written && <span className="text-purple-600 font-medium">✏️ {typeCounts.written} written</span>}
+          {typeCounts.verbal   && <span className="text-blue-600 font-medium">💬 {typeCounts.verbal} verbal</span>}
+          {typeCounts.written  && <span className="text-purple-600 font-medium">✏️ {typeCounts.written} written</span>}
           {typeCounts.physical && <span className="text-green-600 font-medium">🤸 {typeCounts.physical} physical</span>}
           <span className="text-gray-300">·</span>
           <span className="text-gray-500">Class {className} {section}</span>
+          <span className="text-gray-300">·</span>
+          <span className="text-gray-500">{board}</span>
+          {chapter && (
+            <>
+              <span className="text-gray-300">·</span>
+              <span className="text-gray-500">{chapter}</span>
+            </>
+          )}
         </div>
 
         {/* Note */}
         <div className="bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 text-xs text-amber-700 mb-5">
-          <strong>About these activities:</strong> These are designed to take 10-15 minutes total, done WITH a parent at home. They reinforce today&apos;s lesson in a fun, non-testing way.
+          <strong>About these activities:</strong> Designed for 3-5 minutes each, done WITH a parent at home.
+          They reinforce today&apos;s lesson in a fun, non-testing way aligned with {board} curriculum.
         </div>
 
         {/* Activities list */}
@@ -527,7 +555,7 @@ export default function ActivityPacksPage() {
     );
   }
 
-  // â”€â”€ Setup screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Setup screen ───────────────────────────────────────────────────────────
 
   return (
     <>
@@ -537,10 +565,12 @@ export default function ActivityPacksPage() {
       />
 
       <div className="max-w-2xl space-y-6">
-        {/* â”€â”€ Common setup fields â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+
+        {/* ── Pack Setup ──────────────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
           <h2 className="text-sm font-semibold text-gray-900">Pack Setup</h2>
 
+          {/* Class + Section */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <FormField label="Class" htmlFor="ap-class" required>
               <select
@@ -569,19 +599,36 @@ export default function ActivityPacksPage() {
             </FormField>
           </div>
 
-          <FormField label="Subject" htmlFor="ap-subject" required>
-            <select
-              id="ap-subject"
-              className={inputClass}
-              disabled={!section}
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-            >
-              <option value="">Select subject...</option>
-              {subjectsForClassSection.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-          </FormField>
+          {/* Subject + Board */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField label="Subject" htmlFor="ap-subject" required>
+              <select
+                id="ap-subject"
+                className={inputClass}
+                disabled={!section}
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+              >
+                <option value="">Select subject...</option>
+                {subjectsForClassSection.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </FormField>
 
+            <FormField label="Board / Curriculum" htmlFor="ap-board" required>
+              <select
+                id="ap-board"
+                className={inputClass}
+                value={board}
+                onChange={(e) => setBoard(e.target.value as Board)}
+              >
+                {BOARDS.map((b) => (
+                  <option key={b.value} value={b.value}>{b.label}</option>
+                ))}
+              </select>
+            </FormField>
+          </div>
+
+          {/* Topic */}
           <FormField label="What topic did you teach today?" htmlFor="ap-topic" required>
             <input
               id="ap-topic"
@@ -594,13 +641,26 @@ export default function ActivityPacksPage() {
             />
           </FormField>
 
+          {/* Chapter / Unit (optional) */}
+          <FormField label="Chapter / Unit" htmlFor="ap-chapter">
+            <input
+              id="ap-chapter"
+              type="text"
+              className={inputClass}
+              placeholder="e.g. Chapter 3: Fractions, Unit 2: Photosynthesis (optional)"
+              value={chapter}
+              onChange={(e) => setChapter(e.target.value)}
+            />
+          </FormField>
+
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-700">
-            <strong>Note:</strong> Activities will be sent to parents of students in Class {className || ' -- '} {section || ' -- '} with an active <strong>Premium Junior</strong> subscription.
+            <strong>Note:</strong> Activities will be sent to parents of students in Class{' '}
+            {className || '—'} {section || '—'} with an active <strong>Premium Junior</strong> subscription.
             Parents will receive a push notification.
           </div>
         </div>
 
-        {/* â”€â”€ Mode toggle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Mode toggle ─────────────────────────────────────────────────── */}
         <div className="flex items-center gap-3">
           <button
             onClick={() => { setCreationMode('ai'); setGenerateError(''); }}
@@ -624,10 +684,35 @@ export default function ActivityPacksPage() {
           </button>
         </div>
 
-        {/* â”€â”€ AI mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── AI mode ─────────────────────────────────────────────────────── */}
         {creationMode === 'ai' && (
-          <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-            <p className="text-xs text-gray-500">AI will generate 5 home activities based on your topic, designed to take 10-15 minutes with a parent.</p>
+          <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
+
+            {/* Number of activities */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-700">
+                Number of Activities to Generate
+              </label>
+              <div className="flex items-center gap-3 flex-wrap">
+                {[3, 4, 5, 6, 7, 8].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setActivityCount(n)}
+                    className={`w-10 h-10 rounded-lg text-sm font-semibold border transition-colors ${
+                      activityCount === n
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400">
+                AI will generate exactly {activityCount} activities, each ~3-5 minutes, designed for a parent and child together.
+              </p>
+            </div>
 
             {generateError && (
               <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 space-y-2">
@@ -664,10 +749,9 @@ export default function ActivityPacksPage() {
                 ) : (
                   <>
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                        d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
-                    Generate Activity
+                    Generate {activityCount} Activities
                   </>
                 )}
               </button>
@@ -675,7 +759,7 @@ export default function ActivityPacksPage() {
           </div>
         )}
 
-        {/* â”€â”€ Manual mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
+        {/* ── Manual mode ─────────────────────────────────────────────────── */}
         {creationMode === 'manual' && (
           <div className="space-y-4">
             <div className="bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 text-xs text-amber-700">
@@ -724,8 +808,8 @@ export default function ActivityPacksPage() {
             </div>
           </div>
         )}
+
       </div>
     </>
   );
 }
-
