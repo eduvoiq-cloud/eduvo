@@ -239,19 +239,23 @@ function HomeworkCard({
                   {ackCount.acknowledged_count} / {ackCount.total_students} acknowledged
                 </span>
               )}
-              {item.file_url && (
-                <span className="flex items-center gap-1.5 flex-wrap">
-                  {item.file_url.split('|||').map((url, i) => (
-                    <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                      className="flex items-center gap-1 text-blue-600 hover:underline">
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                      </svg>
-                      {item.file_url.includes('|||') ? `File ${i + 1}` : 'Attachment'}
-                    </a>
-                  ))}
-                </span>
-              )}
+              {item.file_url && (() => {
+                const fileUrl = item.file_url;
+                const isMulti = fileUrl.includes('|||');
+                return (
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    {fileUrl.split('|||').map((url, i) => (
+                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-blue-600 hover:underline">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                        </svg>
+                        {isMulti ? `File ${i + 1}` : 'Attachment'}
+                      </a>
+                    ))}
+                  </span>
+                );
+              })()}
             </div>
           </div>
         </div>
