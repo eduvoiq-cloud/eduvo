@@ -21,9 +21,9 @@ type Phase = 'setup' | 'preview' | 'success';
 type CreationMode = 'ai' | 'manual';
 
 const TYPE_BADGE: Record<Activity['type'], { label: string; cls: string; icon: string }> = {
-  verbal:   { label: 'Verbal',   cls: 'bg-blue-100 text-blue-700',   icon: 'ðŸ’¬' },
-  written:  { label: 'Written',  cls: 'bg-purple-100 text-purple-700', icon: 'âœï¸' },
-  physical: { label: 'Physical', cls: 'bg-green-100 text-green-700',  icon: 'ðŸ¤¸' },
+  verbal:   { label: 'Verbal',   cls: 'bg-blue-100 text-blue-700',   icon: '💬' },
+  written:  { label: 'Written',  cls: 'bg-purple-100 text-purple-700', icon: '✏️' },
+  physical: { label: 'Physical', cls: 'bg-green-100 text-green-700',  icon: '🤸' },
 };
 
 // â”€â”€ Empty activity factory â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -63,7 +63,7 @@ function ManualActivityEditor({
           id={`ma-inst-${index}`}
           rows={2}
           className={`${inputClass} resize-none`}
-          placeholder="Describe the activity for the parent and childâ€¦"
+          placeholder="Describe the activity for the parent and child..."
           value={activity.instruction}
           onChange={(e) => onChange({ ...activity, instruction: e.target.value })}
         />
@@ -76,9 +76,9 @@ function ManualActivityEditor({
           value={activity.type}
           onChange={(e) => onChange({ ...activity, type: e.target.value as Activity['type'] })}
         >
-          <option value="verbal">ðŸ’¬ Verbal</option>
-          <option value="written">âœï¸ Written</option>
-          <option value="physical">ðŸ¤¸ Physical</option>
+          <option value="verbal">💬 Verbal</option>
+          <option value="written">✏️ Written</option>
+          <option value="physical">🤸 Physical</option>
         </select>
       </FormField>
     </div>
@@ -111,7 +111,7 @@ function ActivityCard({
     return (
       <div className="border border-blue-200 bg-blue-50/40 rounded-xl p-5 space-y-4">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-gray-800">Activity {index + 1} â€” Editing</span>
+          <span className="text-sm font-semibold text-gray-800">Activity {index + 1}  --  Editing</span>
           <button
             onClick={() => { setDraft({ ...activity }); setEditing(false); }}
             className="text-xs text-gray-500 hover:text-red-500"
@@ -137,9 +137,9 @@ function ActivityCard({
             value={draft.type}
             onChange={(e) => setDraft((d) => ({ ...d, type: e.target.value as Activity['type'] }))}
           >
-            <option value="verbal">ðŸ’¬ Verbal</option>
-            <option value="written">âœï¸ Written</option>
-            <option value="physical">ðŸ¤¸ Physical</option>
+            <option value="verbal">💬 Verbal</option>
+            <option value="written">✏️ Written</option>
+            <option value="physical">🤸 Physical</option>
           </select>
         </FormField>
 
@@ -254,12 +254,9 @@ export default function ActivityPacksPage() {
 
   useEffect(() => { fetchAssignments(); }, [fetchAssignments]);
 
-  // â”€â”€ Derived dropdowns (Classes 1â€“6 only for junior premium) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // â”€â”€ Derived dropdowns (Classes 1-6 only for junior premium) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  const juniorClasses = ['1', '2', '3', '4', '5', '6'];
-  const myClasses = [...new Set(assignments.map((a) => a.class_name))]
-    .filter((c) => juniorClasses.some((j) => c === j || c === `Class ${j}` || c.endsWith(` ${j}`)))
-    .sort();
+  const myClasses = [...new Set(assignments.map((a) => a.class_name))].sort();
 
   const sectionsForClass = [...new Set(
     assignments.filter((a) => a.class_name === className).map((a) => a.section)
@@ -379,7 +376,7 @@ export default function ActivityPacksPage() {
           description="Send AI-generated home activities to parents"
         />
         <div className="max-w-lg mx-auto mt-8 text-center py-16 px-6 bg-white rounded-xl border border-gray-200">
-          <div className="text-5xl mb-4">ðŸ”’</div>
+          <div className="text-5xl mb-4">🔒</div>
           <h2 className="text-lg font-semibold text-gray-900 mb-2">Access Required</h2>
           <p className="text-sm text-gray-500">
             Your school admin needs to grant you Activity Pack access. Contact your administrator.
@@ -396,7 +393,7 @@ export default function ActivityPacksPage() {
       <>
         <PageHeader title="Activity Packs" description="Pack sent successfully" />
         <div className="max-w-lg mx-auto mt-8 text-center py-16 px-6 bg-white rounded-xl border border-gray-200">
-          <div className="text-5xl mb-4">ðŸŽ‰</div>
+          <div className="text-5xl mb-4">🎉</div>
           <h2 className="text-xl font-bold text-gray-900 mb-2">Activity Pack Sent!</h2>
           <p className="text-sm text-gray-600 mb-6">
             Today&apos;s <strong>{subject}</strong> activity pack on &quot;<strong>{topic}</strong>&quot; has been
@@ -440,7 +437,7 @@ export default function ActivityPacksPage() {
       <>
         <PageHeader
           title="Activity Packs"
-          description={`Preview â€” ${subject} Â· ${topic}`}
+          description={`Preview: ${subject} - ${topic}`}
           action={
             <button
               onClick={() => setPhase('setup')}
@@ -457,17 +454,17 @@ export default function ActivityPacksPage() {
         {/* Summary bar */}
         <div className="flex flex-wrap items-center gap-4 px-4 py-3 bg-white border border-gray-200 rounded-xl mb-5 text-sm">
           <span className="font-semibold text-gray-900">{activities.length} activities</span>
-          <span className="text-gray-300">Â·</span>
-          {typeCounts.verbal && <span className="text-blue-600 font-medium">ðŸ’¬ {typeCounts.verbal} verbal</span>}
-          {typeCounts.written && <span className="text-purple-600 font-medium">âœï¸ {typeCounts.written} written</span>}
-          {typeCounts.physical && <span className="text-green-600 font-medium">ðŸ¤¸ {typeCounts.physical} physical</span>}
-          <span className="text-gray-300">Â·</span>
+          <span className="text-gray-300">·</span>
+          {typeCounts.verbal && <span className="text-blue-600 font-medium">💬 {typeCounts.verbal} verbal</span>}
+          {typeCounts.written && <span className="text-purple-600 font-medium">✏️ {typeCounts.written} written</span>}
+          {typeCounts.physical && <span className="text-green-600 font-medium">🤸 {typeCounts.physical} physical</span>}
+          <span className="text-gray-300">·</span>
           <span className="text-gray-500">Class {className} {section}</span>
         </div>
 
         {/* Note */}
         <div className="bg-amber-50 border border-amber-100 rounded-lg px-4 py-3 text-xs text-amber-700 mb-5">
-          <strong>About these activities:</strong> These are designed to take 10â€“15 minutes total, done WITH a parent at home. They reinforce today&apos;s lesson in a fun, non-testing way.
+          <strong>About these activities:</strong> These are designed to take 10-15 minutes total, done WITH a parent at home. They reinforce today&apos;s lesson in a fun, non-testing way.
         </div>
 
         {/* Activities list */}
@@ -504,7 +501,7 @@ export default function ActivityPacksPage() {
             onClick={() => setPhase('setup')}
             className="px-4 py-2.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
           >
-            â† Back
+            <- Back
           </button>
           <button
             onClick={handleSend}
@@ -514,7 +511,7 @@ export default function ActivityPacksPage() {
             {sending ? (
               <>
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                Sendingâ€¦
+                Sending...
               </>
             ) : (
               <>
@@ -553,7 +550,7 @@ export default function ActivityPacksPage() {
                 value={className}
                 onChange={(e) => { setClassName(e.target.value); setSection(''); setSubject(''); }}
               >
-                <option value="">{loadingAssignments ? 'Loadingâ€¦' : 'Select class (1â€“6)â€¦'}</option>
+                <option value="">{loadingAssignments ? 'Loading...' : 'Select class...'}</option>
                 {myClasses.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </FormField>
@@ -566,7 +563,7 @@ export default function ActivityPacksPage() {
                 value={section}
                 onChange={(e) => { setSection(e.target.value); setSubject(''); }}
               >
-                <option value="">Select sectionâ€¦</option>
+                <option value="">Select section...</option>
                 {sectionsForClass.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </FormField>
@@ -580,7 +577,7 @@ export default function ActivityPacksPage() {
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
             >
-              <option value="">Select subjectâ€¦</option>
+              <option value="">Select subject...</option>
               {subjectsForClassSection.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
           </FormField>
@@ -590,7 +587,7 @@ export default function ActivityPacksPage() {
               id="ap-topic"
               type="text"
               className={inputClass}
-              placeholder="e.g. Addition of two-digit numbers, Plants around usâ€¦"
+              placeholder="e.g. Addition of two-digit numbers, Plants around us..."
               value={topic}
               onChange={(e) => setTopic(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && creationMode === 'ai') handleGenerate(); }}
@@ -598,7 +595,7 @@ export default function ActivityPacksPage() {
           </FormField>
 
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-700">
-            <strong>Note:</strong> Activities will be sent to parents of students in Class {className || 'â€”'} {section || 'â€”'} with an active <strong>Premium Junior</strong> subscription.
+            <strong>Note:</strong> Activities will be sent to parents of students in Class {className || ' -- '} {section || ' -- '} with an active <strong>Premium Junior</strong> subscription.
             Parents will receive a push notification.
           </div>
         </div>
@@ -613,7 +610,7 @@ export default function ActivityPacksPage() {
                 : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
             }`}
           >
-            âœ¨ Generate with AI
+            ✨ Generate with AI
           </button>
           <button
             onClick={() => { setCreationMode('manual'); setGenerateError(''); }}
@@ -623,14 +620,14 @@ export default function ActivityPacksPage() {
                 : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
             }`}
           >
-            âœï¸ Create Manually
+            ✏️ Create Manually
           </button>
         </div>
 
         {/* â”€â”€ AI mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
         {creationMode === 'ai' && (
           <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
-            <p className="text-xs text-gray-500">AI will generate 5 home activities based on your topic, designed to take 10â€“15 minutes with a parent.</p>
+            <p className="text-xs text-gray-500">AI will generate 5 home activities based on your topic, designed to take 10-15 minutes with a parent.</p>
 
             {generateError && (
               <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 space-y-2">
@@ -641,7 +638,7 @@ export default function ActivityPacksPage() {
                     disabled={generating}
                     className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-red-300"
                   >
-                    {generating ? 'Retryingâ€¦' : 'Retry'}
+                    {generating ? 'Retrying...' : 'Retry'}
                   </button>
                   <button
                     onClick={() => { setCreationMode('manual'); setGenerateError(''); }}
@@ -662,7 +659,7 @@ export default function ActivityPacksPage() {
                 {generating ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Generatingâ€¦
+                    Generating...
                   </>
                 ) : (
                   <>
@@ -722,7 +719,7 @@ export default function ActivityPacksPage() {
                 disabled={!className || !section || !subject || !topic.trim()}
                 className="flex items-center gap-2 px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-300 text-white text-sm font-semibold rounded-lg"
               >
-                Preview & Send â†’
+                Preview & Send →
               </button>
             </div>
           </div>
