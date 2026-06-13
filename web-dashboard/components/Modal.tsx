@@ -40,11 +40,10 @@ export default function Modal({ open, onClose, title, children, size = 'md' }: M
     <div
       ref={overlayRef}
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
-      onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
     >
-      <div className={`w-full ${SIZE_CLASS[size]} bg-white rounded-2xl shadow-xl`}>
+      <div className={`w-full ${SIZE_CLASS[size]} bg-white rounded-2xl shadow-xl flex flex-col max-h-[90vh]`}>
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <h2 className="text-base font-semibold text-gray-900">{title}</h2>
           <button
             onClick={onClose}
@@ -56,8 +55,8 @@ export default function Modal({ open, onClose, title, children, size = 'md' }: M
             </svg>
           </button>
         </div>
-        {/* Body */}
-        <div className="px-6 py-5">{children}</div>
+        {/* Body — scrollable */}
+        <div className="px-6 py-5 overflow-y-auto">{children}</div>
       </div>
     </div>
   );

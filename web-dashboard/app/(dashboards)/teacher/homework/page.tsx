@@ -861,7 +861,7 @@ function HomeworkFormModal({
               <div className="p-3 bg-violet-50 border border-violet-100 rounded-xl">
                 <p className="text-xs font-semibold text-violet-800 mb-1">Teacher's Reference Solution / Method (optional)</p>
                 <p className="text-xs text-violet-600 mb-3">
-                  Upload your solved example, answer key, or step-by-step method. Gemini will compare student submissions against this when grading.
+                  Upload your solved example, answer key, or step-by-step method. AI will compare student submissions against this when grading.
                 </p>
                 <div className="flex items-center gap-3">
                   <input ref={referenceFileInputRef} id="hw-ref-file" type="file" accept=".pdf,image/*" className="hidden"
