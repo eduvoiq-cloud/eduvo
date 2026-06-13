@@ -124,7 +124,7 @@ router.get(
   }
 );
 
-// POST /api/activity-packs/generate — Gemini generates 5 home activities
+// POST /api/activity-packs/generate — Gemini generates home activities
 router.post(
   '/generate',
   authenticate,
@@ -134,6 +134,9 @@ router.post(
       class: z.string().min(1),
       subject: z.string().min(1),
       topic: z.string().min(1),
+      board: z.enum(['GSEB', 'CBSE', 'ICSE', 'Other']).optional().default('CBSE'),
+      chapter: z.string().optional().default(''),
+      count: z.number().int().min(1).max(10).optional().default(5),
     });
 
     const parsed = schema.safeParse(req.body);
@@ -148,7 +151,7 @@ router.post(
       return;
     }
 
-    const { class: cls, subject, topic } = parsed.data;
+    const { class: cls, subject, topic, board, chapter, count } = parsed.data;
     const age = classToAge(cls);
 
     const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
@@ -157,13 +160,27 @@ router.post(
       return;
     }
 
-    const prompt = `Create a simple home activity for a Class ${cls} student (age ~${age}) in India, to be done WITH their parent. Topic taught today: '${topic}' (Subject: ${subject}).
-Generate exactly 5 activities that:
-- Take 10-15 minutes total combined
-- Use things found at home or verbal interaction
-- Are framed as fun, not testing
-- Reinforce today's learning
-- Suit a ${age} year old
+    const chapterLine = chapter ? `Chapter/Unit: '${chapter}'` : '';
+    const boardContext = board === 'GSEB'
+      ? 'Gujarat State Education Board (GSEB) curriculum, medium may be Gujarati or English'
+      : board === 'ICSE'
+      ? 'ICSE curriculum'
+      : board === 'CBSE'
+      ? 'CBSE (Central Board of Secondary Education) curriculum'
+      : 'Indian school curriculum';
+
+    const prompt = `You are an expert Indian school teacher creating home activities for parents.
+Create exactly ${count} home activities for a Class ${cls} student (age ~${age}) following the ${boardContext}.
+Topic taught today: '${topic}' (Subject: ${subject})${chapterLine ? `. ${chapterLine}` : ''}.
+
+Each activity must:
+- Take 3-5 minutes (total ~${count * 3}-${count * 5} minutes)
+- Be done WITH the parent at home
+- Use common household items or verbal interaction only
+- Be framed as fun, not a test
+- Directly reinforce the specific topic '${topic}'${chapter ? ` from ${chapter}` : ''}
+- Be age-appropriate for a ${age} year old
+- Align with the ${board} curriculum approach for ${subject}
 
 type must be one of: "verbal", "written", "physical"`;
 
@@ -215,9 +232,9 @@ type must be one of: "verbal", "written", "physical"`;
         return;
       }
 
-      // Normalise: cap at 5, ensure valid type
+      // Normalise: cap at requested count, ensure valid type
       const validTypes = new Set(['verbal', 'written', 'physical']);
-      const activities = parsed2.activities.slice(0, 5).map((a) => ({
+      const activities = parsed2.activities.slice(0, count).map((a) => ({
         instruction: a.instruction,
         type: validTypes.has(a.type) ? a.type : 'verbal',
       }));
