@@ -734,6 +734,199 @@ router.get(
   }
 );
 
+// POST /api/daily-tests/:id/attempt/start  — start or resume an attempt (student token)
+//
+// Called when the student taps "Start Test" or "Continue Test".
+// Returns:  { attempt_id, started_at, time_limit_minutes, questions[] }
+// The client computes remaining time as: time_limit_minutes * 60 - elapsed_since(started_at)
+// This means the timer is authoritative on the server side and keeps running even when
+// the student leaves the app.
+router.post(
+  '/:id/attempt/start',
+  authenticateStudent,
+  async (req: Request, res: Response) => {
+    const studentId = req.student!.id;
+    const schoolId  = req.student!.school_id;
+
+    const isPremium = await requirePremium(studentId, schoolId);
+    if (!isPremium) { sendError(res, 'Premium subscription required', 403); return; }
+
+    // Fetch test (need time_limit_minutes + question list)
+    const { data: test, error: testErr } = await supabaseAdmin
+      .from('daily_tests')
+      .select('id, questions, school_id, class_name, section, subject, topic, time_limit_minutes')
+      .eq('id', req.params.id)
+      .eq('school_id', schoolId)
+      .maybeSingle();
+
+    if (testErr || !test) { sendError(res, 'Test not found', 404); return; }
+    const testRecord = test as Record<string, unknown>;
+
+    // Verify student belongs to this class / section
+    const studentClass   = req.student!.class_name ?? '';
+    const studentSection = req.student!.section ?? '';
+    if (
+      (testRecord.class_name as string).toLowerCase() !== studentClass.toLowerCase() ||
+      (testRecord.section   as string).toLowerCase() !== studentSection.toLowerCase()
+    ) {
+      sendError(res, 'This test is not assigned to your class', 403);
+      return;
+    }
+
+    // Check for an existing attempt row
+    const { data: existingAttempt } = await supabaseAdmin
+      .from('daily_test_attempts')
+      .select('id, completed_at, started_at, answers')
+      .eq('daily_test_id', req.params.id)
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    const timeLimitMinutes = (testRecord.time_limit_minutes as number | null) ?? 0;
+
+    if (existingAttempt) {
+      const ea = existingAttempt as Record<string, unknown>;
+
+      // Already submitted — reject
+      if (ea.completed_at) {
+        sendError(res, 'You have already submitted this test', 409);
+        return;
+      }
+
+      const startedAt = ea.started_at as string | null;
+
+      // If there is a time limit AND time has expired while the student was away,
+      // auto-submit the attempt with whatever answers they had saved so far.
+      if (timeLimitMinutes > 0 && startedAt) {
+        const elapsedSeconds = (Date.now() - new Date(startedAt).getTime()) / 1000;
+        if (elapsedSeconds >= timeLimitMinutes * 60) {
+          // Auto-submit with saved answers
+          const savedAnswers = (ea.answers as Array<{ question_index: number; selected_index: number }>) ?? [];
+          const questions    = testRecord.questions as Record<string, unknown>[];
+          let correctCount   = 0;
+          const gradedAnswers = savedAnswers.map((a) => {
+            const q = questions[a.question_index];
+            const isCorrect = q !== undefined && a.selected_index === (q.correct_index as number);
+            if (isCorrect) correctCount++;
+            return { ...a, is_correct: isCorrect };
+          });
+          const now = new Date().toISOString();
+          await supabaseAdmin
+            .from('daily_test_attempts')
+            .update({
+              answers:         gradedAnswers,
+              score:           correctCount,
+              total_questions: questions.length,
+              completed_at:    now,
+            })
+            .eq('id', ea.id);
+
+          sendError(res, 'Time limit exceeded — your attempt has been auto-submitted', 410);
+          return;
+        }
+      }
+
+      // Resume: return existing started_at so the client can recompute remaining time
+      // Strip correct_index / explanation / show_hint from questions
+      const safeQuestions = (testRecord.questions as Record<string, unknown>[]).map((q) => {
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { correct_index, explanation, show_hint, ...rest } = q;
+        return rest;
+      });
+
+      sendSuccess(res, {
+        attempt_id:         ea.id as string,
+        started_at:         startedAt ?? new Date().toISOString(),
+        time_limit_minutes: timeLimitMinutes,
+        resumed:            true,
+        questions:          safeQuestions,
+        saved_answers:      ea.answers ?? [],
+      }, 'Resumed');
+      return;
+    }
+
+    // No existing attempt — create one and record started_at
+    const now = new Date().toISOString();
+    const { data: inserted, error: insertErr } = await supabaseAdmin
+      .from('daily_test_attempts')
+      .insert({
+        daily_test_id:   req.params.id,
+        student_id:      studentId,
+        answers:         [],
+        score:           0,
+        total_questions: (testRecord.questions as unknown[]).length,
+        started_at:      now,
+        completed_at:    null,
+      })
+      .select('id, started_at')
+      .single();
+
+    if (insertErr || !inserted) { sendError(res, insertErr?.message ?? 'Failed to start attempt', 500); return; }
+
+    const ins = inserted as Record<string, unknown>;
+
+    // Strip correct_index / explanation / show_hint
+    const safeQuestions = (testRecord.questions as Record<string, unknown>[]).map((q) => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { correct_index, explanation, show_hint, ...rest } = q;
+      return rest;
+    });
+
+    sendSuccess(res, {
+      attempt_id:         ins.id as string,
+      started_at:         ins.started_at as string,
+      time_limit_minutes: timeLimitMinutes,
+      resumed:            false,
+      questions:          safeQuestions,
+      saved_answers:      [],
+    }, 'Started');
+  }
+);
+
+// PATCH /api/daily-tests/:id/attempt/save  — save in-progress answers without submitting
+router.patch(
+  '/:id/attempt/save',
+  authenticateStudent,
+  async (req: Request, res: Response) => {
+    const studentId = req.student!.id;
+    const schoolId  = req.student!.school_id;
+
+    const isPremium = await requirePremium(studentId, schoolId);
+    if (!isPremium) { sendError(res, 'Premium subscription required', 403); return; }
+
+    const schema = z.object({
+      answers: z.array(
+        z.object({
+          question_index:  z.number().min(0),
+          selected_index:  z.number().min(0).max(3),
+        })
+      ),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+    const { data: attempt } = await supabaseAdmin
+      .from('daily_test_attempts')
+      .select('id, completed_at')
+      .eq('daily_test_id', req.params.id)
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    if (!attempt) { sendError(res, 'Attempt not found — start the test first', 404); return; }
+    if ((attempt as Record<string, unknown>).completed_at) {
+      sendError(res, 'Test already submitted', 409);
+      return;
+    }
+
+    await supabaseAdmin
+      .from('daily_test_attempts')
+      .update({ answers: parsed.data.answers })
+      .eq('id', (attempt as Record<string, unknown>).id);
+
+    sendSuccess(res, { saved: true });
+  }
+);
+
 // POST /api/daily-tests/:id/attempt  — submit answers (student token)
 router.post(
   '/:id/attempt',
@@ -816,10 +1009,10 @@ router.post(
       const { data: updated, error: updateErr } = await supabaseAdmin
         .from('daily_test_attempts')
         .update({
-          answers: gradedAnswers,
-          score: correctCount,
+          answers:         gradedAnswers,
+          score:           correctCount,
           total_questions: totalQuestions,
-          completed_at: now,
+          completed_at:    now,
         })
         .eq('id', (existingAttempt as Record<string, unknown>).id)
         .select()
@@ -831,12 +1024,12 @@ router.post(
       const { data: inserted, error: insertErr } = await supabaseAdmin
         .from('daily_test_attempts')
         .insert({
-          daily_test_id: req.params.id,
-          student_id: studentId,
-          answers: gradedAnswers,
-          score: correctCount,
+          daily_test_id:   req.params.id,
+          student_id:      studentId,
+          answers:         gradedAnswers,
+          score:           correctCount,
           total_questions: totalQuestions,
-          completed_at: now,
+          completed_at:    now,
         })
         .select()
         .single();

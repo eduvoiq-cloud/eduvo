@@ -63,11 +63,10 @@
         }
       ]
     ],
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
     "updates": {
-      "url": "https://u.expo.dev/c3ab4a2e-d8c5-4a97-9e28-2cd4f9333ac3"
+      "url": "https://u.expo.dev/c3ab4a2e-d8c5-4a97-9e28-2cd4f9333ac3",
+      "enabled": false,
+      "checkAutomatically": "NEVER"
     }
   }
 }

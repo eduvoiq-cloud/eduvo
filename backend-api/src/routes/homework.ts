@@ -8,6 +8,7 @@ import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 import rateLimit from 'express-rate-limit';
+import { updateStreakWithMilestone } from '../services/streakService';
 
 const router = Router();
 
@@ -1578,6 +1579,26 @@ router.post(
 
     type SubRow = { id: string; status: string; flagged_reason: string | null; submitted_at: string; queued_overflow: boolean };
     const sub = submission as unknown as SubRow;
+
+    // ── Update streak (fire-and-forget) ───────────────────────────────────────
+    // Homework submission counts toward the student's daily streak.
+    setImmediate(() => {
+      (async () => {
+        try {
+          // Get student name and parent_id for milestone notifications
+          const { data: studentRow } = await supabaseAdmin
+            .from('students')
+            .select('full_name, parent_id')
+            .eq('id', studentId)
+            .maybeSingle();
+          const studentName = (studentRow as { full_name?: string } | null)?.full_name ?? 'Student';
+          const parentId = (studentRow as { parent_id?: string | null } | null)?.parent_id ?? null;
+          await updateStreakWithMilestone(studentId, 'activity_pack', studentName, parentId);
+        } catch (err) {
+          console.error('[homework] Streak update failed:', err);
+        }
+      })();
+    });
 
     sendSuccess(res, {
       id: sub.id,

@@ -32,6 +32,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import apiClient from '../api/client';
+import { useFocusEffect } from '@react-navigation/native';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -227,6 +228,14 @@ export default function StreakWidget({ studentId, studentToken, style }: Props) 
   }, [studentId, studentToken]);
 
   useEffect(() => { fetchStreak(); }, [fetchStreak]);
+
+  // Re-fetch whenever the parent screen comes back into focus
+  // (e.g. after student completes a daily test or submits homework)
+  useFocusEffect(
+    useCallback(() => {
+      fetchStreak();
+    }, [fetchStreak])
+  );
 
   // Don't render if no data and not loading (student not premium / no streaks yet)
   if (!loading && !streakData) return null;

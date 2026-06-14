@@ -11,7 +11,15 @@ import type { AppRole } from '@/lib/api';
 
 // ── Nav items per role ────────────────────────────────────────────────────────
 
-const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
+type NavItem = { label: string; href: string };
+type NavGroup = { label: string; children: NavItem[] };
+type NavEntry = NavItem | NavGroup;
+
+function isNavGroup(entry: NavEntry): entry is NavGroup {
+  return 'children' in entry;
+}
+
+const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
   superadmin: [
     { label: 'Dashboard', href: '/superadmin/dashboard' },
     { label: 'Schools', href: '/superadmin/schools' },
@@ -21,38 +29,133 @@ const NAV_ITEMS: Record<AppRole, { label: string; href: string }[]> = {
   ],
   schooladmin: [
     { label: 'Dashboard', href: '/admin/dashboard' },
-    { label: 'Teachers', href: '/admin/teachers' },
-    { label: 'Students', href: '/admin/students' },
-    { label: 'Marks', href: '/admin/marks' },
-    { label: 'Attendance', href: '/admin/attendance' },
-    { label: 'Announcements', href: '/admin/announcements' },
-    { label: 'Complaints', href: '/admin/complaints' },
-    { label: 'Performance', href: '/admin/performance' },
-    { label: 'Premium', href: '/admin/premium-management' },
-    { label: 'AI Insights', href: '/admin/premium-insights' },
-    { label: 'Streak Board', href: '/admin/streak-leaderboard' },
-    { label: 'Settings', href: '/admin/settings' },
+    {
+      label: 'People',
+      children: [
+        { label: 'Teachers', href: '/admin/teachers' },
+        { label: 'Students', href: '/admin/students' },
+      ],
+    },
+    {
+      label: 'Academics',
+      children: [
+        { label: 'Marks', href: '/admin/marks' },
+        { label: 'Attendance', href: '/admin/attendance' },
+        { label: 'Performance', href: '/admin/performance' },
+      ],
+    },
+    {
+      label: 'School',
+      children: [
+        { label: 'Announcements', href: '/admin/announcements' },
+        { label: 'Complaints', href: '/admin/complaints' },
+        { label: 'AI Insights', href: '/admin/premium-insights' },
+        { label: 'Streak Board', href: '/admin/streak-leaderboard' },
+        { label: 'Premium', href: '/admin/premium-management' },
+        { label: 'Settings', href: '/admin/settings' },
+      ],
+    },
   ],
   teacher: [
     { label: 'Dashboard', href: '/teacher/dashboard' },
-    { label: 'Marks', href: '/teacher/marks' },
-    { label: 'View Marks', href: '/teacher/marks/view' },
-    { label: 'Attendance', href: '/teacher/attendance' },
-    { label: 'Fees', href: '/teacher/fees' },
-    { label: 'Tests', href: '/teacher/tests' },
-    { label: 'Daily Test', href: '/teacher/daily-test' },
-    { label: 'Activity Packs', href: '/teacher/activity-packs' },
-    { label: 'Streak Board', href: '/teacher/streak-leaderboard' },
-    { label: 'Timetable', href: '/teacher/timetable' },
-    { label: 'Homework', href: '/teacher/homework' },
-    { label: 'AI Assistant', href: '/teacher/ai-assistant' },
-    { label: 'Complaints', href: '/teacher/complaints' },
-    { label: 'Announcements', href: '/teacher/announcements' },
-    { label: 'Premium', href: '/teacher/premium' },
+    {
+      label: 'Academics',
+      children: [
+        { label: 'Marks', href: '/teacher/marks' },
+        { label: 'View Marks', href: '/teacher/marks/view' },
+        { label: 'Tests', href: '/teacher/tests' },
+        { label: 'Daily Test', href: '/teacher/daily-test' },
+        { label: 'Homework', href: '/teacher/homework' },
+        { label: 'Activity Packs', href: '/teacher/activity-packs' },
+        { label: 'Timetable', href: '/teacher/timetable' },
+      ],
+    },
+    {
+      label: 'Students',
+      children: [
+        { label: 'Attendance', href: '/teacher/attendance' },
+        { label: 'Fees', href: '/teacher/fees' },
+        { label: 'Complaints', href: '/teacher/complaints' },
+      ],
+    },
+    {
+      label: 'Tools',
+      children: [
+        { label: 'AI Assistant', href: '/teacher/ai-assistant' },
+        { label: 'Streak Board', href: '/teacher/streak-leaderboard' },
+        { label: 'Announcements', href: '/teacher/announcements' },
+        { label: 'Premium', href: '/teacher/premium' },
+      ],
+    },
   ],
   parent: [],
   student: [],
 };
+
+// ── Dropdown nav item ─────────────────────────────────────────────────────────
+
+function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Is any child active?
+  const hasActiveChild = group.children.some(
+    (c) => pathname === c.href || pathname.startsWith(c.href + '/')
+  );
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+          hasActiveChild
+            ? 'bg-blue-50 text-blue-700'
+            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+        }`}
+        aria-haspopup="true"
+        aria-expanded={open}
+      >
+        {group.label}
+        <svg
+          className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 w-44 bg-white rounded-xl border border-gray-200 shadow-lg py-1 z-50">
+          {group.children.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(item.href + '/');
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setOpen(false)}
+                className={`block px-4 py-2 text-sm font-medium transition-colors ${
+                  active
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900'
+                }`}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Role badge colours ────────────────────────────────────────────────────────
 
@@ -210,19 +313,22 @@ export default function Navbar() {
 
             {/* Desktop nav links */}
             <nav className="hidden md:flex items-center gap-1">
-              {navItems.map((item) => {
-                const active = pathname === item.href || pathname.startsWith(item.href + '/');
+              {navItems.map((entry) => {
+                if (isNavGroup(entry)) {
+                  return <NavDropdown key={entry.label} group={entry} pathname={pathname} />;
+                }
+                const active = pathname === entry.href || pathname.startsWith(entry.href + '/');
                 return (
                   <Link
-                    key={item.href}
-                    href={item.href}
+                    key={entry.href}
+                    href={entry.href}
                     className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                       active
                         ? 'bg-blue-50 text-blue-700'
                         : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
                     }`}
                   >
-                    {item.label}
+                    {entry.label}
                   </Link>
                 );
               })}
@@ -287,12 +393,38 @@ export default function Navbar() {
             {/* Mobile medium switcher */}
             <MobileMediumSwitcher onClose={() => setMobileOpen(false)} />
 
-            {navItems.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(item.href + '/');
+            {navItems.map((entry) => {
+              if (isNavGroup(entry)) {
+                return (
+                  <div key={entry.label}>
+                    <p className="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                      {entry.label}
+                    </p>
+                    {entry.children.map((item) => {
+                      const active = pathname === item.href || pathname.startsWith(item.href + '/');
+                      return (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          onClick={() => setMobileOpen(false)}
+                          className={`block px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                            active
+                              ? 'bg-blue-50 text-blue-700'
+                              : 'text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {item.label}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                );
+              }
+              const active = pathname === entry.href || pathname.startsWith(entry.href + '/');
               return (
                 <Link
-                  key={item.href}
-                  href={item.href}
+                  key={entry.href}
+                  href={entry.href}
                   onClick={() => setMobileOpen(false)}
                   className={`block px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                     active
@@ -300,7 +432,7 @@ export default function Navbar() {
                       : 'text-gray-700 hover:bg-gray-50'
                   }`}
                 >
-                  {item.label}
+                  {entry.label}
                 </Link>
               );
             })}
