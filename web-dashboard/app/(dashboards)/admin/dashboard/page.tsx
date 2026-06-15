@@ -13,7 +13,6 @@ import {
   adminApi,
   attendanceApi,
   onboardingApi,
-  dailyTestsApi,
   homeworkAIStatsApi,
   type Student,
   type Teacher,
@@ -22,7 +21,6 @@ import {
   type Test,
   type AuditLog,
   type OnboardingProgress,
-  type DailyTestAdminStats,
   type HomeworkAIStats,
 } from '@/lib/api';
 import { getToken, saveSession } from '@/lib/session';
@@ -150,7 +148,6 @@ export default function SchoolAdminDashboard() {
   });
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [onboarding, setOnboarding] = useState<OnboardingProgress | null>(null);
-  const [dailyTestStats, setDailyTestStats] = useState<DailyTestAdminStats | null>(null);
   const [homeworkAIStats, setHomeworkAIStats] = useState<HomeworkAIStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [auditLoading, setAuditLoading] = useState(true);
@@ -260,12 +257,6 @@ export default function SchoolAdminDashboard() {
         })
         .catch(() => {});
 
-      // Fetch daily test stats (non-blocking)
-      dailyTestsApi
-        .getAdminStats(token!)
-        .then((res) => setDailyTestStats(res.data))
-        .catch(() => {});
-
       // Fetch homework AI stats (non-blocking)
       homeworkAIStatsApi
         .get(token!)
@@ -356,64 +347,6 @@ export default function SchoolAdminDashboard() {
           <QuickAction href="/admin/export" label="Export Data" icon={<ExportIcon />} />
         </div>
       </div>
-
-      {/* ── Daily Test Widget ───────────────────────────────────────────────── */}
-      {dailyTestStats && (
-        <div className="bg-white rounded-xl border border-gray-200 mb-6">
-          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-900">Daily AI Tests — Today</h2>
-            <span className="text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-full">
-              {dailyTestStats.tests_created_today} test{dailyTestStats.tests_created_today !== 1 ? 's' : ''} created
-            </span>
-          </div>
-
-          <div className="px-6 py-4 space-y-4">
-            {/* Class-wise completion rate */}
-            {Object.keys(dailyTestStats.class_completion).length > 0 ? (
-              <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Class-wise Completion</p>
-                <div className="space-y-2">
-                  {Object.entries(dailyTestStats.class_completion).map(([cls, stat]) => {
-                    const pct = stat.total > 0 ? Math.round((stat.completed / stat.total) * 100) : 0;
-                    return (
-                      <div key={cls} className="flex items-center gap-3">
-                        <span className="text-xs font-medium text-gray-700 w-24 shrink-0">{cls}</span>
-                        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-blue-500 rounded-full transition-all"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-gray-500 w-16 text-right shrink-0">
-                          {stat.completed}/{stat.total} ({pct}%)
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400">No tests assigned today.</p>
-            )}
-
-            {/* Inactive teachers flag */}
-            {dailyTestStats.inactive_teachers.length > 0 && (
-              <div className="border-t border-gray-100 pt-4">
-                <p className="text-xs font-medium text-orange-600 uppercase tracking-wide mb-2">
-                  ⚠️ Teachers inactive 3+ days (no test created)
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {dailyTestStats.inactive_teachers.map((t) => (
-                    <span key={t.teacher_id} className="text-xs px-2.5 py-1 bg-orange-50 border border-orange-200 text-orange-700 rounded-full">
-                      {t.teacher_name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* ── Homework AI Stats Widget ────────────────────────────────────────── */}
       {homeworkAIStats !== null && homeworkAIStats.total_submissions_this_week > 0 && (

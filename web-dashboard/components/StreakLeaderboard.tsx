@@ -384,7 +384,7 @@ export default function StreakLeaderboard({ mode }: Props) {
               <p className="text-3xl mb-3">🔥</p>
               <p className="font-semibold text-gray-700">No active streaks yet</p>
               <p className="text-sm text-gray-400 mt-1">
-                Students start building streaks when they complete daily tests or home activities.
+                Students start building streaks when they complete tests or home activities.
               </p>
             </div>
           ) : (
@@ -404,7 +404,7 @@ export default function StreakLeaderboard({ mode }: Props) {
               <p className="text-3xl mb-3">🔥</p>
               <p className="font-semibold text-gray-700">No active streaks in the school yet</p>
               <p className="text-sm text-gray-400 mt-1">
-                Students build streaks by completing daily tests or home activities every day.
+                Students build streaks by completing tests or home activities every day.
               </p>
             </div>
           ) : (

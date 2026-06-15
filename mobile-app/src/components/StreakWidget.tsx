@@ -45,7 +45,7 @@ interface StreakData {
 
 interface LogEntry {
   activity_date: string; // YYYY-MM-DD
-  activity_type: 'daily_test' | 'activity_pack' | 'both';
+  activity_type: 'daily_test' | 'test' | 'activity_pack' | 'both';
 }
 
 interface Props {
@@ -76,7 +76,8 @@ function dayNum(dateStr: string): number {
 
 // Activity type → dot colour
 const DOT_COLORS: Record<string, string> = {
-  daily_test:    '#1D4ED8', // blue
+  daily_test:    '#1D4ED8', // blue (legacy)
+  test:          '#1D4ED8', // blue
   activity_pack: '#15803D', // green
   both:          '#F97316', // orange (both done — max engagement)
 };
@@ -156,7 +157,7 @@ function CalendarGrid({ logEntries }: { logEntries: LogEntry[] }) {
       {/* Legend */}
       <View style={calStyles.legend}>
         <View style={calStyles.legendItem}>
-          <View style={[calStyles.legendDot, { backgroundColor: DOT_COLORS.daily_test }]} />
+          <View style={[calStyles.legendDot, { backgroundColor: DOT_COLORS.test }]} />
           <Text style={calStyles.legendLabel}>Test</Text>
         </View>
         <View style={calStyles.legendItem}>
@@ -230,7 +231,7 @@ export default function StreakWidget({ studentId, studentToken, style }: Props) 
   useEffect(() => { fetchStreak(); }, [fetchStreak]);
 
   // Re-fetch whenever the parent screen comes back into focus
-  // (e.g. after student completes a daily test or submits homework)
+  // (e.g. after student completes a test or submits homework)
   useFocusEffect(
     useCallback(() => {
       fetchStreak();
@@ -286,7 +287,7 @@ export default function StreakWidget({ studentId, studentToken, style }: Props) 
 
       {currentStreak === 0 && !hasActivity && (
         <Text style={widgetStyles.encourageMsg}>
-          Complete a daily test or activity to start your streak! 🚀
+          Complete a test or activity to start your streak! 🚀
         </Text>
       )}
 

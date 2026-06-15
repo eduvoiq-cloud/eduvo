@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -28,6 +28,19 @@ interface TestDetails {
   time_limit_minutes: string;
   shuffle_questions: boolean;
   shuffle_options: boolean;
+  // New fields from daily test migration
+  board: string;
+  chapter: string;
+  language: string;
+  contributes_to_streak: boolean;
+  // AI generation
+  use_ai: boolean;
+  ai_topic: string;
+  ai_count: number;
+  ai_difficulty: 'mixed' | 'easy' | 'medium' | 'hard' | 'custom';
+  ai_easy_count: number;
+  ai_medium_count: number;
+  ai_hard_count: number;
 }
 
 interface MCQDraft {
@@ -71,9 +84,15 @@ const EXAM_TYPE_LABELS: Record<ExamTypeValue, string> = {
   project: 'Project',
 };
 
+const BOARDS = ['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE'] as const;
+const LANGUAGES = ['English', 'Gujarati', 'Hindi', 'Marathi', 'Bengali', 'Tamil', 'Telugu', 'Kannada', 'Punjabi', 'Sanskrit'] as const;
+
 const EMPTY_DETAILS: TestDetails = {
   title: '', subject: '', class_name: '', section: '', term: '', exam_type: 'class_test',
   date: '', start_time: '', end_time: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: true,
+  board: 'GSEB', chapter: '', language: 'English', contributes_to_streak: false,
+  use_ai: false, ai_topic: '', ai_count: 10, ai_difficulty: 'mixed',
+  ai_easy_count: 4, ai_medium_count: 4, ai_hard_count: 2,
 };
 
 const EMPTY_MCQ: MCQDraft = {
@@ -388,6 +407,22 @@ export default function CreateTestPage() {
   const [published, setPublished] = useState(false);
   const [publishedTestId, setPublishedTestId] = useState<string | null>(null);
 
+  // AI generation state
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState('');
+
+  // AI source mode: 'topic' (default) or 'pdf'
+  const [aiSource, setAiSource] = useState<'topic' | 'pdf'>('topic');
+
+  // PDF upload state (for "Generate from PDF" mode)
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfUploadState, setPdfUploadState] = useState<'idle' | 'uploading' | 'done' | 'error'>('idle');
+  const [pdfExtractionId, setPdfExtractionId] = useState('');
+  const [pdfUploadError, setPdfUploadError] = useState('');
+  const [pdfTotalChars, setPdfTotalChars] = useState(0);
+  const [pdfGenerateStage, setPdfGenerateStage] = useState('');
+  const pdfInputRef = useRef<HTMLInputElement>(null);
+
   // Assignments for dropdowns
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
@@ -461,6 +496,181 @@ export default function CreateTestPage() {
   const totalMarks = questions.reduce((sum, q) => sum + parseFloat(q.marks || '0'), 0);
   const mcqCount = questions.filter((q) => q.type === 'mcq').length;
   const theoryCount = questions.filter((q) => q.type === 'theory').length;
+
+  // ── PDF upload handler ──────────────────────────────────────────────────
+
+  async function handlePdfUpload(file: File) {
+    const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!['.pdf', '.docx', '.txt'].includes(ext)) {
+      setPdfUploadError('Only .pdf, .docx, and .txt files are allowed.'); return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setPdfUploadError('File too large. Maximum 5 MB.'); return;
+    }
+    setPdfFile(file);
+    setPdfUploadError('');
+    setPdfUploadState('uploading');
+    const token = getToken();
+    if (!token) { setPdfUploadState('error'); setPdfUploadError('Session expired.'); return; }
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch(`${BASE_URL}/api/ai/upload-and-extract`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message ?? 'Upload failed');
+      setPdfExtractionId(json.data.extraction_id);
+      setPdfTotalChars(json.data.total_chars);
+      setPdfUploadState('done');
+    } catch (e: unknown) {
+      setPdfUploadState('error');
+      setPdfUploadError(e instanceof Error ? e.message : 'Upload failed.');
+    }
+  }
+
+  // ── AI generate from PDF ─────────────────────────────────────────────────
+
+  async function handleAIGenerateFromPdf() {
+    setGenerateError('');
+    setPdfGenerateStage('');
+    const { subject, class_name, ai_count } = details;
+    if (!class_name) { setGenerateError('Please select a class first.'); return; }
+    if (!subject) { setGenerateError('Please select a subject first.'); return; }
+    if (!pdfExtractionId) { setGenerateError('Please upload a PDF first.'); return; }
+
+    setGenerating(true);
+    const token = getToken();
+    if (!token) { setGenerating(false); setGenerateError('Session expired.'); return; }
+    try {
+      const res = await fetch(`${BASE_URL}/api/ai/generate-stream`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          extraction_id: pdfExtractionId,
+          subject: subject.slice(0, 50),
+          class_level: class_name.slice(0, 20),
+          difficulty: details.ai_difficulty === 'mixed' || details.ai_difficulty === 'custom' ? 'medium' : details.ai_difficulty,
+          mcq_count: ai_count,
+          theory_count: 0,
+        }),
+      });
+
+      if (!res.ok || !res.body) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as { message?: string }).message ?? 'Generation failed');
+      }
+
+      // Read SSE stream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const raw = line.slice(6).trim();
+          if (!raw) continue;
+          let event: Record<string, unknown>;
+          try { event = JSON.parse(raw); } catch { continue; }
+          if (event.error) throw new Error(String(event.error));
+          if (event.stage) setPdfGenerateStage(String(event.stage));
+          if (event.done) {
+            type GeneratedQ = {
+              question_text?: string; question?: string;
+              option_a: string; option_b: string; option_c: string; option_d: string;
+              correct_option: 'a'|'b'|'c'|'d'; marks: number;
+            };
+            const generated: MCQDraft[] = ((event.mcq_questions ?? []) as GeneratedQ[]).map((q) => ({
+              type: 'mcq' as const,
+              text: q.question_text ?? q.question ?? '',
+              marks: String(q.marks ?? 1),
+              options: [q.option_a, q.option_b, q.option_c, q.option_d] as [string,string,string,string],
+              correct_option: ['a','b','c','d'].indexOf(q.correct_option),
+            }));
+            setQuestions(generated);
+            if (!details.title.trim()) {
+              setDetails((d) => ({ ...d, title: `${subject} — ${pdfFile?.name.replace(/\.[^.]+$/, '') ?? 'PDF'}` }));
+            }
+            setStep(2);
+          }
+        }
+      }
+    } catch (e: unknown) {
+      setGenerateError(e instanceof Error ? e.message : 'Generation failed. Try again.');
+    } finally {
+      setGenerating(false);
+      setPdfGenerateStage('');
+    }
+  }
+
+  // ── AI generate questions ───────────────────────────────────────────────
+
+  async function handleAIGenerate() {
+    setGenerateError('');
+    const { title, subject, class_name, ai_topic, board, chapter, language,
+            ai_count, ai_difficulty, ai_easy_count, ai_medium_count, ai_hard_count } = details;
+    if (!class_name) { setGenerateError('Please select a class first.'); return; }
+    if (!subject) { setGenerateError('Please select a subject first.'); return; }
+    if (!ai_topic.trim()) { setGenerateError('Please enter a topic.'); return; }
+
+    setGenerating(true);
+    try {
+      const token = getToken();
+      const body: Record<string, unknown> = {
+        class: class_name,
+        subject,
+        topic: ai_topic.trim(),
+        board: board || 'GSEB',
+        chapter: chapter || '',
+        language: language || 'English',
+        count: ai_count,
+        difficulty_mode: ai_difficulty,
+        ...(ai_difficulty === 'custom' ? {
+          easy_count: ai_easy_count,
+          medium_count: ai_medium_count,
+          hard_count: ai_hard_count,
+        } : {}),
+      };
+      const res = await fetch(`${BASE_URL}/api/tests/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.message ?? 'Generation failed');
+
+      // Map returned questions to MCQDraft format
+      type GeneratedQ = {
+        question_text: string; option_a: string; option_b: string;
+        option_c: string; option_d: string; correct_option: 'a'|'b'|'c'|'d'; marks: number;
+      };
+      const generated: MCQDraft[] = (json.data.questions as GeneratedQ[]).map((q) => ({
+        type: 'mcq' as const,
+        text: q.question_text,
+        marks: String(q.marks ?? 1),
+        options: [q.option_a, q.option_b, q.option_c, q.option_d] as [string,string,string,string],
+        correct_option: ['a','b','c','d'].indexOf(q.correct_option),
+      }));
+
+      setQuestions(generated);
+      // Auto-fill title from topic if empty
+      if (!title.trim()) {
+        setDetails((d) => ({ ...d, title: `${subject} — ${ai_topic.trim()}` }));
+      }
+      setStep(2);
+    } catch (e: unknown) {
+      setGenerateError(e instanceof Error ? e.message : 'AI generation failed. Try again or create manually.');
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   // ── Step 1 validation ───────────────────────────────────────────────────────
 
@@ -590,6 +800,10 @@ export default function CreateTestPage() {
         time_limit_minutes: details.time_limit_minutes ? parseInt(details.time_limit_minutes) : undefined,
         shuffle_questions: details.shuffle_questions,
         shuffle_options: details.shuffle_options,
+        board: details.board || null,
+        chapter: details.chapter || null,
+        language: details.language || null,
+        contributes_to_streak: details.contributes_to_streak,
         questions: builtQuestions,
       });
 
@@ -943,6 +1157,224 @@ export default function CreateTestPage() {
                 </div>
                 <Toggle id="toggle-shuffle-o" checked={details.shuffle_options} onChange={(v) => setDetails((d) => ({ ...d, shuffle_options: v }))} />
               </div>
+
+              {/* ── Extra metadata ───────────────────────────────────────── */}
+              <div className="border-t border-gray-100 pt-3 mt-1">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Curriculum &amp; Language</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <FormField label="Board" htmlFor="d-board">
+                    <select id="d-board" className={inputClass} value={details.board}
+                      onChange={(e) => setDetails((d) => ({ ...d, board: e.target.value }))}>
+                      {BOARDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </FormField>
+                  <FormField label="Chapter / Unit" htmlFor="d-chapter">
+                    <input id="d-chapter" type="text" className={inputClass} placeholder="e.g. Chapter 3 (optional)"
+                      value={details.chapter} onChange={(e) => setDetails((d) => ({ ...d, chapter: e.target.value }))} />
+                  </FormField>
+                  <FormField label="Question Language" htmlFor="d-language">
+                    <select id="d-language" className={inputClass} value={details.language}
+                      onChange={(e) => setDetails((d) => ({ ...d, language: e.target.value }))}>
+                      {LANGUAGES.map((l) => <option key={l} value={l}>{l}</option>)}
+                    </select>
+                  </FormField>
+                </div>
+              </div>
+
+              {/* ── Streak toggle ────────────────────────────────────────── */}
+              <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+                <div>
+                  <label htmlFor="toggle-streak" className="text-sm font-medium text-gray-700">Counts toward student streak 🔥</label>
+                  <p className="text-xs text-gray-500 mt-0.5">Students who submit this test will have their streak updated</p>
+                </div>
+                <Toggle id="toggle-streak" checked={details.contributes_to_streak}
+                  onChange={(v) => setDetails((d) => ({ ...d, contributes_to_streak: v }))} />
+              </div>
+            </div>
+
+            {/* ── AI Generate section ──────────────────────────────────── */}
+            <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">✨</span>
+                  <div>
+                    <p className="text-sm font-semibold text-blue-900">Generate MCQ Questions with AI</p>
+                    <p className="text-xs text-blue-700 mt-0.5">Gemini generates questions instantly — you can edit them in the next step</p>
+                  </div>
+                </div>
+                <Toggle id="toggle-ai" checked={details.use_ai} onChange={(v) => setDetails((d) => ({ ...d, use_ai: v }))} />
+              </div>
+
+              {details.use_ai && (
+                <div className="space-y-4 pt-1">
+
+                  {/* Source mode toggle */}
+                  <div className="flex gap-2">
+                    <button type="button"
+                      onClick={() => setAiSource('topic')}
+                      className={`flex-1 py-2 text-xs font-semibold rounded-lg border-2 transition-colors ${aiSource === 'topic' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`}>
+                      📝 From Topic
+                    </button>
+                    <button type="button"
+                      onClick={() => setAiSource('pdf')}
+                      className={`flex-1 py-2 text-xs font-semibold rounded-lg border-2 transition-colors ${aiSource === 'pdf' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'}`}>
+                      📄 From PDF / Document
+                    </button>
+                  </div>
+
+                  {/* ── Topic mode ── */}
+                  {aiSource === 'topic' && (<>
+                  <FormField label="Topic" htmlFor="d-ai-topic" required>
+                    <input id="d-ai-topic" type="text" className={inputClass}
+                      placeholder="e.g. Laws of Motion, Photosynthesis, Linear Equations…"
+                      value={details.ai_topic}
+                      onChange={(e) => setDetails((d) => ({ ...d, ai_topic: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAIGenerate(); } }}
+                    />
+                  </FormField>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-gray-700">Number of questions</p>
+                    <div className="flex flex-wrap gap-2">
+                      {[5, 8, 10, 15, 20, 25, 30].map((n) => (
+                        <button key={n} type="button"
+                          onClick={() => setDetails((d) => ({ ...d, ai_count: n }))}
+                          className={`w-11 h-9 rounded-lg text-sm font-semibold border transition-colors ${
+                            details.ai_count === n ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                          }`}>{n}</button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-gray-700">Difficulty</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                      {(['mixed','easy','medium','hard','custom'] as const).map((d) => (
+                        <button key={d} type="button"
+                          onClick={() => setDetails((prev) => ({ ...prev, ai_difficulty: d }))}
+                          className={`py-1.5 text-xs font-semibold rounded-lg border transition-colors capitalize ${
+                            details.ai_difficulty === d ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                          }`}>{d}</button>
+                      ))}
+                    </div>
+
+                    {details.ai_difficulty === 'custom' && (
+                      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                        <p className="text-xs text-gray-500">Total must equal {details.ai_count} questions</p>
+                        {([
+                          { label: '🟢 Easy', key: 'ai_easy_count' as const, color: 'text-green-700' },
+                          { label: '🟡 Medium', key: 'ai_medium_count' as const, color: 'text-yellow-700' },
+                          { label: '🔴 Hard', key: 'ai_hard_count' as const, color: 'text-red-700' },
+                        ]).map(({ label, key, color }) => (
+                          <div key={key} className="flex items-center gap-3">
+                            <span className={`text-xs font-semibold w-20 shrink-0 ${color}`}>{label}</span>
+                            <input type="range" min={0} max={details.ai_count} value={details[key]}
+                              onChange={(e) => setDetails((d) => ({ ...d, [key]: parseInt(e.target.value) }))}
+                              className="flex-1 accent-blue-600" />
+                            <span className="text-sm font-bold text-gray-800 w-6 text-right">{details[key]}</span>
+                          </div>
+                        ))}
+                        <div className={`text-xs font-medium ${
+                          details.ai_easy_count + details.ai_medium_count + details.ai_hard_count === details.ai_count
+                            ? 'text-green-600' : 'text-red-500'
+                        }`}>
+                          Total: {details.ai_easy_count + details.ai_medium_count + details.ai_hard_count} / {details.ai_count}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {generateError && (
+                    <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{generateError}</div>
+                  )}
+
+                  <button type="button" onClick={handleAIGenerate}
+                    disabled={generating || !details.class_name || !details.subject || !details.ai_topic.trim()}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-semibold rounded-lg transition-colors">
+                    {generating ? (
+                      <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Generating…</>
+                    ) : (
+                      <>✨ Generate {details.ai_count} Questions &amp; Continue</>
+                    )}
+                  </button>
+                  </>)}
+
+                  {/* ── PDF mode ── */}
+                  {aiSource === 'pdf' && (<>
+                    <p className="text-xs text-blue-700">Upload a PDF, Word doc, or text file. AI will generate MCQ questions from its content.</p>
+
+                    {/* Drop zone */}
+                    {pdfUploadState !== 'done' ? (
+                      <div
+                        onClick={() => pdfInputRef.current?.click()}
+                        onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handlePdfUpload(f); }}
+                        onDragOver={(e) => e.preventDefault()}
+                        className="border-2 border-dashed border-blue-300 rounded-xl p-5 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50/30 transition-colors"
+                      >
+                        <input ref={pdfInputRef} type="file" accept=".pdf,.docx,.txt" className="hidden"
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) handlePdfUpload(f); }} />
+                        {pdfUploadState === 'uploading' ? (
+                          <div className="flex items-center justify-center gap-2 text-sm text-blue-600">
+                            <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                            Extracting text…
+                          </div>
+                        ) : (
+                          <>
+                            <div className="text-2xl mb-1">📄</div>
+                            <p className="text-sm font-medium text-gray-700">Drop file here or click to browse</p>
+                            <p className="text-xs text-gray-400 mt-0.5">.pdf, .docx, .txt · max 5 MB</p>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-green-600 shrink-0">✓</span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-green-800 truncate">{pdfFile?.name}</p>
+                            <p className="text-xs text-green-600">{pdfTotalChars.toLocaleString()} characters extracted</p>
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => { setPdfUploadState('idle'); setPdfFile(null); setPdfExtractionId(''); setPdfUploadError(''); }}
+                          className="text-xs text-green-500 hover:text-green-700 ml-2">Change</button>
+                      </div>
+                    )}
+
+                    {pdfUploadError && (
+                      <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{pdfUploadError}</p>
+                    )}
+
+                    {/* Question count */}
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-gray-700">Number of questions</p>
+                      <div className="flex flex-wrap gap-2">
+                        {[5, 8, 10, 15, 20].map((n) => (
+                          <button key={n} type="button"
+                            onClick={() => setDetails((d) => ({ ...d, ai_count: n }))}
+                            className={`w-11 h-9 rounded-lg text-sm font-semibold border transition-colors ${
+                              details.ai_count === n ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400'
+                            }`}>{n}</button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {generateError && (
+                      <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{generateError}</div>
+                    )}
+
+                    <button type="button" onClick={handleAIGenerateFromPdf}
+                      disabled={generating || pdfUploadState !== 'done' || !details.class_name || !details.subject}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-semibold rounded-lg transition-colors">
+                      {generating ? (
+                        <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />{pdfGenerateStage || 'Generating…'}</>
+                      ) : (
+                        <>✨ Generate {details.ai_count} Questions from PDF &amp; Continue</>
+                      )}
+                    </button>
+                  </>)}
+
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end pt-2">

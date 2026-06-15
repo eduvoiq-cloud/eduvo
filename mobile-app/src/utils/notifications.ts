@@ -158,7 +158,7 @@ export function addNotificationReceivedListener(
 
 /**
  * Adds a listener for when the user taps a notification (background or killed state).
- * Navigates to the Notifications screen if a navigation ref is available.
+ * Deep-links to the appropriate screen based on the notification data payload.
  * Returns the subscription so the caller can remove it on unmount.
  */
 export function addNotificationResponseListener(
@@ -167,9 +167,25 @@ export function addNotificationResponseListener(
   return Notifications.addNotificationResponseReceivedListener((response) => {
     console.log('[Notifications] Tapped:', response.notification.request.content.title);
 
-    // Navigate to the Notifications screen inside the More tab
+    const data = (response.notification.request.content.data ?? {}) as Record<string, unknown>;
+    const type = data.type as string | undefined;
+
     if (navigationRef?.isReady()) {
-      navigationRef.navigate('More' as never);
+      if (type === 'subject_resource') {
+        // Deep-link to the Notes & Resources screen inside the More stack
+        // Navigate to the More tab first, then Resources screen
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (navigationRef as any).navigate('More', { screen: 'Resources' });
+        } catch {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (navigationRef as any).navigate('More');
+        }
+      } else {
+        // Default: navigate to Notifications screen inside the More tab
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (navigationRef as any).navigate('More', { screen: 'Notifications' });
+      }
     }
 
     handler?.(response);

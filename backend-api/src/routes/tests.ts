@@ -6,8 +6,10 @@ import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 import { normaliseTerm } from '../utils/term';
-import { getTokensForStudents, sendPushMulticast } from '../services/fcmService';
+import { getTokensForStudents, getTokensForUsers, sendPushMulticast } from '../services/fcmService';
 import { testSubmitRateLimit } from '../middleware/rateLimit';
+import { updateStreakWithMilestone } from '../services/streakService';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const router = Router();
 
@@ -39,6 +41,11 @@ const createTestSchema = z.object({
   time_limit_minutes: z.number().int().min(1),
   shuffle_questions: z.boolean().default(false),
   shuffle_options: z.boolean().default(false),
+  // New fields (from daily test migration)
+  board: z.string().optional().nullable(),
+  chapter: z.string().optional().nullable(),
+  language: z.enum(['English','Gujarati','Hindi','Sanskrit','Marathi','Tamil','Telugu','Kannada','Bengali','Punjabi']).optional().nullable(),
+  contributes_to_streak: z.boolean().default(false),
   questions: z.array(questionSchema).min(1),
 });
 
@@ -109,6 +116,155 @@ async function teacherOwnsClass(
   return (byClass ?? []).length > 0;
 }
 
+// ── POST /api/tests/generate ──────────────────────────────────────────────────
+/**
+ * AI-generate MCQ questions using Gemini.
+ * Identical capability to the old /api/daily-tests/generate endpoint.
+ * Supports text-based generation and image/PDF upload via base64.
+ */
+router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const schema = z.object({
+    class: z.string().min(1),
+    subject: z.string().min(1),
+    topic: z.string().min(1),
+    board: z.string().optional().default('GSEB'),
+    chapter: z.string().optional().default(''),
+    language: z.enum(['English','Gujarati','Hindi','Sanskrit','Marathi','Tamil','Telugu','Kannada','Bengali','Punjabi']).optional().default('English'),
+    count: z.number().int().min(1).max(30).optional().default(10),
+    difficulty_mode: z.enum(['mixed','easy','medium','hard','custom']).optional().default('mixed'),
+    easy_count: z.number().int().min(0).optional().default(0),
+    medium_count: z.number().int().min(0).optional().default(0),
+    hard_count: z.number().int().min(0).optional().default(0),
+    file_data: z.string().optional(),
+    file_mime: z.string().optional(),
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  const { class: cls, subject, topic, board, chapter, language, count,
+          difficulty_mode, easy_count, medium_count, hard_count,
+          file_data, file_mime } = parsed.data;
+
+  const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
+  if (!apiKey) { sendError(res, 'AI generation is not configured', 503); return; }
+
+  // Build difficulty line
+  let difficultyLine: string;
+  if (difficulty_mode === 'easy') {
+    difficultyLine = `All ${count} questions must be easy level.`;
+  } else if (difficulty_mode === 'medium') {
+    difficultyLine = `All ${count} questions must be medium level.`;
+  } else if (difficulty_mode === 'hard') {
+    difficultyLine = `All ${count} questions must be hard level.`;
+  } else if (difficulty_mode === 'custom') {
+    const total = easy_count + medium_count + hard_count;
+    if (total !== count) {
+      sendError(res, `Custom difficulty counts (${easy_count}+${medium_count}+${hard_count}=${total}) must add up to ${count}`, 400);
+      return;
+    }
+    difficultyLine = `Exactly ${easy_count} easy, ${medium_count} medium, and ${hard_count} hard questions.`;
+  } else {
+    const hard = Math.max(1, Math.round(count * 0.2));
+    const easy = Math.max(1, Math.round(count * 0.4));
+    const medium = count - easy - hard;
+    difficultyLine = `Approximately ${easy} easy, ${medium} medium, and ${hard} hard questions.`;
+  }
+
+  const chapterLine = chapter ? ` Chapter/Unit: '${chapter}'.` : '';
+
+  const LANG_INSTRUCTIONS: Record<string, string> = {
+    English:  'Write all questions and options in English.',
+    Gujarati: 'Write all questions and options in Gujarati language using Gujarati script (e.g. ગુજરાતી). Do NOT write in English or transliteration.',
+    Hindi:    'Write all questions and options in Hindi language using Devanagari script (e.g. हिंदी). Do NOT write in English or transliteration.',
+    Sanskrit: 'Write all questions and options in Sanskrit language using Devanagari script. Do NOT write in English or transliteration.',
+    Marathi:  'Write all questions and options in Marathi language using Devanagari script (e.g. मराठी). Do NOT write in English or transliteration.',
+    Tamil:    'Write all questions and options in Tamil language using Tamil script (e.g. தமிழ்). Do NOT write in English or transliteration.',
+    Telugu:   'Write all questions and options in Telugu language using Telugu script (e.g. తెలుగు). Do NOT write in English or transliteration.',
+    Kannada:  'Write all questions and options in Kannada language using Kannada script (e.g. ಕನ್ನಡ). Do NOT write in English or transliteration.',
+    Bengali:  'Write all questions and options in Bengali language using Bengali script (e.g. বাংলা). Do NOT write in English or transliteration.',
+    Punjabi:  'Write all questions and options in Punjabi language using Gurmukhi script (e.g. ਪੰਜਾਬੀ). Do NOT write in English or transliteration.',
+  };
+  const languageInstruction = LANG_INSTRUCTIONS[language] ?? LANG_INSTRUCTIONS.English;
+  const fileContext = file_data ? ' Use the provided image/document as the primary source for generating questions.' : '';
+
+  const prompt = `You are an experienced ${subject} teacher for Class ${cls} following ${board} curriculum in India.${chapterLine}
+Generate exactly ${count} multiple choice questions based on the topic: '${topic}'.${fileContext}
+Requirements:
+- ${difficultyLine}
+- Each question has exactly 4 options
+- Mark correct answer index (0-3)
+- One-line explanation per question
+- Test understanding, not just recall
+IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
+
+  const responseSchema = {
+    type: 'object' as const,
+    properties: {
+      questions: {
+        type: 'array' as const,
+        items: {
+          type: 'object' as const,
+          properties: {
+            question:      { type: 'string' as const },
+            options:       { type: 'array' as const, items: { type: 'string' as const }, minItems: 4, maxItems: 4 },
+            correct_index: { type: 'integer' as const, minimum: 0, maximum: 3 },
+            explanation:   { type: 'string' as const },
+            difficulty:    { type: 'string' as const, enum: ['easy', 'medium', 'hard'] },
+          },
+          required: ['question', 'options', 'correct_index', 'explanation', 'difficulty'],
+        },
+      },
+    },
+    required: ['questions'],
+  };
+
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+      generationConfig: { responseMimeType: 'application/json', responseSchema } as Record<string, unknown>,
+    });
+
+    const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
+    if (file_data && file_mime) {
+      contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+    }
+
+    const result = await model.generateContent(contentParts);
+    const raw = result.response.text().trim();
+
+    let parsed2: { questions: Array<{ question: string; options: string[]; correct_index: number; explanation: string; difficulty: string }> };
+    try { parsed2 = JSON.parse(raw); }
+    catch { sendError(res, 'AI returned invalid format. Please try again.', 500); return; }
+
+    if (!Array.isArray(parsed2.questions) || parsed2.questions.length === 0) {
+      sendError(res, 'AI did not return valid questions. Please try again.', 500); return;
+    }
+
+    // Map to the format expected by the test create endpoint:
+    // question_type: 'mcq', option_a/b/c/d, correct_option: 'a'|'b'|'c'|'d'
+    const OPTION_LETTERS = ['a', 'b', 'c', 'd'] as const;
+    const questions = parsed2.questions.map((q) => ({
+      question_text: q.question,
+      question_type: 'mcq' as const,
+      option_a: q.options[0] ?? '',
+      option_b: q.options[1] ?? '',
+      option_c: q.options[2] ?? '',
+      option_d: q.options[3] ?? '',
+      correct_option: OPTION_LETTERS[q.correct_index] ?? 'a',
+      explanation: q.explanation ?? '',
+      difficulty: q.difficulty ?? 'medium',
+      marks: 1,
+    }));
+
+    sendSuccess(res, { questions }, 'Questions generated');
+  } catch (err) {
+    console.error('[tests/generate] Gemini error:', err);
+    sendError(res, 'Failed to generate questions. Please try again.', 500);
+  }
+});
+
 // ── POST /api/tests/create ────────────────────────────────────────────────────
 /**
  * Teacher creates a test with questions.
@@ -164,6 +320,10 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       time_limit_minutes: testFields.time_limit_minutes,
       shuffle_questions:  testFields.shuffle_questions,
       shuffle_options:    testFields.shuffle_options,
+      board:   testFields.board ?? null,
+      chapter: testFields.chapter ?? null,
+      language: testFields.language ?? null,
+      contributes_to_streak: testFields.contributes_to_streak ?? false,
       school_id:  req.user!.school_id,
       created_by: req.user!.id,
     })
@@ -874,6 +1034,54 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
     mcq_score: mcqScore,
     time_limit_exceeded: timeLimitExceeded,
   });
+
+  // ── Streak update (fire-and-forget) ─────────────────────────────────────────
+  // Only update streak if the test has contributes_to_streak = true
+  const { data: streakTestMeta } = await supabaseAdmin
+    .from('tests')
+    .select('contributes_to_streak')
+    .eq('id', attempt.test_id)
+    .maybeSingle();
+
+  if ((streakTestMeta as Record<string, unknown> | null)?.contributes_to_streak === true) {
+    setImmediate(() => {
+      (async () => {
+        try {
+          const { data: studentRow } = await supabaseAdmin
+            .from('students')
+            .select('full_name, parent_id')
+            .eq('id', req.student!.id)
+            .single();
+
+          const studentName = (studentRow?.full_name as string) ?? '';
+          const parentId = (studentRow?.parent_id as string | null) ?? null;
+
+          const streakResult = await updateStreakWithMilestone(
+            req.student!.id,
+            'test',
+            studentName,
+            parentId
+          );
+
+          // Notify parent
+          if (parentId && streakResult.current_streak > 0) {
+            const parentTokens = await getTokensForUsers([parentId]);
+            if (parentTokens.length > 0) {
+              const streakMsg = ` 🔥 Streak: ${streakResult.current_streak} day${streakResult.current_streak !== 1 ? 's' : ''}!`;
+              await sendPushMulticast(
+                parentTokens,
+                'Test Completed! 🎉',
+                `${studentName} scored ${mcqScore}/${totalMcqMarks} on a test!${streakMsg}`,
+                { type: 'test_result', test_id: String(attempt.test_id) }
+              );
+            }
+          }
+        } catch (err) {
+          console.error('[tests] Post-submit streak/FCM failed:', err);
+        }
+      })();
+    });
+  }
 
   sendSuccess(res, { mcq_score: mcqScore, total_mcq_marks: totalMcqMarks }, 'Test submitted');
 });

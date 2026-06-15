@@ -952,6 +952,11 @@ export const testsApi = {
     time_limit_minutes?: number;
     shuffle_questions?: boolean;
     shuffle_options?: boolean;
+    // New fields from daily test migration
+    board?: string | null;
+    chapter?: string | null;
+    language?: string | null;
+    contributes_to_streak?: boolean;
     questions: TestQuestion[];
   }) =>
     request<Test>('/api/tests', {
@@ -1423,92 +1428,4 @@ export interface HomeworkAIStats {
 export const homeworkAIStatsApi = {
   get: (token: string) =>
     request<HomeworkAIStats>('/api/homework/ai-stats', { method: 'GET' }, token),
-};
-
-export interface DailyTestQuestion {
-  question_text: string;
-  options: [string, string, string, string];
-  correct_index: number;
-  explanation: string;
-  difficulty: 'easy' | 'medium' | 'hard';
-  marks: number;
-}
-
-export interface DailyTest {
-  id: string;
-  school_id: string;
-  teacher_id: string;
-  class: string;
-  section: string;
-  subject: string;
-  topic: string;
-  questions: DailyTestQuestion[];
-  test_date: string;
-  created_at: string;
-}
-
-export interface DailyTestAttempt {
-  id: string;
-  daily_test_id: string;
-  student_id: string;
-  answers: Record<string, unknown>;
-  score: number | null;
-  total_questions: number;
-  status: 'pending' | 'completed' | 'missed';
-  completed_at: string | null;
-  created_at: string;
-}
-
-export interface DailyTestAdminStats {
-  tests_created_today: number;
-  class_completion: Record<string, { total: number; completed: number }>;
-  inactive_teachers: Array<{ teacher_id: string; teacher_name: string }>;
-}
-
-export const dailyTestsApi = {
-  /** Check if the current teacher has daily test permission */
-  checkPermission: (token: string) =>
-    request<{ can_create_daily_tests: boolean }>('/api/daily-tests/permission', { method: 'GET' }, token),
-
-  /** Generate 10 MCQ questions using Gemini */
-  generate: (token: string, payload: {
-    class: string;
-    subject: string;
-    topic: string;
-    board?: string;
-  }) =>
-    request<{ questions: DailyTestQuestion[] }>('/api/daily-tests/generate', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, token),
-
-  /** Create and assign a daily test */
-  create: (token: string, payload: {
-    class: string;
-    section: string;
-    subject: string;
-    topic: string;
-    test_date: string;
-    questions: DailyTestQuestion[];
-  }) =>
-    request<DailyTest>('/api/daily-tests', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, token),
-
-  /** List teacher's own daily tests */
-  list: (token: string, params?: { date?: string }) => {
-    const qs = new URLSearchParams();
-    if (params?.date) qs.set('date', params.date);
-    const query = qs.toString() ? `?${qs.toString()}` : '';
-    return request<DailyTest[]>(`/api/daily-tests${query}`, { method: 'GET' }, token);
-  },
-
-  /** Admin stats widget data */
-  getAdminStats: (token: string) =>
-    request<DailyTestAdminStats>('/api/daily-tests/admin/stats', { method: 'GET' }, token),
-
-  /** Get attempt results for a test */
-  getResults: (token: string, testId: string) =>
-    request<DailyTestAttempt[]>(`/api/daily-tests/${testId}/results`, { method: 'GET' }, token),
 };

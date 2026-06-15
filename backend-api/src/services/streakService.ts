@@ -41,7 +41,7 @@ function yesterdayIST(): string {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type ActivityType = 'daily_test' | 'activity_pack' | 'both';
+export type ActivityType = 'daily_test' | 'activity_pack' | 'test' | 'both';
 
 export interface StreakResult {
   current_streak: number;
@@ -56,12 +56,12 @@ export interface StreakResult {
  * updateStreak — call this whenever a student completes a qualifying activity.
  *
  * @param studentId    The student's UUID
- * @param activityType 'daily_test' | 'activity_pack'
+ * @param activityType 'test' | 'activity_pack' | 'daily_test' (legacy)
  * @returns            Updated streak info, or zeroed defaults on error.
  */
 export async function updateStreak(
   studentId: string,
-  activityType: 'daily_test' | 'activity_pack'
+  activityType: 'daily_test' | 'activity_pack' | 'test'
 ): Promise<StreakResult> {
   const today = todayIST();
   const yesterday = yesterdayIST();
@@ -202,7 +202,7 @@ export async function updateStreak(
  */
 export async function updateStreakWithMilestone(
   studentId: string,
-  activityType: 'daily_test' | 'activity_pack',
+  activityType: 'daily_test' | 'activity_pack' | 'test',
   studentName: string,
   parentId: string | null
 ): Promise<StreakResult> {

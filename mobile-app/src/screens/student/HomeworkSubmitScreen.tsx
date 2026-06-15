@@ -650,7 +650,7 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
     const activeMode = detail.submission_type === 'either' ? mode : detail.submission_type;
 
     // Pre-submit validations
-    if (activeMode === 'typed' || activeMode === 'either') {
+    if (activeMode === 'typed') {
       if (detail.min_word_count && wordCount(text) < detail.min_word_count) {
         setSubmitError(`Your answer needs at least ${detail.min_word_count} words.`);
         return;
@@ -675,7 +675,7 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
     }
 
     // Check for soft warnings (blur/dark) — only for photo mode
-    if (!overrideWarnings && (activeMode === 'photo' || activeMode === 'either') && images.length > 0) {
+    if (!overrideWarnings && activeMode === 'photo' && images.length > 0) {
       const warnings: string[] = [];
       images.forEach((img, i) => {
         if (img.checks.blurry) warnings.push(`Photo ${i + 1} looks blurry. Consider retaking it.`);
@@ -700,10 +700,10 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
         exif_timestamps?: (string | null)[];
       } = {};
 
-      if (activeMode2 === 'typed' || activeMode2 === 'either') {
+      if (activeMode2 === 'typed') {
         if (text.trim()) payload.submission_text = text.trim();
       }
-      if ((activeMode2 === 'photo' || activeMode2 === 'either') && images.length > 0) {
+      if (activeMode2 === 'photo' && images.length > 0) {
         payload.submission_image_urls = images.map((img) => img.remoteUrl!).filter(Boolean);
         payload.image_hashes = images.map((img) => img.hash);
         payload.exif_timestamps = images.map((img) => img.exifTimestamp);

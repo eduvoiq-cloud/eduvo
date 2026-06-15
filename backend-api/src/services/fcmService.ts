@@ -302,7 +302,7 @@ export const STREAK_MILESTONES = new Set([3, 7, 14, 30, 50, 100]);
 
 /**
  * Check if a streak update crossed a milestone and send FCM if so.
- * Call this after any streak update (daily test or activity pack completion).
+ * Call this after any streak update (test or activity pack completion).
  *
  * @param studentId     The student's UUID
  * @param newStreak     The updated streak value

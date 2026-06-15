@@ -17,6 +17,7 @@ import { useAuthStore } from '../../store/authStore';
 type MoreStackParamList = {
   MoreHome: undefined;
   Homework: undefined;
+  Resources: undefined;
   Timetable: undefined;
   Notifications: undefined;
   Announcements: undefined;
@@ -97,6 +98,13 @@ export default function MoreHomeScreen() {
             description="View and track pending homework"
             color="#F59E0B"
             onPress={() => navigation.navigate('Homework')}
+          />
+          <MenuItem
+            icon="📚"
+            label="Notes & Resources"
+            description="Notes and assignments uploaded by teachers"
+            color="#1D4ED8"
+            onPress={() => navigation.navigate('Resources')}
           />
           <MenuItem
             icon="🗓️"

@@ -16,6 +16,7 @@ import AttendanceScreen from '../screens/main/AttendanceScreen';
 import MarksScreen from '../screens/main/MarksScreen';
 import TimetableScreen from '../screens/main/TimetableScreen';
 import HomeworkScreen from '../screens/main/HomeworkScreen';
+import ResourcesScreen from '../screens/main/ResourcesScreen';
 import ComplaintsScreen from '../screens/main/ComplaintsScreen';
 import NotificationsScreen from '../screens/main/NotificationsScreen';
 import FeeStatusScreen from '../screens/main/FeeStatusScreen';
@@ -23,9 +24,6 @@ import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
 
 // Student-specific screens
 import StudentTestsScreen from '../screens/student/TestsScreen';
-import DailyTestScreen from '../screens/student/DailyTestScreen';
-import DailyTestAttemptScreen from '../screens/student/DailyTestAttemptScreen';
-import type { DailyTestMeta } from '../screens/student/DailyTestScreen';
 import HomeworkSubmitScreen, { type HomeworkMeta } from '../screens/student/HomeworkSubmitScreen';
 
 // More home screen
@@ -60,7 +58,6 @@ export type MainTabParamList = {
   Attendance: undefined;
   Marks: undefined;
   Tests: undefined;
-  DailyTest: undefined;
   More: undefined;
 };
 
@@ -70,8 +67,8 @@ export type StudentTabParamList = MainTabParamList;
 export type MainStackParamList = {
   MainTabs: undefined;
   TestAttempt: { test: TestMeta };
-  DailyTestAttempt: { test: DailyTestMeta };
   HomeworkSubmit: { homework: HomeworkMeta };
+  Resources: undefined;
   ChangePassword: undefined;
   LinkChild: undefined;
   Announcements: undefined;
@@ -314,8 +311,14 @@ function MoreNavigator() {
         options={{ title: 'Homework' }}
       />
       <MoreStack.Screen
+        name="Resources"
+        component={ResourcesScreen}
+        options={{ title: 'Notes & Resources' }}
+      />
+      <MoreStack.Screen
         name="HomeworkSubmit"
-        component={HomeworkSubmitScreen}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        component={HomeworkSubmitScreen as React.ComponentType<any>}
         options={{ title: 'Submit Homework' }}
       />
       <MoreStack.Screen
@@ -379,14 +382,6 @@ function MainTabNavigator() {
         }}
       />
       <MainTab.Screen
-        name="DailyTest"
-        component={DailyTestScreen}
-        options={{
-          title: 'Daily Test',
-          tabBarIcon: ({ focused }) => <TabIcon label="🧠" focused={focused} />,
-        }}
-      />
-      <MainTab.Screen
         name="More"
         component={MoreNavigator}
         options={{
@@ -423,16 +418,22 @@ function MainNavigator() {
         options={{ headerShown: false }}
       />
       <MainStack.Screen
-        name="DailyTestAttempt"
-        component={DailyTestAttemptScreen}
-        options={{ headerShown: false }}
-      />
-      <MainStack.Screen
         name="HomeworkSubmit"
         component={HomeworkSubmitScreen}
         options={{
           headerShown: true,
           headerTitle: 'Submit Homework',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
+      <MainStack.Screen
+        name="Resources"
+        component={ResourcesScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Notes & Resources',
           headerStyle: { backgroundColor: '#1D4ED8' },
           headerTintColor: '#FFFFFF',
           headerTitleStyle: { fontWeight: '600' },

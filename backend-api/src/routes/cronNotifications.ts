@@ -55,26 +55,36 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
   // Run async after response is sent
   setImmediate(async () => {
     try {
-      // ── Senior students (premium_senior): pending daily test ─────────────────
-      // Find all premium_senior students with a pending (not completed) daily test today
-      const { data: seniorAttempts } = await supabaseAdmin
-        .from('daily_test_attempts')
-        .select(`
-          student_id,
-          daily_tests ( subject ),
-          parent_subscriptions!inner ( student_id )
-        `)
-        .eq('status', 'pending')
-        .gte('created_at', `${today}T00:00:00.000Z`);
+      // ── Senior students (premium_senior): incomplete streak-eligible test today ──
+      // Find all students who have an unsubmitted attempt on a streak-eligible test today
+      const { data: streakTests } = await supabaseAdmin
+        .from('tests')
+        .select('id, subject')
+        .eq('contributes_to_streak', true)
+        .gte('date', today)
+        .lte('date', today);
 
-      // Collect unique student_id → subject for seniors
       const seniorMap = new Map<string, string>();
-      for (const row of seniorAttempts ?? []) {
-        const r = row as Record<string, unknown>;
-        const sid = r.student_id as string;
-        const dt = r.daily_tests as Record<string, unknown> | null;
-        if (sid && !seniorMap.has(sid)) {
-          seniorMap.set(sid, (dt?.subject as string) ?? 'today\'s');
+
+      if (streakTests && streakTests.length > 0) {
+        const testIds = (streakTests as Array<{ id: string; subject: string }>).map((t) => t.id);
+        const subjectByTest = new Map(
+          (streakTests as Array<{ id: string; subject: string }>).map((t) => [t.id, t.subject])
+        );
+
+        const { data: incompleteAttempts } = await supabaseAdmin
+          .from('test_attempts')
+          .select('student_id, test_id')
+          .in('test_id', testIds)
+          .eq('is_submitted', false);
+
+        for (const row of incompleteAttempts ?? []) {
+          const r = row as Record<string, unknown>;
+          const sid = r.student_id as string;
+          const testId = r.test_id as string;
+          if (sid && !seniorMap.has(sid)) {
+            seniorMap.set(sid, subjectByTest.get(testId) ?? 'today\'s');
+          }
         }
       }
 
@@ -92,7 +102,6 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
           const studentId = s.student_id as string;
           const subject = seniorMap.get(studentId) ?? 'today\'s';
 
-          // Get the student row for their name and parent_id
           const { data: student } = await supabaseAdmin
             .from('students')
             .select('full_name, parent_id')
@@ -102,23 +111,21 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
           if (!student) { skipped++; continue; }
           const sr = student as Record<string, unknown>;
 
-          // Notify the student
           await sendPushNotification(
             studentId,
             '⏰ Don\'t break the streak!',
             `Complete today's ${subject} test before midnight!`,
-            { type: 'daily_reminder', activity: 'daily_test' },
+            { type: 'daily_reminder', activity: 'test' },
             'student'
           );
 
-          // Notify the parent
           const parentId = sr.parent_id as string | null;
           if (parentId) {
             await sendPushNotification(
               parentId,
               '⏰ Remind your child!',
               `${sr.full_name as string} hasn't completed today's ${subject} test yet. Help them keep their streak!`,
-              { type: 'daily_reminder', activity: 'daily_test', student_id: studentId },
+              { type: 'daily_reminder', activity: 'test', student_id: studentId },
               'user'
             );
           }

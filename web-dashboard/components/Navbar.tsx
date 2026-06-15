@@ -64,7 +64,6 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
         { label: 'Marks', href: '/teacher/marks' },
         { label: 'View Marks', href: '/teacher/marks/view' },
         { label: 'Tests', href: '/teacher/tests' },
-        { label: 'Daily Test', href: '/teacher/daily-test' },
         { label: 'Homework', href: '/teacher/homework' },
         { label: 'Activity Packs', href: '/teacher/activity-packs' },
         { label: 'Timetable', href: '/teacher/timetable' },
@@ -81,7 +80,6 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
     {
       label: 'Tools',
       children: [
-        { label: 'AI Assistant', href: '/teacher/ai-assistant' },
         { label: 'Streak Board', href: '/teacher/streak-leaderboard' },
         { label: 'Announcements', href: '/teacher/announcements' },
         { label: 'Premium', href: '/teacher/premium' },

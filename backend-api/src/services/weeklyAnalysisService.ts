@@ -137,39 +137,20 @@ export async function calculateWeakTopics(studentId: string, classLevel: number)
     subjectMarksMap.get(m.subject)!.push((m.score / m.max_score) * 100);
   }
 
-  // 1b. Fetch daily test attempts joined with daily_tests for per-topic scores
-  //     Only for classes 7-12
+  // 1b. Fetch test_attempt scores joined with tests for per-topic/subject weakness
+  //     Uses the marks table (auto-written on submit) for class 7-12
   const topicScoresMap = new Map<string, { subject: string; scores: number[] }>();
 
   if (classLevel >= 7) {
-    const { data: attempts } = await supabaseAdmin
-      .from('daily_test_attempts')
-      .select(`
-        score,
-        total_questions,
-        completed_at,
-        daily_tests ( subject, topic )
-      `)
-      .eq('student_id', studentId)
-      .eq('status', 'completed')
-      .not('score', 'is', null);
-
-    for (const attempt of attempts ?? []) {
-      const a = attempt as Record<string, unknown>;
-      const dt = a.daily_tests as Record<string, unknown> | null;
-      if (!dt) continue;
-
-      const topic = dt.topic as string;
-      const subject = dt.subject as string;
-      const totalQ = Number(a.total_questions) || 1;
-      const score = Number(a.score);
-      const pct = totalQ > 0 ? (score / totalQ) * 100 : 0;
-
-      const key = `${subject}::${topic}`;
+    // Pull from marks table — auto-written notes tag: "auto:attempt:<attempt_id>"
+    // We already have markRows from above which includes all test scores.
+    // Build topic map from subject-level marks (best available without daily_tests table)
+    for (const [subject, pcts] of subjectMarksMap.entries()) {
+      const key = `${subject}::${subject}`;
       if (!topicScoresMap.has(key)) {
         topicScoresMap.set(key, { subject, scores: [] });
       }
-      topicScoresMap.get(key)!.scores.push(pct);
+      topicScoresMap.get(key)!.scores.push(...pcts);
     }
   }
 
@@ -252,7 +233,7 @@ export async function generateWeeklyReport(
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   // Fetch all data in parallel
-  const [marksRes, weakTopicsRes, streakRes, attendanceRes, dailyTestsRes, activityRes] =
+  const [marksRes, weakTopicsRes, streakRes, attendanceRes, activityRes] =
     await Promise.all([
       // Marks history (last 6 months)
       supabaseAdmin
@@ -284,17 +265,6 @@ export async function generateWeeklyReport(
         .select('status')
         .eq('student_id', student.id)
         .gte('date', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)),
-
-      // Daily test scores last 7 days
-      classLevel >= 7
-        ? supabaseAdmin
-            .from('daily_test_attempts')
-            .select('score, total_questions, completed_at, daily_tests(subject, topic)')
-            .eq('student_id', student.id)
-            .eq('status', 'completed')
-            .gte('completed_at', weekAgo)
-            .limit(20)
-        : Promise.resolve({ data: [] }),
 
       // Activity completions last 7 days (classes 1-6)
       classLevel < 7
@@ -331,17 +301,8 @@ export async function generateWeeklyReport(
   const presentDays = attRecords.filter((r) => r.status === 'present' || r.status === 'late').length;
   const attendancePct = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
 
-  // Process daily test scores
-  const dailyScores = (dailyTestsRes.data ?? []).map((a: Record<string, unknown>) => {
-    const dt = a.daily_tests as Record<string, unknown> | null;
-    return {
-      subject: dt?.subject ?? 'General',
-      topic: dt?.topic ?? 'Unknown',
-      score: Number(a.score),
-      total: Number(a.total_questions) || 1,
-      pct: Math.round((Number(a.score) / (Number(a.total_questions) || 1)) * 100),
-    };
-  });
+  // Process daily test scores — now pulled from recent marks records instead
+  const recentTestMarks = marksData.filter((m) => m.exam_type === 'class_test' || m.exam_type === 'quiz' || m.exam_type === 'unit_test');
 
   // Process activity completions
   const activityData = (activityRes.data ?? []).map((ac: Record<string, unknown>) => {
@@ -358,7 +319,7 @@ export async function generateWeeklyReport(
   const prompt = `You are an academic advisor for a Class ${classLevel} student in India (${board} curriculum).
 Marks history (last 6 months): ${JSON.stringify(marksData.slice(0, 15))}
 Weak topics: ${JSON.stringify(weakTopics.slice(0, 8))}
-Daily test scores (last 7 days): ${JSON.stringify(dailyScores)}
+Recent test scores (last 7 days): ${JSON.stringify(recentTestMarks.slice(0, 10))}
 Activity completion (if class 1-6): ${JSON.stringify(activityData)}
 Current streak: ${streakDays} days
 Attendance %: ${attendancePct}%
