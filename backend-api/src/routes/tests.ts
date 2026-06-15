@@ -720,15 +720,42 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
       .delete()
       .eq('attempt_id', existingAttempt.id);
 
-    // Also clear local AsyncStorage progress on the client side is handled by
-    // the frontend detecting resumed=false. Fall through to question fetch below
-    // using resetAttempt as the attempt record.
-    // Overwrite existingAttempt reference so the code below uses the reset row.
-    (existingAttempt as { id: string; is_submitted: boolean }).id = resetAttempt.id;
+    // Return early with the reset attempt — no need to fall through.
+    // Fetch questions for this test.
+    let resetRawQuestions = null;
+    const { data: tqResetData, error: tqResetErr } = await supabaseAdmin
+      .from('test_questions')
+      .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+      .eq('test_id', test_id)
+      .order('order_index', { ascending: true });
+
+    if (!tqResetErr && tqResetData && tqResetData.length > 0) {
+      resetRawQuestions = tqResetData;
+    } else {
+      const { data: qResetData } = await supabaseAdmin
+        .from('questions')
+        .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
+        .eq('test_id', test_id)
+        .order('order_index', { ascending: true });
+      resetRawQuestions = qResetData;
+    }
+
+    if (!resetRawQuestions || resetRawQuestions.length === 0) {
+      sendError(res, 'This test has no questions yet. Contact your teacher.', 404);
+      return;
+    }
+
+    sendSuccess(res, {
+      attempt_id: resetAttempt.id,
+      time_limit_minutes: test.time_limit_minutes,
+      started_at: resetAttempt.started_at,
+      resumed: false,
+      questions: resetRawQuestions,
+    }, 'Test started');
+    return;
   }
 
-  // Fetch questions BEFORE creating the attempt — so we never create orphan attempts
-  // Try test_questions first (compatibility shim), fallback to questions
+  // No existing attempt — fetch questions then create a fresh one
   let rawQuestionsData = null;
   let qErr = null;
 
@@ -755,17 +782,9 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     return;
   }
 
-  // Create or reuse the attempt record
+  // Create a fresh attempt record
   let attempt: { id: string; started_at: string } | null = null;
-  if (existingAttempt) {
-    // Already reset above — just fetch the updated row (has fresh started_at)
-    const { data: existingFull } = await supabaseAdmin
-      .from('test_attempts')
-      .select('id, started_at')
-      .eq('id', existingAttempt.id)
-      .single();
-    attempt = existingFull;
-  } else {
+  {
     const { data: newAttempt, error: aErr } = await supabaseAdmin
       .from('test_attempts')
       .insert({
