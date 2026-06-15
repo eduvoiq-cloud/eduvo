@@ -694,81 +694,37 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
       return;
     }
 
-    // Check if the time limit has already expired for this in-progress attempt.
-    // If so, auto-submit it server-side with zero answers so the student gets a
-    // proper results screen rather than an instant silent submit with 0 marks.
-    if (test.time_limit_minutes > 0) {
-      const { data: existingFull } = await supabaseAdmin
-        .from('test_attempts')
-        .select('id, started_at')
-        .eq('id', existingAttempt.id)
-        .single();
+    // Existing in-progress attempt: always reset to a fresh start.
+    // Resuming a stale attempt causes the client to compute near-zero remaining
+    // time (based on the original started_at), which triggers an instant auto-submit.
+    // We reset started_at to now and wipe any saved answers so the student
+    // always gets a clean full-duration attempt every time they press Start.
+    const { data: resetAttempt, error: resetErr } = await supabaseAdmin
+      .from('test_attempts')
+      .update({
+        started_at: new Date().toISOString(),
+        is_submitted: false,
+      })
+      .eq('id', existingAttempt.id)
+      .select('id, started_at')
+      .single();
 
-      if (existingFull) {
-        const elapsedSeconds = (Date.now() - new Date(existingFull.started_at).getTime()) / 1000;
-        const limitSeconds = test.time_limit_minutes * 60;
-
-        if (elapsedSeconds >= limitSeconds) {
-          // Time is up on the old attempt. Reset started_at to now so the student
-          // gets a full fresh timer. (Deleting fails if child rows exist due to FK constraints.)
-          const { data: resetAttempt, error: resetErr } = await supabaseAdmin
-            .from('test_attempts')
-            .update({
-              started_at: new Date().toISOString(),
-              is_submitted: false,
-            })
-            .eq('id', existingFull.id)
-            .select('id, started_at')
-            .single();
-
-          if (resetErr || !resetAttempt) {
-            sendError(res, 'Failed to reset expired attempt', 500);
-            return;
-          }
-
-          // Also clear any previously saved answers for this attempt
-          await supabaseAdmin
-            .from('student_answers')
-            .delete()
-            .eq('attempt_id', existingFull.id);
-
-          const { data: tqReset, error: tqResetErr } = await supabaseAdmin
-            .from('test_questions')
-            .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
-            .eq('test_id', test_id)
-            .order('order_index', { ascending: true });
-
-          let resetQuestions = null;
-          if (!tqResetErr && tqReset && tqReset.length > 0) {
-            resetQuestions = tqReset;
-          } else {
-            const { data: qReset } = await supabaseAdmin
-              .from('questions')
-              .select('id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, marks')
-              .eq('test_id', test_id)
-              .order('order_index', { ascending: true });
-            resetQuestions = qReset;
-          }
-
-          if (!resetQuestions || resetQuestions.length === 0) {
-            sendError(res, 'This test has no questions yet. Contact your teacher.', 404);
-            return;
-          }
-
-          sendSuccess(res, {
-            attempt_id: resetAttempt.id,
-            time_limit_minutes: test.time_limit_minutes,
-            started_at: resetAttempt.started_at,
-            resumed: false,
-            questions: resetQuestions,
-          }, 'Test started');
-          return;
-        }
-      }
+    if (resetErr || !resetAttempt) {
+      sendError(res, 'Failed to reset attempt', 500);
+      return;
     }
 
-    // Resume existing active attempt — fall through with the existing attempt_id
-    // (questions are fetched below and returned so the student can continue)
+    // Clear any previously saved answers so the student starts blank
+    await supabaseAdmin
+      .from('student_answers')
+      .delete()
+      .eq('attempt_id', existingAttempt.id);
+
+    // Also clear local AsyncStorage progress on the client side is handled by
+    // the frontend detecting resumed=false. Fall through to question fetch below
+    // using resetAttempt as the attempt record.
+    // Overwrite existingAttempt reference so the code below uses the reset row.
+    (existingAttempt as { id: string; is_submitted: boolean }).id = resetAttempt.id;
   }
 
   // Fetch questions BEFORE creating the attempt — so we never create orphan attempts
@@ -802,7 +758,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   // Create or reuse the attempt record
   let attempt: { id: string; started_at: string } | null = null;
   if (existingAttempt) {
-    // Resume — fetch the full attempt row
+    // Already reset above — just fetch the updated row (has fresh started_at)
     const { data: existingFull } = await supabaseAdmin
       .from('test_attempts')
       .select('id, started_at')
@@ -871,9 +827,9 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     attempt_id: attempt.id,
     time_limit_minutes: test.time_limit_minutes,
     started_at: attempt.started_at,
-    resumed: !!existingAttempt,
+    resumed: false, // always a fresh start — never resume a stale attempt
     questions,
-  }, existingAttempt ? 'Test resumed' : 'Test started');
+  }, 'Test started');
 });
 
 // ── POST /api/tests/attempt/submit ───────────────────────────────────────────
