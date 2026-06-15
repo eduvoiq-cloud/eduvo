@@ -745,10 +745,16 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
       return;
     }
 
+    // Compute remaining seconds server-side so the client never has to do
+    // clock arithmetic with its own (potentially skewed) clock.
+    // This is a fresh reset — always give the full time limit.
+    const resetSecondsRemaining = test.time_limit_minutes * 60;
+
     sendSuccess(res, {
       attempt_id: resetAttempt.id,
       time_limit_minutes: test.time_limit_minutes,
       started_at: resetAttempt.started_at,
+      seconds_remaining: test.time_limit_minutes > 0 ? resetSecondsRemaining : null,
       resumed: false,
       questions: resetRawQuestions,
     }, 'Test started');
@@ -842,10 +848,18 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     });
   }
 
+  // Compute remaining seconds server-side so the client never has to do
+  // clock arithmetic with its own (potentially skewed) clock.
+  const freshElapsedSec = Math.floor(
+    (Date.now() - new Date(attempt.started_at).getTime()) / 1000
+  );
+  const freshSecondsRemaining = Math.max(test.time_limit_minutes * 60 - freshElapsedSec, 0);
+
   sendSuccess(res, {
     attempt_id: attempt.id,
     time_limit_minutes: test.time_limit_minutes,
     started_at: attempt.started_at,
+    seconds_remaining: test.time_limit_minutes > 0 ? freshSecondsRemaining : null,
     resumed: false, // always a fresh start — never resume a stale attempt
     questions,
   }, 'Test started');
