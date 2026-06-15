@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import {
   assignmentsApi, testsApi,
@@ -70,6 +70,9 @@ export default function TestsPage() {
   const [tests, setTests] = useState<Test[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // Success toast (e.g. after test creation)
+  const [successToast, setSuccessToast] = useState('');
 
   // Filters
   const [filterClass, setFilterClass] = useState('');
@@ -178,6 +181,18 @@ export default function TestsPage() {
   }, [user, filterClass, filterSection, filterSubject]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Show success toast when redirected from create page
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('created') === '1') {
+      setSuccessToast('Test created successfully!');
+      // Replace URL to remove the query param without re-rendering
+      router.replace('/teacher/tests');
+      const timer = setTimeout(() => setSuccessToast(''), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams, router]);
 
   // ── Question builder ──────────────────────────────────────────────────────
 
@@ -405,6 +420,16 @@ export default function TestsPage() {
 
   return (
     <>
+      {/* ── Success toast ─────────────────────────────────────────────────── */}
+      {successToast && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 bg-green-600 text-white text-sm font-semibold rounded-xl shadow-lg animate-in fade-in slide-in-from-top-2 duration-300">
+          <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+          </svg>
+          {successToast}
+        </div>
+      )}
+
       <PageHeader
         title="Tests"
         description="Create and manage MCQ + theory tests for your classes"

@@ -219,21 +219,58 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     required: ['questions'],
   };
 
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
-      generationConfig: { responseMimeType: 'application/json', responseSchema } as Record<string, unknown>,
-    });
+  const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
+  if (file_data && file_mime) {
+    contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+  }
 
-    const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
-    if (file_data && file_mime) {
-      contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+  // Try primary model, fall back to gemini-2.0-flash on 503 (overloaded)
+  const primaryModel  = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+  const fallbackModel = 'gemini-2.0-flash';
+  const modelsToTry   = primaryModel === fallbackModel ? [primaryModel] : [primaryModel, fallbackModel];
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  let raw = '';
+  let lastErr: unknown;
+
+  for (const modelName of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: { responseMimeType: 'application/json', responseSchema } as Record<string, unknown>,
+      });
+      const result = await model.generateContent(contentParts);
+      raw = result.response.text().trim();
+      lastErr = null;
+      break; // success — stop trying
+    } catch (err) {
+      lastErr = err;
+      const status = (err as Record<string, unknown>)?.status as number | undefined;
+      if (status === 503 || status === 429) {
+        console.warn(`[tests/generate] ${modelName} returned ${status}, trying fallback…`);
+        continue; // try next model
+      }
+      // Any other error (auth, bad request, etc.) — fail immediately
+      console.error('[tests/generate] Gemini error:', err);
+      const msg = (err instanceof Error ? err.message : '') || 'Failed to generate questions. Please try again.';
+      sendError(res, msg, 500);
+      return;
     }
+  }
 
-    const result = await model.generateContent(contentParts);
-    const raw = result.response.text().trim();
+  if (lastErr) {
+    console.error('[tests/generate] All models failed:', lastErr);
+    const status = (lastErr as Record<string, unknown>)?.status as number | undefined;
+    if (status === 503 || status === 429) {
+      sendError(res, 'AI is currently overloaded. Please try again in a moment.', 503);
+    } else {
+      sendError(res, 'Failed to generate questions. Please try again.', 500);
+    }
+    return;
+  }
 
+  try {
     let parsed2: { questions: Array<{ question: string; options: string[]; correct_index: number; explanation: string; difficulty: string }> };
     try { parsed2 = JSON.parse(raw); }
     catch { sendError(res, 'AI returned invalid format. Please try again.', 500); return; }
@@ -260,7 +297,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
 
     sendSuccess(res, { questions }, 'Questions generated');
   } catch (err) {
-    console.error('[tests/generate] Gemini error:', err);
+    console.error('[tests/generate] post-parse error:', err);
     sendError(res, 'Failed to generate questions. Please try again.', 500);
   }
 });

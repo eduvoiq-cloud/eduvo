@@ -238,15 +238,6 @@ Return this exact JSON structure:
   ]
 }`;
 
-  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
-  console.log(`[PERF:gemini] Using model: ${modelId}`);
-
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelId,
-    systemInstruction,
-  });
-
   // Build the parts array depending on content type
   let requestParts: Part[];
 
@@ -270,14 +261,44 @@ Return this exact JSON structure:
     ];
   }
 
-  const t_gs3_geminiCallStart = performance.now();
-  console.log(`[PERF:gemini] Prompt constructed, calling Gemini API (content-type: ${extraction.type})...`);
+  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  const fallbackModelId = "gemini-2.0-flash";
+  const modelsToTry = modelId === fallbackModelId ? [modelId] : [modelId, fallbackModelId];
+  console.log(`[PERF:gemini] Using model: ${modelId}`);
 
-  const result = await model.generateContent({ contents: [{ role: "user", parts: requestParts }] });
+  const genAI = new GoogleGenerativeAI(apiKey);
 
-  const t_gs4_geminiCallDone = performance.now();
-  const tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
-  console.log(`[PERF:gemini] Gemini API responded: ${((t_gs4_geminiCallDone - t_gs3_geminiCallStart) / 1000).toFixed(3)}s | tokens used: ${tokensUsed}`);
+  let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null;
+  let tokensUsed = 0;
+  let t_gs3_geminiCallStart = 0;
+  let t_gs4_geminiCallDone = 0;
+
+  for (const currentModelId of modelsToTry) {
+    try {
+      const model = genAI.getGenerativeModel({ model: currentModelId, systemInstruction });
+      t_gs3_geminiCallStart = performance.now();
+      if (currentModelId !== modelId) {
+        console.warn(`[PERF:gemini] Falling back to ${currentModelId}…`);
+      }
+      console.log(`[PERF:gemini] Calling Gemini API (model: ${currentModelId}, content-type: ${extraction.type})...`);
+      result = await model.generateContent({ contents: [{ role: "user", parts: requestParts }] });
+      t_gs4_geminiCallDone = performance.now();
+      tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
+      console.log(`[PERF:gemini] Gemini API responded: ${((t_gs4_geminiCallDone - t_gs3_geminiCallStart) / 1000).toFixed(3)}s | tokens used: ${tokensUsed}`);
+      break; // success
+    } catch (err) {
+      const status = (err as Record<string, unknown>)?.status as number | undefined;
+      if ((status === 503 || status === 429) && currentModelId !== fallbackModelId) {
+        console.warn(`[geminiService] ${currentModelId} returned ${status}, retrying with ${fallbackModelId}…`);
+        continue;
+      }
+      throw err; // non-retryable or already on fallback
+    }
+  }
+
+  if (!result) {
+    throw new Error("AI is currently overloaded. Please try again in a moment.");
+  }
 
   const responseText = result.response.text().trim();
 

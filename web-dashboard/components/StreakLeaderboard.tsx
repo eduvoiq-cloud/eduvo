@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { getToken } from '@/lib/session';
+import { assignmentsApi, TeacherAssignment } from '@/lib/api';
 import PageHeader from '@/components/PageHeader';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
@@ -138,6 +139,9 @@ export default function StreakLeaderboard({ mode }: Props) {
   const [filterClass, setFilterClass] = useState('');
   const [filterSection, setFilterSection] = useState('');
 
+  // Teacher's assigned classes (teacher mode only)
+  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
+
   // Data
   const [schoolData, setSchoolData] = useState<SchoolLeaderboard | null>(null);
   const [singleData, setSingleData] = useState<LeaderboardEntry[] | null>(null);
@@ -198,6 +202,23 @@ export default function StreakLeaderboard({ mode }: Props) {
       fetchSchoolLeaderboard();
     }
   }, [mode, fetchSchoolLeaderboard]);
+
+  // ── Fetch teacher's assignments (teacher mode only) ────────────────────────
+  useEffect(() => {
+    if (mode !== 'teacher') return;
+    const token = getToken();
+    if (!token || !user?.school_id) return;
+    assignmentsApi
+      .list(token, user.school_id)
+      .then((res) => setAssignments(res.data.filter((a) => a.teacher_id === user.id)))
+      .catch(() => {});
+  }, [mode, user]);
+
+  // ── Derived: teacher's own classes & sections ────────────────────────────
+  const myClasses = [...new Set(assignments.map((a) => a.class_name))].sort();
+  const sectionsForClass = [...new Set(
+    assignments.filter((a) => a.class_name === filterClass).map((a) => a.section)
+  )].sort();
 
   // ── Derived: sorted class keys for admin view ─────────────────────────────
   const sortedClassKeys = schoolData
@@ -267,20 +288,34 @@ export default function StreakLeaderboard({ mode }: Props) {
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
           <p className="text-sm font-semibold text-gray-700 mb-4">Select Class & Section</p>
           <div className="flex flex-wrap gap-3">
-            <input
-              type="text"
-              placeholder="Class (e.g. 7)"
+            <select
               value={filterClass}
-              onChange={(e) => setFilterClass(e.target.value)}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-32 focus:outline-none focus:ring-2 focus:ring-orange-400"
-            />
-            <input
-              type="text"
-              placeholder="Section (e.g. A)"
+              onChange={(e) => {
+                setFilterClass(e.target.value);
+                setFilterSection('');
+                setSingleData(null);
+              }}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-40 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white"
+            >
+              <option value="">Select Class…</option>
+              {myClasses.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <select
               value={filterSection}
-              onChange={(e) => setFilterSection(e.target.value.toUpperCase())}
-              className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-32 focus:outline-none focus:ring-2 focus:ring-orange-400"
-            />
+              onChange={(e) => {
+                setFilterSection(e.target.value);
+                setSingleData(null);
+              }}
+              disabled={!filterClass}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-40 focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">Select Section…</option>
+              {sectionsForClass.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
             <button
               onClick={() => fetchClassLeaderboard(filterClass, filterSection)}
               disabled={!filterClass || !filterSection || loading}
