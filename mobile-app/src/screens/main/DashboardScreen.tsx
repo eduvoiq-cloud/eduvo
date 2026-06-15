@@ -349,9 +349,14 @@ export default function DashboardScreen() {
       const homework: HomeworkSummary = { pendingCount };
 
       // Recent mark
+      // API wraps response as { success, data: { data: [...], total, ... } }
+      // so the array lives at .data.data.data
       let recentMark: RecentMark | null = null;
       if (marksRes.status === 'fulfilled') {
-        const marks: any[] = marksRes.value.data.data ?? [];
+        const marksPayload = marksRes.value.data.data;
+        const marks: any[] = Array.isArray(marksPayload)
+          ? marksPayload
+          : (marksPayload?.data ?? []);
         if (marks.length > 0) {
           const latest = marks[0];
           recentMark = {
@@ -380,9 +385,14 @@ export default function DashboardScreen() {
       }
 
       // Notification badge count — only truly unread notifications
+      // API wraps as { success, data: { data: [...], total, unread_count } }
       if (notifCountRes.status === 'fulfilled') {
-        const notifs: any[] = notifCountRes.value.data.data ?? [];
-        setNotifCount(notifs.length);
+        const notifPayload = notifCountRes.value.data.data;
+        // Prefer the server's unread_count; fall back to array length
+        const unreadCount: number =
+          notifPayload?.unread_count ??
+          (Array.isArray(notifPayload) ? notifPayload.length : (notifPayload?.data?.length ?? 0));
+        setNotifCount(unreadCount);
       }
 
       setData({ attendance, homework, recentMark, announcements });    } catch (err) {
@@ -431,8 +441,11 @@ export default function DashboardScreen() {
         try {
           // Unread notifications
           const notifRes = await apiClient.get('/api/notifications', { params: { unread_only: 'true' } });
-          const notifs: any[] = notifRes.data.data ?? [];
-          setNotifCount(notifs.length);
+          const notifPayload = notifRes.data.data;
+          const unreadCount: number =
+            notifPayload?.unread_count ??
+            (Array.isArray(notifPayload) ? notifPayload.length : (notifPayload?.data?.length ?? 0));
+          setNotifCount(unreadCount);
 
           // Unseen announcements — count those newer than last Notifications screen visit
           if (data?.announcements) {

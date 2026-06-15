@@ -1008,14 +1008,23 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
   if (updateErr) { sendError(res, `Failed to finalise submission: ${updateErr.message}`, 500); return; }
 
   // ── Auto-write MCQ score into marks table so it appears in View Marks ──────
-  // Fetch test metadata needed for the marks record (subject, term, school_id, class)
+  // Fetch test metadata + join subjects to get the subject name (tests store subject_id, not name)
   const { data: testMeta } = await supabaseAdmin
     .from('tests')
-    .select('subject, term, school_id, class, title, exam_type')
+    .select('subject_id, term, school_id, class, title, exam_type, subjects(name)')
     .eq('id', attempt.test_id)
     .single();
 
-  if (testMeta && totalMcqMarks > 0) {
+  // Resolve subject name from the join
+  const subjectName: string | null = (() => {
+    if (!testMeta) return null;
+    const subj = (testMeta as Record<string, unknown>).subjects;
+    if (Array.isArray(subj)) return (subj[0] as { name?: string })?.name ?? null;
+    if (subj && typeof subj === 'object') return (subj as { name?: string }).name ?? null;
+    return null;
+  })();
+
+  if (testMeta && subjectName && totalMcqMarks > 0) {
     // Upsert: if a marks record for this attempt already exists, update it;
     // otherwise insert. We use a unique note tag to identify auto-generated records.
     const noteTag = `auto:attempt:${attempt_id}`;
@@ -1043,7 +1052,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
         .from('marks')
         .insert({
           student_id:  req.student!.id,
-          subject:     testMeta.subject,
+          subject:     subjectName,
           score:       mcqScore,
           max_score:   totalMcqMarks,
           term:        normaliseTerm(testMeta.term) ?? testMeta.term,
