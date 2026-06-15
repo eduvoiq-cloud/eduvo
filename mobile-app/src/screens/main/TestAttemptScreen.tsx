@@ -135,45 +135,66 @@ async function clearProgress(testId: string): Promise<void> {
 
 // ── Timer hook ────────────────────────────────────────────────────────────────
 
+// ── Timer hook ────────────────────────────────────────────────────────────────
+//
+// Design rules:
+//   1. Starts as null (no timer running).
+//   2. Call setSecondsLeft(N) where N > 0 to start the countdown.
+//   3. onExpire fires only after the interval ticks secondsLeft down to 0 —
+//      never on the initial setSecondsLeft call.
+//   4. The interval is created ONCE per "start" (when setSecondsLeft is called
+//      with a positive number). It never re-creates on each state change —
+//      this was the root cause of the instant-auto-submit bug where dozens of
+//      intervals were stacking up and racing each other to zero.
+//   5. onExpireRef keeps the callback fresh without restarting the interval.
+
 function useCountdown(
   _initialSeconds: number | null,
   onExpire: () => void
-): { secondsLeft: number | null; setSecondsLeft: React.Dispatch<React.SetStateAction<number | null>> } {
-  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+): { secondsLeft: number | null; setSecondsLeft: (n: number | null) => void } {
+  const [secondsLeft, setSecondsLeftState] = useState<number | null>(null);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
-  // Track whether the timer has actually started ticking so we never fire
-  // onExpire the instant secondsLeft is first set (e.g. to 0 due to a stale
-  // started_at on the server).  onExpire is only called after at least one
-  // tick has elapsed.
-  const hasTickedRef = useRef(false);
 
-  useEffect(() => {
-    // No timer active
-    if (secondsLeft === null) {
-      hasTickedRef.current = false;
-      return;
+  // Holds the active interval ID so we can clear it imperatively.
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopInterval = useCallback(() => {
+    if (intervalRef.current !== null) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
+  }, []);
 
-    // Already expired — only auto-submit if the timer was already running
-    if (secondsLeft <= 0) {
-      if (hasTickedRef.current) {
-        onExpireRef.current();
+  // Public setter — clears any existing interval, then starts a fresh one if
+  // given a positive number. Calling with null or 0 just stops the timer.
+  const setSecondsLeft = useCallback(
+    (n: number | null) => {
+      stopInterval();
+      if (n === null || n <= 0) {
+        setSecondsLeftState(null);
+        return;
       }
-      return;
-    }
+      setSecondsLeftState(n);
+      // One interval, created here imperatively. Each tick decrements by 1.
+      // When it reaches 0 we fire onExpire and stop.
+      intervalRef.current = setInterval(() => {
+        setSecondsLeftState((prev) => {
+          if (prev === null || prev <= 1) {
+            stopInterval();
+            // Schedule onExpire outside setState to avoid React warnings.
+            setTimeout(() => onExpireRef.current(), 0);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    },
+    [stopInterval],
+  );
 
-    const id = setInterval(() => {
-      hasTickedRef.current = true;
-      setSecondsLeft((prev) => {
-        if (prev === null) return null;
-        if (prev <= 1) return 0;
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(id);
-  }, [secondsLeft]);
+  // Clean up on unmount.
+  useEffect(() => () => stopInterval(), [stopInterval]);
 
   return { secondsLeft, setSecondsLeft };
 }
