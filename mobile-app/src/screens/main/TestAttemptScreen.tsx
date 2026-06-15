@@ -142,18 +142,29 @@ function useCountdown(
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
+  // Track whether the timer has actually started ticking so we never fire
+  // onExpire the instant secondsLeft is first set (e.g. to 0 due to a stale
+  // started_at on the server).  onExpire is only called after at least one
+  // tick has elapsed.
+  const hasTickedRef = useRef(false);
 
   useEffect(() => {
     // No timer active
-    if (secondsLeft === null) return;
+    if (secondsLeft === null) {
+      hasTickedRef.current = false;
+      return;
+    }
 
-    // Already expired
+    // Already expired — only auto-submit if the timer was already running
     if (secondsLeft <= 0) {
-      onExpireRef.current();
+      if (hasTickedRef.current) {
+        onExpireRef.current();
+      }
       return;
     }
 
     const id = setInterval(() => {
+      hasTickedRef.current = true;
       setSecondsLeft((prev) => {
         if (prev === null) return null;
         if (prev <= 1) return 0;
@@ -1005,7 +1016,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         // This corrects any time the student spent outside the app.
         if (phaseRef.current === 'active' && startedAtRef.current && timeLimitSecondsRef.current !== null) {
           const elapsed = Math.floor((Date.now() - new Date(startedAtRef.current).getTime()) / 1000);
-          const remaining = Math.max(0, timeLimitSecondsRef.current - elapsed);
+          const remaining = Math.max(1, timeLimitSecondsRef.current - elapsed);
           setSecondsLeft(remaining);
           // If time has already expired while in background, the countdown hook will
           // fire onExpire (→ handleSubmit) as soon as secondsLeft reaches 0.
@@ -1071,9 +1082,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         return;
       }
 
-      // Not completed — check for saved local progress (in-progress attempt)
-      const saved = await loadProgress(test.id);
-      if (saved) setHasActiveAttempt(true);
+      // Not completed — no resume logic needed (server always resets to fresh start)
     };
 
     void checkAttemptStatus();
@@ -1103,19 +1112,21 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       // Initialise answer slots (one per question, empty)
       setAnswers(qs.map((q) => ({ question_id: q.id })));
 
-      // Restore saved progress if resuming (app backgrounded or server-side active attempt)
-      const saved = await loadProgress(test.id);
-      if (saved && saved.attempt_id === payload.attempt_id) {
-        setAnswers(saved.answers);
-        setCurrentIndex(saved.currentIndex);
-      }
+      // The server always resets the attempt to a fresh start (resumed is always false).
+      // Clear any stale local progress so we never restore old answers from a previous session.
+      await clearProgress(test.id);
 
       // Timer is ALWAYS computed from started_at — never trust saved secondsLeft.
       // This means time spent in the background or outside the app is always deducted.
       if (hasTimeLimit) {
         const elapsed = Math.floor((Date.now() - new Date(payload.started_at).getTime()) / 1000);
-        const remaining = Math.max(0, payload.time_limit_minutes * 60 - elapsed);
-        setSecondsLeft(remaining);
+        const remaining = payload.time_limit_minutes * 60 - elapsed;
+        // Guard: if time already ran out, set to 1 so the student at least sees the
+        // active screen for a moment, then the normal countdown tick will bring it
+        // to 0 and trigger the regular auto-submit path (hasTickedRef = true).
+        // This prevents the instant-submit bug where setSecondsLeft(0) fired
+        // onExpire before a single tick had elapsed.
+        setSecondsLeft(Math.max(1, remaining));
       }
 
       setPhase('active');
