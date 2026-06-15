@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -475,14 +476,16 @@ export default function AppNavigator({ navigationRef }: AppNavigatorProps) {
   const isParent = linkedChildren.length > 0;
 
   return (
-    <NavigationContainer ref={navigationRef}>
-      {isLoggedIn && subscriptionExpired
-        ? <SubscriptionExpiredScreen />
-        : isLoggedIn && isParent
-        ? <ParentNavigator />
-        : isLoggedIn
-        ? <MainNavigator />
-        : <AuthNavigator />}
-    </NavigationContainer>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <NavigationContainer ref={navigationRef}>
+        {isLoggedIn && subscriptionExpired
+          ? <SubscriptionExpiredScreen />
+          : isLoggedIn && isParent
+          ? <ParentNavigator />
+          : isLoggedIn
+          ? <MainNavigator />
+          : <AuthNavigator />}
+      </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }

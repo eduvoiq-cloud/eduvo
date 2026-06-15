@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { isRunningInExpoGo } from 'expo';
-import * as Notifications from 'expo-notifications';
+// expo-notifications is NOT imported here — it is lazy-loaded in notifications.ts
+// to avoid crashing in Expo Go (remote push removed since SDK 53).
 import * as Sentry from '@sentry/react-native';
 import { NavigationContainerRef } from '@react-navigation/native';
 import AppNavigator from './src/navigation/AppNavigator';
@@ -55,8 +56,8 @@ function App() {
   const isLoggedIn = useAuthStore((state) => state.isLoggedIn);
   const student = useAuthStore((state) => state.student);
   const [hydrated, setHydrated] = useState(false);
-  const notificationListener = useRef<Notifications.EventSubscription | null>(null);
-  const responseListener = useRef<Notifications.EventSubscription | null>(null);
+  const notificationListener = useRef<{ remove: () => void } | null>(null);
+  const responseListener = useRef<{ remove: () => void } | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const navRef = useRef<NavigationContainerRef<any>>(null);
 
@@ -91,11 +92,14 @@ function App() {
       });
     }
 
-    // Listen for notifications received while app is foregrounded (shows in-app Alert)
-    notificationListener.current = addNotificationReceivedListener();
+    // Push notification listeners are not supported in Expo Go since SDK 53.
+    if (!isRunningInExpoGo()) {
+      // Listen for notifications received while app is foregrounded (shows in-app Alert)
+      notificationListener.current = addNotificationReceivedListener();
 
-    // Listen for user tapping a notification (navigates to Notifications screen)
-    responseListener.current = addNotificationResponseListener();
+      // Listen for user tapping a notification (navigates to Notifications screen)
+      responseListener.current = addNotificationResponseListener();
+    }
 
     return () => {
       notificationListener.current?.remove();
