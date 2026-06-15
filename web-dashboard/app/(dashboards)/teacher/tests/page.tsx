@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import {
   assignmentsApi, testsApi,
@@ -64,6 +65,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 export default function TestsPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [tests, setTests] = useState<Test[]>([]);
   const [loading, setLoading] = useState(true);
@@ -408,7 +410,7 @@ export default function TestsPage() {
         description="Create and manage MCQ + theory tests for your classes"
         action={
           <button
-            onClick={() => { setTestForm(EMPTY_TEST); setQuestions([]); setCurrentQ({ ...EMPTY_MCQ }); setFormError(''); setShowCreate(true); }}
+            onClick={() => router.push('/teacher/tests/create')}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
