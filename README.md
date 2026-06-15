@@ -6,6 +6,15 @@ A full-stack school management system built with:
 - **Web Dashboard**: Next.js 16 + TypeScript + Tailwind CSS v4
 - **Database**: Supabase (PostgreSQL + Auth)
 
+## Key Docs
+
+- `ARCHITECTURE.md` — system boundaries, auth model, and major design decisions
+- `TESTING_STRATEGY.md` — automated checks, risk areas, and release verification
+- `CONTRIBUTING.md` — safe change guidelines and local workflow
+- `DEMO_CHECKLIST.md` — presentation-safe verification and demo flow
+- `PRODUCTION_AUDIT_REPORT.md` — production readiness findings and fixes
+- `RESTORE_RUNBOOK.md` — restore and recovery procedures
+
 ---
 
 ## Project Structure

@@ -5,6 +5,7 @@ prod-test.txt
 *-test.txt
 test-output*.json
 test-output*.txt
+*.log
 
 # ── Local environment overrides ───────────────────────────────────────────────
 .env
@@ -12,6 +13,19 @@ test-output*.txt
 .env.local
 .env.*.local
 
+# ── Monorepo dependency/build output ──────────────────────────────────────────
+node_modules/
+dist/
+build/
+coverage/
+.next/
+out/
+.expo/
+web-build/
+*.tsbuildinfo
+
 # ── OS / Editor ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+.idea/
+.vscode-test/
