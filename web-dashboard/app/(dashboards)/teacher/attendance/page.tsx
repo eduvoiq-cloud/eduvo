@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Image from 'next/image';
 import { useAuth } from '@/context/AuthContext';
 import { assignmentsApi, type TeacherAssignment } from '@/lib/api';
 import { getToken } from '@/lib/session';
@@ -477,9 +478,11 @@ export default function AttendancePage() {
 
                   {/* Avatar */}
                   {s.photo_url ? (
-                    <img
+                    <Image
                       src={s.photo_url}
                       alt={s.name}
+                      width={48}
+                      height={48}
                       className="w-12 h-12 rounded-full object-cover"
                     />
                   ) : (

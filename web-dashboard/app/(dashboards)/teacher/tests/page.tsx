@@ -59,7 +59,6 @@ const EXAM_TYPES_LIST = [
   { value: 'project', label: 'Project' },
 ] as const;
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -986,7 +985,7 @@ export default function TestsPage() {
 
                   {ans.question_type === 'mcq' ? (
                     <div className="grid grid-cols-2 gap-1.5">
-                      {(['a', 'b', 'c', 'd'] as const).map((letter, oi) => {
+                      {(['a', 'b', 'c', 'd'] as const).map((letter) => {
                         const optKey = `option_${letter}` as keyof TestAnswerDetail;
                         const optText = ans[optKey] as string | null;
                         if (!optText) return null;
@@ -1059,7 +1058,7 @@ export default function TestsPage() {
           <p className="text-sm text-gray-600">
             Select students to <strong>block</strong> from this test. Blocked students will see the test
             with a 🔒 lock icon and the message{' '}
-            <span className="italic">"Pay your fees to unlock this test"</span>.
+            <span className="italic">&quot;Pay your fees to unlock this test&quot;</span>.
           </p>
 
           {restrictionsError && (

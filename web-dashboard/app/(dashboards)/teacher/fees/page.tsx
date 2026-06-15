@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { feesApi, settingsApi, notificationsApi, type FeeRecord } from '@/lib/api';
+import { feesApi, settingsApi, type FeeRecord } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 

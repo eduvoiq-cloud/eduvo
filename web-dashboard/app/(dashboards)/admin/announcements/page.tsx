@@ -60,7 +60,7 @@ const AUDIENCE_LABELS: Record<AudienceType, string> = {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AnnouncementsPage() {
-  const { user } = useAuth();
+  useAuth(); // keep context subscription for future use
 
   const [form, setForm] = useState<ComposeForm>(EMPTY_FORM);
   const [sending, setSending] = useState(false);

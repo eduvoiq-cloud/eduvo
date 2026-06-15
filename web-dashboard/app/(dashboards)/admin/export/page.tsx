@@ -61,7 +61,7 @@ export default function ExportPage() {
 
           {/* What's included */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-900 mb-3">What's included</h2>
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">What&apos;s included</h2>
             <ul className="space-y-2">
               {[
                 { file: 'students.csv', desc: 'All student records (name, class, section, roll number)' },

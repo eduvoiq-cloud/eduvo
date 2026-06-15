@@ -1461,7 +1461,7 @@ export default function CreateTestPage() {
                 <div>
                   <h3 className="text-sm font-semibold text-gray-900">Restrict Test Access</h3>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Block specific students from taking this test. They will see a lock icon with a "Pay your fees to unlock" message.
+                    Block specific students from taking this test. They will see a lock icon with a &quot;Pay your fees to unlock&quot; message.
                   </p>
                 </div>
                 <button

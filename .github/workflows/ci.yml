@@ -1,0 +1,88 @@
+name: CI — Build & Lint
+
+# Runs on every push and every pull request to any branch.
+# Catches TypeScript errors and lint failures before they reach main.
+on:
+  push:
+  pull_request:
+
+jobs:
+  # ── Backend: TypeScript type-check ─────────────────────────────────────────
+  backend:
+    name: Backend — tsc
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend-api/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: backend-api
+
+      - name: TypeScript type-check
+        run: npx tsc --noEmit
+        working-directory: backend-api
+
+  # ── Web dashboard: lint + build ─────────────────────────────────────────────
+  web:
+    name: Web — lint + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Build needs a real API URL env var or Next.js will complain.
+    # We use a placeholder — it won't be called during build.
+    env:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web-dashboard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web-dashboard
+
+      - name: Lint
+        run: npm run lint
+        working-directory: web-dashboard
+
+      - name: Build
+        run: npm run build
+        working-directory: web-dashboard
+
+  # ── Mobile: TypeScript type-check ──────────────────────────────────────────
+  mobile:
+    name: Mobile — tsc
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile-app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: mobile-app
+
+      - name: TypeScript type-check
+        run: npx tsc --noEmit
+        working-directory: mobile-app

@@ -27,12 +27,13 @@ jobs:
       - name: Dump database
         env:
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
         run: |
           TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
           FILENAME="eduvo-backup-${TIMESTAMP}.sql.gz"
 
           pg_dump \
-            --host=db.gkbqltztadukfbknnqqd.supabase.co \
+            --host="${SUPABASE_DB_HOST}" \
             --port=5432 \
             --username=postgres \
             --dbname=postgres \
@@ -65,4 +66,4 @@ jobs:
           echo "To restore:"
           echo "  1. Download the artifact from GitHub Actions"
           echo "  2. gunzip eduvo-backup-*.sql.gz"
-          echo "  3. psql -h db.gkbqltztadukfbknnqqd.supabase.co -U postgres -d postgres < eduvo-backup-*.sql"
+          echo "  3. psql -h \$SUPABASE_DB_HOST -U postgres -d postgres < eduvo-backup-*.sql"

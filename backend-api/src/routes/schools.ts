@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
+import { schoolListRateLimit } from '../middleware/rateLimit';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 
@@ -28,9 +29,9 @@ const updateSchoolSchema = createSchoolSchema.partial().extend({
 /**
  * GET /api/schools/list — public, no auth required.
  * Used by the school selector on the login page.
- * Returns only id and name.
+ * Returns only id and name. Rate-limited to 30 req/min per IP to prevent scraping.
  */
-router.get('/list', async (_req: Request, res: Response) => {
+router.get('/list', schoolListRateLimit, async (_req: Request, res: Response) => {
   const { data, error } = await supabaseAdmin
     .from('schools')
     .select('id, name')

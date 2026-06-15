@@ -183,6 +183,22 @@ export default function NotificationsScreen() {
     }
   }, []);
 
+  // Auto-mark all unread notifications as read when screen opens
+  useEffect(() => {
+    if (loading) return; // wait until notifications are loaded
+    const unread = notifications.filter((n) => !n.is_read);
+    if (unread.length === 0) return;
+
+    // Optimistically update UI
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+
+    // Fire-and-forget to backend
+    apiClient.put('/api/notifications/read-all').catch(() => {
+      // If it fails, silently ignore — the badge will re-sync on next focus
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const onRefresh = useCallback(() => {
@@ -190,7 +206,7 @@ export default function NotificationsScreen() {
     fetchAll();
   }, [fetchAll]);
 
-  // ── Mark single notification read ───────────────────────────────────────────
+  // ── Mark single notification read (kept for manual tap, though auto-read covers most cases) ──
 
   const handleMarkRead = useCallback(async (id: string) => {
     setNotifications((prev) =>

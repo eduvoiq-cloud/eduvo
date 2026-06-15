@@ -129,6 +129,24 @@ export const testSubmitRateLimit = rateLimit({
 });
 
 /**
+ * School list rate limit — max 30 per minute per IP.
+ * The /api/schools/list endpoint is public (used on the login page) so we apply
+ * a dedicated, tighter limit to prevent scraping of the school directory.
+ */
+export const schoolListRateLimit = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30,
+  keyGenerator: (req: Request) => `school_list:${req.ip ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  message: {
+    success: false,
+    message: 'Too many requests. Please try again later.',
+  },
+});
+
+/**
  * Legacy alias kept for any routes that still import authRateLimit.
  * Points to loginRateLimit behaviour (10/hour per IP).
  * @deprecated Use loginRateLimit or registerRateLimit instead.

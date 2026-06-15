@@ -16,12 +16,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAuth } from '@/context/AuthContext';
 import { teacherPremiumApi, type TeacherPremiumStudent } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -133,8 +131,6 @@ function TableSkeleton() {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function TeacherPremiumPage() {
-  const { user } = useAuth();
-
   const [rows, setRows]         = useState<StudentRow[]>([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState<string | null>(null);
@@ -594,7 +590,7 @@ export default function TeacherPremiumPage() {
           <span>⚠</span>
           <span>
             <strong>{stats.expiring}</strong> subscription{stats.expiring !== 1 ? 's' : ''} expiring within 5 days.
-            Use the <strong>"Send Renewal Reminder"</strong> button at the top to notify parents.
+            Use the <strong>&quot;Send Renewal Reminder&quot;</strong> button at the top to notify parents.
           </span>
         </p>
       )}

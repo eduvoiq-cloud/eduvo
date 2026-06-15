@@ -20,7 +20,9 @@ import apiClient from './src/api/client';
 // Must be called before any other app code.
 Sentry.init({
   dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
-  sendDefaultPii: true,
+  // Do NOT send PII (device IDs, IP, user info) — students are minors and
+  // this app handles educational data subject to GDPR/FERPA concerns.
+  sendDefaultPii: false,
 
   // Capture all transactions in dev; lower in production to manage quota
   tracesSampleRate: __DEV__ ? 1.0 : 0.1,

@@ -65,6 +65,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Hold the refresh timer so we can clear it on logout
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Hold a stable ref to scheduleRefresh so the recursive call inside
+  // setTimeout always uses the latest version without needing it in deps.
+  const scheduleRefreshRef = useRef<(expiresAt: number, refreshToken: string, user: UserProfile) => void>(null!);
 
   /**
    * Schedule a token refresh to fire REFRESH_BUFFER_MS before the token expires.
@@ -86,7 +89,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { token: newToken, refresh_token: newRefreshToken, expires_at: newExpiresAt } = res.data;
         saveSession(newToken, user, newRefreshToken, newExpiresAt);
         setState((s) => ({ ...s, token: newToken }));
-        scheduleRefresh(newExpiresAt, newRefreshToken, user);
+        // Use the ref so this recursive call doesn't need scheduleRefresh in deps
+        scheduleRefreshRef.current(newExpiresAt, newRefreshToken, user);
       } catch {
         // Refresh failed — session is dead, force re-login
         clearSession();
@@ -95,6 +99,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }, delayMs);
   }, [router]);
+
+  // Keep the ref in sync with the latest scheduleRefresh instance.
+  // useLayoutEffect runs synchronously after render so the ref is always
+  // current before any effect callbacks can fire.
+  React.useLayoutEffect(() => {
+    scheduleRefreshRef.current = scheduleRefresh;
+  });
 
   // Rehydrate session from localStorage on mount, then verify + refresh
   // profile from the server. This ensures stale cached data (e.g. a null

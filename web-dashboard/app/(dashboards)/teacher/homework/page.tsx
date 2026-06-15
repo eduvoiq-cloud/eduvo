@@ -616,7 +616,7 @@ function HomeworkFormModal({
     }));
   }, [form.subject_id, subjects]);
 
-  const setAI = (patch: Partial<AISettings>) =>
+  const _setAI = (patch: Partial<AISettings>) =>
     setForm((f) => ({ ...f, ai_settings: { ...f.ai_settings, ...patch } }));
 
   function handleLoadTemplate(t: HWTemplate) {
@@ -889,7 +889,7 @@ function HomeworkFormModal({
             <div className="mt-4 space-y-4">
               {/* Reference solution upload */}
               <div className="p-3 bg-violet-50 border border-violet-100 rounded-xl">
-                <p className="text-xs font-semibold text-violet-800 mb-1">Teacher's Reference Solution / Method (optional)</p>
+                <p className="text-xs font-semibold text-violet-800 mb-1">Teacher&apos;s Reference Solution / Method (optional)</p>
                 <p className="text-xs text-violet-600 mb-3">
                   Upload your solved example, answer key, or step-by-step method. AI will compare student submissions against this when grading.
                 </p>

@@ -153,11 +153,16 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 ### Auth
 | Method | Path | Roles | Description |
 |---|---|---|---|
-| POST | `/api/auth/login` | Public | Email + password login |
+| POST | `/api/auth/login/staff` | Public | Email + password login (staff) |
+| POST | `/api/auth/login/student` | Public | Phone + password login (student/parent) |
 | POST | `/api/auth/logout` | Any | Invalidate session |
 | GET | `/api/auth/me` | Any | Current user profile |
-| POST | `/api/auth/users` | superadmin, schooladmin | Create user account |
-| POST | `/api/auth/register-parent` | Public (invite only) | Parent self-registration |
+| POST | `/api/auth/refresh` | Public | Exchange refresh token for new access token |
+| POST | `/api/auth/staff/change-password` | Staff | Change own password (clears must_reset_password) |
+| POST | `/api/auth/staff/forgot-password` | Public | Send password-reset email |
+| POST | `/api/auth/staff/reset-password` | Public | Set new password via reset token |
+| POST | `/api/auth/student/change-password` | Student | Student changes own password |
+| POST | `/api/auth/student/reset-password` | schooladmin | Admin resets student to default password |
 
 ### Schools
 | Method | Path | Roles |
@@ -174,12 +179,12 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 | DELETE | `/api/users/:id` | superadmin, schooladmin |
 
 ### Students
-| Method | Path | Roles |
-|---|---|---|
-| GET | `/api/students?school_id=` | superadmin, schooladmin, teacher |
-| POST | `/api/students` | superadmin, schooladmin, teacher |
-| PATCH | `/api/students/:id` | superadmin, schooladmin, teacher |
-| DELETE | `/api/students/:id` | superadmin, schooladmin |
+| Method | Path | Roles | Notes |
+|---|---|---|---|
+| GET | `/api/students?class_name=&section=` | superadmin, schooladmin, teacher | Teachers **must** pass class_name + section; verified against their assignments |
+| POST | `/api/students` | superadmin, schooladmin, teacher | |
+| PATCH | `/api/students/:id` | superadmin, schooladmin, teacher | |
+| DELETE | `/api/students/:id` | superadmin, schooladmin | Soft-delete |
 
 ### Assignments
 | Method | Path | Roles |
@@ -261,11 +266,11 @@ NEXT_PUBLIC_API_URL=http://localhost:3001
 | GET | `/api/admin/export` | schooladmin |
 
 ### Gate (Public)
-| Method | Path | Roles |
+| Method | Path | Notes |
 |---|---|---|
-| GET | `/api/schools/list` | Public |
-| POST | `/api/attendance/rfid` | Public (rate-limited) |
-| GET | `/api/health` | Public |
+| GET | `/api/schools/list` | Returns id + name only. Rate-limited 30 req/min. |
+| GET | `/api/health` | Health check |
+| GET | `/api/api/health` | Alias for gate page compat |
 
 ---
 

@@ -46,10 +46,6 @@ function formatDate(iso: string): string {
   });
 }
 
-function isUpcoming(dateStr: string): boolean {
-  return new Date(dateStr) >= new Date(new Date().toDateString());
-}
-
 const STATUS_CONFIG: Record<
   NonNullable<TestRecord['attempt_status']>,
   { label: string; color: string; bg: string }
@@ -64,14 +60,12 @@ const STATUS_CONFIG: Record<
 function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) {
   const status = test.attempt_status ?? 'not_started';
   const config = STATUS_CONFIG[status];
-  const upcoming = isUpcoming(test.date);
   const isFeeRestricted = test.is_restricted === true;
 
   return (
     <TouchableOpacity
       style={[
         styles.card,
-        upcoming && !isFeeRestricted && styles.cardUpcoming,
         isFeeRestricted && styles.cardRestricted,
       ]}
       onPress={onPress}
@@ -82,15 +76,6 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
       <View style={styles.cardHeader}>
         <View style={styles.cardLeft}>
           <Text style={styles.testTitle} numberOfLines={2}>{test.title}</Text>
-          {isFeeRestricted ? (
-            <View style={[styles.upcomingBadge, { backgroundColor: '#FEE2E2' }]}>
-              <Text style={[styles.upcomingText, { color: '#DC2626' }]}>🔒 Fee Required</Text>
-            </View>
-          ) : upcoming ? (
-            <View style={styles.upcomingBadge}>
-              <Text style={styles.upcomingText}>Upcoming</Text>
-            </View>
-          ) : null}
         </View>
         <View style={[styles.statusBadge, { backgroundColor: isFeeRestricted ? '#FEE2E2' : config.bg }]}>
           <Text style={[styles.statusText, { color: isFeeRestricted ? '#DC2626' : config.color }]}>
@@ -151,6 +136,43 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
   );
 }
 
+// ── Tab definitions ───────────────────────────────────────────────────────────
+
+type TabKey = 'not_attempted' | 'attempted' | 'upcoming';
+
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'not_attempted', label: 'Not Attempted' },
+  { key: 'attempted',     label: 'Attempted' },
+  { key: 'upcoming',      label: 'Upcoming' },
+];
+
+function filterTests(tests: TestRecord[], tab: TabKey): TestRecord[] {
+  const now = new Date();
+  // Strip time so "today" counts as today not upcoming
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  return tests.filter((t) => {
+    const testDate = new Date(t.date);
+    const testDay = new Date(testDate.getFullYear(), testDate.getMonth(), testDate.getDate());
+    const isFuture = testDay > todayStart;
+    const status = t.attempt_status ?? 'not_started';
+
+    switch (tab) {
+      case 'upcoming':
+        // Future-dated tests that haven't been completed
+        return isFuture && status !== 'completed';
+      case 'attempted':
+        // in_progress OR completed (student has engaged with this test)
+        return status === 'in_progress' || status === 'completed';
+      case 'not_attempted':
+        // not_started and NOT a future test (past/today tests student hasn't touched)
+        return status === 'not_started' && !isFuture;
+      default:
+        return true;
+    }
+  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function TestsScreen() {
@@ -158,6 +180,7 @@ export default function TestsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabKey>('attempted');
 
   const navigation = useNavigation<StackNavigationProp<MainStackParamList>>();
 
@@ -210,50 +233,93 @@ export default function TestsScreen() {
     );
   }
 
-  const tests = testsData?.tests ?? [];
-  const sorted = [...tests].sort((a, b) => {
-    const aUp = isUpcoming(a.date);
-    const bUp = isUpcoming(b.date);
-    if (aUp && !bUp) return -1;
-    if (!aUp && bUp) return 1;
-    return new Date(b.date).getTime() - new Date(a.date).getTime();
-  });
+  const allTests = testsData?.tests ?? [];
+  const tabCounts: Record<TabKey, number> = {
+    not_attempted: filterTests(allTests, 'not_attempted').length,
+    attempted:     filterTests(allTests, 'attempted').length,
+    upcoming:      filterTests(allTests, 'upcoming').length,
+  };
+  const visibleTests = filterTests(allTests, activeTab);
 
   return (
     <>
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
-      <FlatList
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        data={sorted}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1D4ED8" />
-        }
-        ListHeaderComponent={<Text style={styles.title}>Tests</Text>}
-        renderItem={({ item }) => (
-          <TestCard test={item} onPress={() => handleTestPress(item)} />
-        )}
-        ListEmptyComponent={
-          error ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>⚠️ {error}</Text>
+      <View style={styles.container}>
+        {/* Header */}
+        <View style={styles.headerBox}>
+          <Text style={styles.title}>Tests</Text>
+        </View>
+
+        {/* Tab bar */}
+        <View style={styles.tabBar}>
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.key;
+            const count = tabCounts[tab.key];
+            // Hide "Upcoming" tab when there are no upcoming tests
+            if (tab.key === 'upcoming' && count === 0) return null;
+            return (
               <TouchableOpacity
-                style={styles.retryButton}
-                onPress={() => { setLoading(true); fetchTests(); }}
-                accessibilityRole="button"
+                key={tab.key}
+                style={[styles.tab, isActive && styles.tabActive]}
+                onPress={() => setActiveTab(tab.key)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: isActive }}
+                accessibilityLabel={`${tab.label}, ${count} tests`}
               >
-                <Text style={styles.retryText}>Retry</Text>
+                <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
+                  {tab.label}
+                </Text>
+                {count > 0 && (
+                  <View style={[styles.tabCount, isActive && styles.tabCountActive]}>
+                    <Text style={[styles.tabCountText, isActive && styles.tabCountTextActive]}>
+                      {count}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>📝</Text>
-              <Text style={styles.emptyText}>No tests available right now.</Text>
-            </View>
-          )
-        }
-      />
+            );
+          })}
+        </View>
+
+        {/* List */}
+        <FlatList
+          style={styles.list}
+          contentContainerStyle={styles.content}
+          data={visibleTests}
+          keyExtractor={(item) => item.id}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1D4ED8" />
+          }
+          renderItem={({ item }) => (
+            <TestCard test={item} onPress={() => handleTestPress(item)} />
+          )}
+          ListEmptyComponent={
+            error ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>⚠️ {error}</Text>
+                <TouchableOpacity
+                  style={styles.retryButton}
+                  onPress={() => { setLoading(true); fetchTests(); }}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.retryText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyIcon}>📝</Text>
+                <Text style={styles.emptyText}>
+                  {activeTab === 'not_attempted'
+                    ? 'No pending tests.'
+                    : activeTab === 'upcoming'
+                    ? 'No upcoming tests.'
+                    : 'No attempted tests yet.'}
+                </Text>
+              </View>
+            )
+          }
+        />
+      </View>
     </>
   );
 }
@@ -262,9 +328,58 @@ export default function TestsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
-  content: { padding: 20, paddingBottom: 48 },
+  list: { flex: 1 },
+  content: { padding: 16, paddingBottom: 48 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F9FAFB' },
-  title: { fontSize: 22, fontWeight: '700', color: '#111827', marginBottom: 16 },
+  headerBox: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 12 },
+  title: { fontSize: 22, fontWeight: '700', color: '#111827' },
+
+  // ── Tab bar ────────────────────────────────────────────────────────────────
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    paddingHorizontal: 16,
+  },
+  tab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    marginRight: 4,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: '#1D4ED8',
+  },
+  tabLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  tabLabelActive: {
+    color: '#1D4ED8',
+  },
+  tabCount: {
+    marginLeft: 6,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  tabCountActive: {
+    backgroundColor: '#DBEAFE',
+  },
+  tabCountText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#6B7280',
+  },
+  tabCountTextActive: {
+    color: '#1D4ED8',
+  },
 
   card: {
     backgroundColor: '#FFFFFF',
@@ -277,7 +392,6 @@ const styles = StyleSheet.create({
     elevation: 2,
     overflow: 'hidden',
   },
-  cardUpcoming: { borderLeftWidth: 4, borderLeftColor: '#1D4ED8' },
   cardRestricted: { borderLeftWidth: 4, borderLeftColor: '#DC2626', opacity: 0.9 },
 
   cardHeader: {
@@ -289,15 +403,6 @@ const styles = StyleSheet.create({
   },
   cardLeft: { flex: 1, marginRight: 12 },
   testTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  upcomingBadge: {
-    marginTop: 6,
-    alignSelf: 'flex-start',
-    backgroundColor: '#DBEAFE',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  upcomingText: { fontSize: 11, fontWeight: '600', color: '#1D4ED8' },
   statusBadge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, alignSelf: 'flex-start' },
   statusText: { fontSize: 12, fontWeight: '600' },
 

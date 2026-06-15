@@ -54,7 +54,6 @@ function SchoolsPageInner() {
   const [adminForm, setAdminForm] = useState<AddAdminForm>(EMPTY_ADMIN_FORM);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [showAdminPassword, setShowAdminPassword] = useState(false);
   const [adminCreated, setAdminCreated] = useState<AdminCreatedResult | null>(null);
 
   // Search
@@ -286,7 +285,7 @@ function SchoolsPageInner() {
                         </Link>
                         {/* Create admin */}
                         <button
-                          onClick={() => { setAdminForm(EMPTY_ADMIN_FORM); setFormError(''); setShowAdminPassword(false); setShowAddAdmin(school); }}
+                          onClick={() => { setAdminForm(EMPTY_ADMIN_FORM); setFormError(''); setShowAddAdmin(school); }}
                           className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
                           title="Create school admin"
                         >

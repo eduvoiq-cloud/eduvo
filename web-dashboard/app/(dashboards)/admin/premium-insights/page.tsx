@@ -9,7 +9,6 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAuth } from '@/context/AuthContext';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 
@@ -101,7 +100,6 @@ function InsightsSkeleton() {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function PremiumInsightsPage() {
-  const { user } = useAuth();
 
   // Students with premium
   const [students, setStudents] = useState<StudentSub[]>([]);

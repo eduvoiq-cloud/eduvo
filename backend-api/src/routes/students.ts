@@ -37,6 +37,9 @@ const updateStudentSchema = createStudentSchema.partial();
  *  Supports pagination via ?page=1&limit=50 (default limit 50, max 200).
  *  Returns { data, total, page, limit, total_pages } when paginated.
  *  Pass limit=0 to fetch all (use sparingly — only for internal tooling).
+ *
+ *  Teachers MUST provide ?class_name= and ?section= and must be assigned
+ *  to that class via teacher_assignments. They cannot list all school students.
  */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const school_id = req.query.school_id as string | undefined;
@@ -50,6 +53,31 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
   const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
   // limit=0 means fetch all (no pagination); otherwise clamp to 1–200
   const limit = rawLimit === 0 ? 0 : (isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200));
+
+  // ── Teacher access control ──────────────────────────────────────────────────
+  // Teachers must supply class_name + section and must be assigned to that class.
+  // They cannot list all students in the school — only their assigned class.
+  if (req.user!.role === 'teacher') {
+    if (!class_name || !section) {
+      sendError(res, 'Teachers must provide class_name and section query parameters', 400);
+      return;
+    }
+
+    // Verify teacher is assigned to this class+section
+    const { data: assignment } = await supabaseAdmin
+      .from('teacher_assignments')
+      .select('id')
+      .eq('teacher_id', req.user!.id)
+      .eq('school_id', req.user!.school_id ?? '')
+      .or(`class_name.ilike.${class_name.trim()},class.ilike.${class_name.trim()}`)
+      .ilike('section', section.trim())
+      .limit(1);
+
+    if (!assignment || assignment.length === 0) {
+      sendError(res, 'You are not assigned to this class', 403);
+      return;
+    }
+  }
 
   let query = supabaseAdmin
     .from('students')

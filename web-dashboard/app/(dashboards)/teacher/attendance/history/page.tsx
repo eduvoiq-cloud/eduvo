@@ -407,7 +407,7 @@ export default function TeacherAttendanceHistoryPage() {
       {/* ── Empty / prompt state ─────────────────────────────────────────────── */}
       {!loading && !loaded && !error && (
         <div className="bg-white rounded-xl border border-gray-200 text-center py-16 text-sm text-gray-400">
-          Select a class, section, and month, then click "Load".
+          Select a class, section, and month, then click &quot;Load&quot;.
         </div>
       )}
 

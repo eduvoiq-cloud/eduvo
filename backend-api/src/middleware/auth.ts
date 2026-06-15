@@ -299,7 +299,14 @@ export async function authenticateStudent(
 
 /**
  * Accepts either a staff token OR a student token.
- * Used by /api/auth/me to restore any session.
+ * Enforces the same security gates as `authenticate` and `authenticateStudent`:
+ * - must_reset_password for staff
+ * - is_first_login for students
+ * - subscription check for both
+ * - is_deleted check for staff
+ *
+ * The only paths exempt from the password-reset/first-login gate are the auth
+ * endpoints themselves (/api/auth/me, /api/auth/logout, change-password).
  */
 export async function authenticateAny(
   req: Request,
@@ -326,6 +333,37 @@ export async function authenticateAny(
           .single();
 
         if (!error && student) {
+          // ── School subscription check ───────────────────────────────────
+          const { data: studentSchool } = await supabaseAdmin
+            .from('schools')
+            .select('subscription_status')
+            .eq('id', student.school_id)
+            .single();
+
+          const isSchoolActive = (studentSchool as { subscription_status: boolean } | null)?.subscription_status;
+          if (isSchoolActive === false) {
+            sendError(
+              res,
+              'Your subscription has expired. Please renew your subscription to continue using the service.',
+              402
+            );
+            return;
+          }
+
+          // ── First-login gate ────────────────────────────────────────────
+          if (student.is_first_login === true) {
+            const allowedPaths = [
+              '/api/auth/student/change-password',
+              '/api/auth/me',
+              '/api/auth/logout',
+            ];
+            const isAllowed = allowedPaths.some((p) => req.path === p || req.originalUrl.endsWith(p));
+            if (!isAllowed) {
+              sendError(res, 'You must change your password before accessing this resource.', 403);
+              return;
+            }
+          }
+
           req.student = {
             id: student.id,
             name: student.full_name,
@@ -358,9 +396,69 @@ export async function authenticateAny(
     .eq('id', authData.user.id)
     .single();
 
-  if (profileError || !profile || (profile as Record<string, unknown>).is_deleted === true) {
-    sendError(res, 'User profile not found or account deactivated', 403);
+  if (profileError || !profile) {
+    sendError(res, 'User profile not found. Contact your administrator.', 403);
     return;
+  }
+
+  if ((profile as Record<string, unknown>).is_deleted === true) {
+    sendError(res, 'This account has been deactivated.', 403);
+    return;
+  }
+
+  // ── Password-reset gate ───────────────────────────────────────────────────
+  if ((profile as Record<string, unknown>).must_reset_password === true) {
+    const allowedPaths = [
+      '/api/auth/staff/change-password',
+      '/api/auth/me',
+      '/api/auth/logout',
+    ];
+    const isAllowed = allowedPaths.some((p) => req.path === p || req.originalUrl.endsWith(p));
+    if (!isAllowed) {
+      sendError(res, 'You must change your password before accessing this resource.', 403);
+      return;
+    }
+  }
+
+  // ── School subscription check ─────────────────────────────────────────────
+  if ((profile.role as AppRole) !== 'superadmin' && profile.school_id) {
+    const { data: schoolStatus } = await supabaseAdmin
+      .from('schools')
+      .select('subscription_status')
+      .eq('id', profile.school_id)
+      .single();
+
+    const isActive = (schoolStatus as { subscription_status: boolean } | null)?.subscription_status;
+    if (isActive === false) {
+      sendError(
+        res,
+        'Your subscription has expired. Please renew your subscription to continue using the service.',
+        402
+      );
+      return;
+    }
+  }
+
+  // ── X-School-ID override (medium switcher) ────────────────────────────────
+  const primarySchoolId = (profile.school_id as string | null) ?? null;
+  let activeSchoolId = primarySchoolId;
+
+  const requestedSchoolId = req.headers['x-school-id'] as string | undefined;
+  if (
+    requestedSchoolId &&
+    (profile.role as AppRole) === 'schooladmin' &&
+    requestedSchoolId !== primarySchoolId
+  ) {
+    const { data: accessRow } = await supabaseAdmin
+      .from('school_admin_access')
+      .select('school_id')
+      .eq('admin_id', profile.id)
+      .eq('school_id', requestedSchoolId)
+      .maybeSingle();
+
+    if (accessRow) {
+      activeSchoolId = requestedSchoolId;
+    }
   }
 
   req.user = {
@@ -368,8 +466,8 @@ export async function authenticateAny(
     name: profile.name,
     email: profile.email,
     role: profile.role as AppRole,
-    school_id: profile.school_id ?? null,
-    primary_school_id: profile.school_id ?? null,
+    school_id: activeSchoolId,
+    primary_school_id: primarySchoolId,
   };
   req.tokenType = 'staff';
 

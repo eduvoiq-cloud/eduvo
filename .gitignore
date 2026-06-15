@@ -1,0 +1,17 @@
+# ── Test/debug output files that may contain real PII ────────────────────────
+prod-test.json
+prod-test.txt
+*-test.json
+*-test.txt
+test-output*.json
+test-output*.txt
+
+# ── Local environment overrides ───────────────────────────────────────────────
+.env
+.env.*
+.env.local
+.env.*.local
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

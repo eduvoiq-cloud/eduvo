@@ -88,7 +88,7 @@ const studentLoginSchema = z.object({
 
 const changePasswordSchema = z.object({
   current_password: z.string().min(1).max(128),
-  new_password: z.string().min(6).max(128),
+  new_password: z.string().min(8).max(128),
 });
 
 const resetPasswordSchema = z.object({

@@ -122,7 +122,7 @@ export default function PremiumManagementPage() {
 
   // ── Derived data ────────────────────────────────────────────────────────────
 
-  const students = summary?.students ?? [];
+  const students = useMemo(() => summary?.students ?? [], [summary]);
 
   const classes = useMemo(
     () => [...new Set(students.map((r) => r.class_name))].sort((a, b) => classNum(a) - classNum(b)),

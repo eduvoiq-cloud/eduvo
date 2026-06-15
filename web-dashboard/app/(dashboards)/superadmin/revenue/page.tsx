@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useAuth } from '@/context/AuthContext';
 import { premiumApi, type RevenueShare, type ParentSubscription } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -204,7 +203,6 @@ function TableSkeleton() {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SuperadminRevenuePage() {
-  const { user } = useAuth();
 
   const [summary, setSummary] = useState<SchoolSummaryRow[]>([]);
   const [loading, setLoading] = useState(true);

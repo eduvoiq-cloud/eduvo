@@ -7,7 +7,7 @@
     "dev": "nodemon --exec ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"No tests yet — add test files and replace this script with: jest --runInBand\" && exit 0"
   },
   "keywords": [],
   "author": "",
@@ -29,6 +29,7 @@
     "express-rate-limit": "^8.5.2",
     "firebase-admin": "13.10.0",
     "helmet": "^8.2.0",
+    "jsonwebtoken": "9.0.2",
     "mammoth": "^1.12.0",
     "multer": "^2.1.1",
     "pdf-parse": "1.1.1",
@@ -41,6 +42,7 @@
     "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "9.0.9",
     "@types/multer": "^2.1.0",
     "@types/node": "^25.9.1",
     "@types/pdf-parse": "^1.1.5",

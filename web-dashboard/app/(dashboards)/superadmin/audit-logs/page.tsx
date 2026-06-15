@@ -125,11 +125,6 @@ export default function AuditLogsPage() {
   useEffect(() => { fetchSchools(); }, [fetchSchools]);
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
-  // Reset to page 1 when filters change
-  const applyFilters = () => {
-    setPage(1);
-    fetchLogs();
-  };
 
   // ── Render ────────────────────────────────────────────────────────────────
 

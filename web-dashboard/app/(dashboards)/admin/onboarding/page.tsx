@@ -9,7 +9,6 @@ import {
   usersApi,
   studentsApi,
   assignmentsApi,
-  authApi,
   type OnboardingProgress,
   type Teacher,
   type TeacherAssignment,
@@ -567,7 +566,7 @@ export default function OnboardingPage() {
 function getStepCompleted(
   key: string,
   progress: OnboardingProgress | null,
-  assignments: TeacherAssignment[]
+  _assignments: TeacherAssignment[]
 ): boolean {
   if (!progress) return false;
   switch (key) {
@@ -625,7 +624,7 @@ function StepCard({
   label,
   isCompleted,
   isCurrent,
-  isFuture,
+  isFuture: _isFuture,
   children,
 }: StepCardProps) {
   const stepNumber = index + 1;

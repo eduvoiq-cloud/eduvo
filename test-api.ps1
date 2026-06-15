@@ -1,14 +1,45 @@
-$loginBody = [System.Text.Encoding]::UTF8.GetBytes('{"email":"teacher@eduvo.com","password":"Test@1234"}')
-$loginResp = Invoke-WebRequest -Uri "https://eduvo-production.up.railway.app/api/auth/login" -Method POST -ContentType "application/json" -Body $loginBody -ErrorAction SilentlyContinue
-Write-Host "Login Status: $($loginResp.StatusCode)"
-Write-Host $loginResp.Content
+# test-api.ps1 — Local API smoke test
+# Runs against localhost:3001 ONLY. Never edit this to point at production.
+# Usage: .\test-api.ps1
+# Pre-requisite: backend server must be running (npm run dev in backend-api/)
 
-$loginData = $loginResp.Content | ConvertFrom-Json
-$token = $loginData.data.token
-Write-Host "Token: $($token.Substring(0,40))..."
+$BASE = "http://localhost:3001"
 
-$testBody = [System.Text.Encoding]::UTF8.GetBytes('{"title":"Debug Test","subject":"Maths","class_name":"Class 10","section":"A","term":"term 1","date":"2025-12-19","questions":[{"type":"mcq","text":"who is whom","marks":1,"options":[{"text":"A"},{"text":"B"},{"text":"C"},{"text":"D"}],"correct_option":0}]}')
+Write-Host "`n=== Staff Login ===" -ForegroundColor Cyan
+$loginBody = '{"email":"teacher@school.com","password":"YourLocalPassword"}'
+try {
+  $loginResp = Invoke-RestMethod -Uri "$BASE/api/auth/login/staff" -Method POST `
+    -ContentType "application/json" -Body $loginBody
+  $token = $loginResp.data.token
+  Write-Host "Login OK — token: $($token.Substring(0, 20))..." -ForegroundColor Green
+} catch {
+  Write-Host "Login failed: $($_.Exception.Message)" -ForegroundColor Red
+  exit 1
+}
 
-$testResp = Invoke-WebRequest -Uri "https://eduvo-production.up.railway.app/api/tests" -Method POST -ContentType "application/json" -Headers @{"Authorization"="Bearer $token"} -Body $testBody -ErrorAction SilentlyContinue
-Write-Host "Test Status: $($testResp.StatusCode)"
-Write-Host $testResp.Content
+Write-Host "`n=== GET /api/auth/me ===" -ForegroundColor Cyan
+try {
+  $me = Invoke-RestMethod -Uri "$BASE/api/auth/me" -Method GET `
+    -Headers @{ Authorization = "Bearer $token" }
+  Write-Host "Role: $($me.data.user.role) | School: $($me.data.user.school_id)" -ForegroundColor Green
+} catch {
+  Write-Host "GET /me failed: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Write-Host "`n=== GET /api/schools/list (public) ===" -ForegroundColor Cyan
+try {
+  $schools = Invoke-RestMethod -Uri "$BASE/api/schools/list" -Method GET
+  Write-Host "Schools returned: $($schools.data.Count)" -ForegroundColor Green
+} catch {
+  Write-Host "GET /schools/list failed: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Write-Host "`n=== Health check ===" -ForegroundColor Cyan
+try {
+  $health = Invoke-RestMethod -Uri "$BASE/health" -Method GET
+  Write-Host "Status: $($health.status)" -ForegroundColor Green
+} catch {
+  Write-Host "Health check failed: $($_.Exception.Message)" -ForegroundColor Red
+}
+
+Write-Host "`nDone." -ForegroundColor Cyan

@@ -467,7 +467,7 @@ function MainNavigator() {
 
 interface AppNavigatorProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  navigationRef?: React.RefObject<NavigationContainerRef<any> | null>;
+  navigationRef?: React.RefObject<NavigationContainerRef<any>>;
 }
 
 export default function AppNavigator({ navigationRef }: AppNavigatorProps) {

@@ -95,8 +95,12 @@ function isPortInUse(port: number): Promise<boolean> {
  * Attempts to kill whatever process is bound to `port`.
  * Works on Windows (netstat + taskkill) and Unix (lsof / fuser).
  * Failures are swallowed — the caller will detect the port is still busy.
+ *
+ * NOTE: Only used in development. Never runs in production to avoid
+ * accidentally killing unrelated processes on shared/Railway hosts.
  */
 function killProcessOnPort(port: number): void {
+  if (process.env.NODE_ENV === 'production') return;
   try {
     if (process.platform === 'win32') {
       // Find the PID listening on the port, then kill it
@@ -191,8 +195,10 @@ async function startServer() {
       includeLocalVariables: true,
       // Enable structured logging via Sentry.logger.*
       enableLogs: true,
-      // Capture request metadata (headers, IP) — safe for internal API
-      sendDefaultPii: true,
+      // Do NOT send request headers/IPs to Sentry — avoids GDPR/FERPA concerns
+      // with student PII in request metadata. Set to true only if you have a
+      // DPA in place with Sentry and have audited what headers are captured.
+      sendDefaultPii: false,
     };
     Sentry.init(sentryOptions);
     console.log('[sentry] Error tracking enabled');

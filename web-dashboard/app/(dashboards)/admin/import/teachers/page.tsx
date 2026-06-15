@@ -339,7 +339,7 @@ export default function ImportTeachersPage() {
 
                 {/* Password info */}
                 <div className="mt-2 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg text-xs text-amber-700">
-                  <strong>Default password:</strong> Each teacher's phone number is set as their initial password. They will be required to change it on first login.
+                  <strong>Default password:</strong> Each teacher&apos;s phone number is set as their initial password. They will be required to change it on first login.
                 </div>
 
                 <button
