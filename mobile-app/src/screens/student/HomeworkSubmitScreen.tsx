@@ -425,6 +425,9 @@ function AIResultBanner({ result, feedback }: { result: string | null; feedback:
     correct:      { bg: '#DCFCE7', text: '#15803D', label: 'Correct ✓', icon: '✅' },
     incorrect:    { bg: '#FEE2E2', text: '#B91C1C', label: 'Incorrect ✗', icon: '❌' },
     partial:      { bg: '#FEF3C7', text: '#92400E', label: 'Partially Correct', icon: '🟡' },
+    // Backend can return 'unclear' when AI can't reliably evaluate (e.g. blurry photo)
+    unclear:      { bg: '#FEF9C3', text: '#854D0E', label: 'Needs Review', icon: '👁️' },
+    // Backward compat (older clients used needs_review)
     needs_review: { bg: '#FEF9C3', text: '#854D0E', label: 'Needs Review', icon: '👁️' },
   };
 

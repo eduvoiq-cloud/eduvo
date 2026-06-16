@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   StatusBar,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useAuthStore } from '../../store/authStore';
+import { useNavigation } from '@react-navigation/native';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ function FeedRow({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function NotificationsScreen() {
-  const student = useAuthStore((s) => s.student);
+  const navigation = useNavigation<any>();
 
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
@@ -241,6 +241,30 @@ export default function NotificationsScreen() {
   const unreadNotifCount = notifications.filter((n) => !n.is_read).length;
   const hasUnread = unreadNotifCount > 0;
 
+  // Configure stack header (title + "Mark all read" action)
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerTitle: 'Notifications',
+      headerRight: hasUnread
+        ? () => (
+            <TouchableOpacity
+              style={[styles.headerAction, markingAll && styles.headerActionDisabled]}
+              onPress={handleMarkAllRead}
+              disabled={markingAll}
+              accessibilityRole="button"
+              accessibilityLabel="Mark all notifications as read"
+            >
+              {markingAll ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.headerActionText}>Mark all read</Text>
+              )}
+            </TouchableOpacity>
+          )
+        : undefined,
+    });
+  }, [navigation, hasUnread, markingAll, handleMarkAllRead]);
+
   // Sort each group newest first, then combine into sections
   const sortedNotifs = [...notifications].sort(
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -269,26 +293,6 @@ export default function NotificationsScreen() {
         keyExtractor={(item) => `${item._kind}-${item.id}`}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1D4ED8" />
-        }
-        ListHeaderComponent={
-          <View style={styles.header}>
-            <Text style={styles.screenTitle}>Notifications</Text>
-            {hasUnread && (
-              <TouchableOpacity
-                style={[styles.markAllBtn, markingAll && styles.markAllBtnDisabled]}
-                onPress={handleMarkAllRead}
-                disabled={markingAll}
-                accessibilityRole="button"
-                accessibilityLabel="Mark all notifications as read"
-              >
-                {markingAll ? (
-                  <ActivityIndicator size="small" color="#1D4ED8" />
-                ) : (
-                  <Text style={styles.markAllText}>Mark all read</Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
         }
         renderSectionHeader={({ section }) => (
           <View style={styles.sectionHeader}>
@@ -322,25 +326,17 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9FAFB' },
   content: { paddingBottom: 48 },
 
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 12,
-  },
-  screenTitle: { fontSize: 22, fontWeight: '700', color: '#111827' },
-  markAllBtn: {
-    backgroundColor: '#EFF6FF',
+  headerAction: {
+    marginRight: 10,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     borderRadius: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
     minWidth: 40,
     alignItems: 'center',
   },
-  markAllBtnDisabled: { opacity: 0.6 },
-  markAllText: { fontSize: 13, color: '#1D4ED8', fontWeight: '600' },
+  headerActionDisabled: { opacity: 0.7 },
+  headerActionText: { fontSize: 12, color: '#FFFFFF', fontWeight: '700' },
 
   sectionHeader: {
     paddingHorizontal: 20,

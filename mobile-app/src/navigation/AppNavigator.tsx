@@ -69,6 +69,7 @@ export type MainStackParamList = {
   MainTabs: undefined;
   TestAttempt: { test: TestMeta };
   HomeworkSubmit: { homework: HomeworkMeta };
+  NotificationsModal: undefined;
   Resources: undefined;
   ChangePassword: undefined;
   LinkChild: undefined;
@@ -413,6 +414,17 @@ function MainNavigator() {
       initialRouteName={isFirstLogin ? 'ChangePassword' : 'MainTabs'}
     >
       <MainStack.Screen name="MainTabs" component={MainTabNavigator} />
+      <MainStack.Screen
+        name="NotificationsModal"
+        component={NotificationsScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Notifications',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
       <MainStack.Screen
         name="TestAttempt"
         component={TestAttemptScreen}

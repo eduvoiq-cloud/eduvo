@@ -152,8 +152,9 @@ export function addNotificationResponseListener(
           (navigationRef as any).navigate('More');
         }
       } else {
+        // Open the notifications feed in the root stack so Back works naturally.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (navigationRef as any).navigate('More', { screen: 'Notifications' });
+        (navigationRef as any).navigate('NotificationsModal');
       }
     }
 

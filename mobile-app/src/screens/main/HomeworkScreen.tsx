@@ -8,7 +8,6 @@ import {
   RefreshControl,
   ActivityIndicator,
   StatusBar,
-  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -43,10 +42,12 @@ interface HomeworkItem {
   description: string | null;
   subject: string;
   due_date: string;
-  is_acknowledged: boolean;
+  acknowledged: boolean;
   created_at: string;
-  /** Submission status from homework_submissions (if ai_check_enabled) */
+  /** Submission status from homework_submissions (student-only) */
   submission_status?: string | null;
+  /** AI result when submission_status='checked' (student-only) */
+  ai_result?: string | null;
 }
 
 type TabFilter = 'Pending' | 'Completed' | 'All';
@@ -98,24 +99,35 @@ function dueDateLabel(dueDate: string): string {
 
 function HomeworkCard({
   item,
-  onAcknowledge,
   onPress,
 }: {
   item: HomeworkItem;
-  onAcknowledge: (id: string) => void;
   onPress: (item: HomeworkItem) => void;
 }) {
   const palette = subjectPalette(item.subject);
   const dateColor = dueDateColor(item.due_date);
   const dateLabel = dueDateLabel(item.due_date);
 
+  const status = item.submission_status ?? 'not_submitted';
+  const ai = item.ai_result ?? null;
+
   const submissionStatusLabel: Record<string, { label: string; color: string }> = {
-    submitted:          { label: 'Submitted ✓', color: '#F59E0B' },
+    not_submitted:      { label: 'Not attempted', color: '#EF4444' },
+    submitted:          { label: 'Submitted', color: '#F59E0B' },
     processing:         { label: 'Checking…', color: '#3B82F6' },
-    checked:            { label: 'Checked ✓', color: '#22C55E' },
+    checked:            { label: 'Checked', color: '#22C55E' },
     flagged_for_review: { label: 'Under Review', color: '#F97316' },
   };
-  const subStatus = item.submission_status ? submissionStatusLabel[item.submission_status] : null;
+
+  const checkedOverrides: Record<string, { label: string; color: string }> = {
+    partial: { label: 'Partial', color: '#F59E0B' },
+    unclear: { label: 'Needs review', color: '#F97316' },
+  };
+
+  const subStatus =
+    status === 'checked' && ai && checkedOverrides[ai]
+      ? checkedOverrides[ai]
+      : (submissionStatusLabel[status] ?? null);
 
   return (
     <TouchableOpacity
@@ -152,20 +164,17 @@ function HomeworkCard({
               </Text>
             </View>
           )}
-          {item.is_acknowledged ? (
+          {/* Teacher read-receipt (acknowledgement) */}
+          {item.acknowledged ? (
             <View style={cardStyles.doneRow}>
               <Text style={cardStyles.doneCheck}>✓</Text>
               <Text style={cardStyles.doneText}>Seen</Text>
             </View>
           ) : (
-            <TouchableOpacity
-              style={cardStyles.doneButton}
-              onPress={(e) => { e.stopPropagation?.(); onAcknowledge(item.id); }}
-              accessibilityRole="button"
-              accessibilityLabel={`Mark ${item.title} as done`}
-            >
-              <Text style={cardStyles.doneButtonText}>Mark Done</Text>
-            </TouchableOpacity>
+            <View style={cardStyles.newRow}>
+              <View style={cardStyles.newDot} />
+              <Text style={cardStyles.newText}>New</Text>
+            </View>
           )}
         </View>
       </View>
@@ -206,13 +215,9 @@ const cardStyles = StyleSheet.create({
   doneRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   doneCheck: { fontSize: 16, color: '#22C55E', fontWeight: '700' },
   doneText: { fontSize: 13, color: '#22C55E', fontWeight: '600' },
-  doneButton: {
-    backgroundColor: '#1D4ED8',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-  },
-  doneButtonText: { fontSize: 13, color: '#FFFFFF', fontWeight: '600' },
+  newRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  newDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#1D4ED8' },
+  newText: { fontSize: 13, color: '#1D4ED8', fontWeight: '700' },
   subStatusBadge: {
     borderRadius: 6,
     paddingHorizontal: 8,
@@ -231,7 +236,6 @@ export default function HomeworkScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabFilter>('Pending');
-  const [acknowledging, setAcknowledging] = useState<string | null>(null);
 
   // Use the active linked child's class/section if available, otherwise fall back to logged-in student
   const activeStudent = linkedChildren.length > 0 ? linkedChildren[activeChildIndex] : student;
@@ -258,8 +262,10 @@ export default function HomeworkScreen() {
         description: h.description ?? null,
         subject: h.subject_name ?? h.subject ?? '',
         due_date: h.due_date,
-        is_acknowledged: h.acknowledged ?? false,
+        acknowledged: h.acknowledged ?? false,
         created_at: h.created_at,
+        submission_status: h.submission_status ?? null,
+        ai_result: h.ai_result ?? null,
       }));
       setHomework(normalised);
     } catch (err) {
@@ -277,21 +283,20 @@ export default function HomeworkScreen() {
     fetchHomework();
   }, [fetchHomework]);
 
-  const handleAcknowledge = async (id: string) => {
-    setAcknowledging(id);
+  const acknowledgeSeen = async (id: string) => {
     try {
       await apiClient.post(`/api/homework/${id}/acknowledge`);
       setHomework((prev) =>
-        prev.map((h) => (h.id === id ? { ...h, is_acknowledged: true } : h))
+        prev.map((h) => (h.id === id ? { ...h, acknowledged: true } : h))
       );
-    } catch (err: any) {
-      Alert.alert('Error', err.response?.data?.message ?? 'Failed to mark as done.');
-    } finally {
-      setAcknowledging(null);
+    } catch {
+      // Non-blocking — acknowledgement is only a "seen" receipt for teachers
     }
   };
 
   const handleOpenHomework = (item: HomeworkItem) => {
+    // Mark as "seen" for teacher read receipt when the student opens it.
+    if (!item.acknowledged) acknowledgeSeen(item.id);
     navigation.navigate('HomeworkSubmit', {
       homework: {
         id: item.id,
@@ -304,9 +309,17 @@ export default function HomeworkScreen() {
   };
 
   // Filter by tab
+  const needsAction = (h: HomeworkItem) => {
+    const status = h.submission_status ?? 'not_submitted';
+    const ai = h.ai_result ?? null;
+    if (status === 'not_submitted') return true;
+    if (status === 'checked' && (ai === 'partial' || ai === 'unclear')) return true;
+    return false;
+  };
+
   const filtered = homework.filter((h) => {
-    if (activeTab === 'Pending') return !h.is_acknowledged;
-    if (activeTab === 'Completed') return h.is_acknowledged;
+    if (activeTab === 'Pending') return needsAction(h);
+    if (activeTab === 'Completed') return !needsAction(h);
     return true;
   });
 
@@ -354,7 +367,6 @@ export default function HomeworkScreen() {
             renderItem={({ item }) => (
               <HomeworkCard
                 item={item}
-                onAcknowledge={acknowledging === item.id ? () => {} : handleAcknowledge}
                 onPress={handleOpenHomework}
               />
             )}

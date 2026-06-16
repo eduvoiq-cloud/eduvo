@@ -341,11 +341,11 @@ router.get(
     // Fetch homework with subject, teacher info, and acknowledgement status in one query
     // Uses LEFT JOIN on homework_acknowledgements filtered by student_id to avoid N+1 queries
     const selectFields = isStudent && studentId
-      ? `id, title, description, due_date, file_url, created_at,
+      ? `id, title, description, due_date, file_url, created_at, ai_check_enabled,
          subjects ( name ),
          users ( name ),
          homework_acknowledgements!left ( student_id )`
-      : `id, title, description, due_date, file_url, created_at,
+      : `id, title, description, due_date, file_url, created_at, ai_check_enabled,
          subjects ( name ),
          users ( name )`;
 
@@ -374,12 +374,13 @@ router.get(
       due_date: string;
       file_url: string | null;
       created_at: string;
+      ai_check_enabled?: boolean;
       subjects: { name: string } | null;
       users: { name: string } | null;
       homework_acknowledgements?: AckRow[] | null;
     };
 
-    const result = (list as unknown as HwRow[]).map((h) => {
+    const baseResult = (list as unknown as HwRow[]).map((h) => {
       // When joined, homework_acknowledgements is an array filtered by student_id
       // (Supabase returns all acks for the homework unless we filter — we filter below)
       const acknowledged = isStudent && studentId
@@ -396,12 +397,49 @@ router.get(
         teacher_name: h.users?.name ?? null,
         due_date: h.due_date,
         file_url: h.file_url ?? null,
+        ai_check_enabled: h.ai_check_enabled ?? false,
         acknowledged,
         created_at: h.created_at,
       };
     });
 
-    sendSuccess(res, result);
+    // If student, enrich with their submission status + AI result (if any).
+    // This allows the mobile app to show: not attempted / submitted / checked / partial etc.
+    if (isStudent && studentId) {
+      const homeworkIds = baseResult.map((h) => h.id);
+      const submissionMap = new Map<string, { status: string; ai_result: string | null }>();
+
+      if (homeworkIds.length > 0) {
+        const { data: subs, error: subErr } = await supabaseAdmin
+          .from('homework_submissions')
+          .select('homework_id, status, ai_result')
+          .eq('student_id', studentId)
+          .in('homework_id', homeworkIds);
+
+        if (subErr) {
+          sendError(res, subErr.message, 500);
+          return;
+        }
+
+        (subs ?? []).forEach((s: { homework_id: string; status: string; ai_result: string | null }) => {
+          submissionMap.set(s.homework_id, { status: s.status, ai_result: s.ai_result ?? null });
+        });
+      }
+
+      const enriched = baseResult.map((h) => {
+        const sub = submissionMap.get(h.id);
+        return {
+          ...h,
+          submission_status: sub?.status ?? 'not_submitted',
+          ai_result: sub?.ai_result ?? null,
+        };
+      });
+
+      sendSuccess(res, enriched);
+      return;
+    }
+
+    sendSuccess(res, baseResult);
   }
 );
 
@@ -980,21 +1018,25 @@ router.get(
     const schoolId = req.student!.school_id;
     const className = req.student!.class_name;
     const section = req.student!.section;
-    const today = todayDate();
+    // Match the mobile homework feed cutoff: show pending for last 7 days onward,
+    // so overdue homework doesn't disappear from the dashboard counter.
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 7);
+    const cutoff = cutoffDate.toISOString().slice(0, 10);
 
     if (!className || !section) {
       sendError(res, 'Student class/section not set', 400);
       return;
     }
 
-    // Fetch all homework due today or later for this class
+    // Fetch all homework from the last 7 days onward for this class
     const { data: homeworkList, error: hwErr } = await supabaseAdmin
       .from('homework')
       .select('id')
       .eq('school_id', schoolId)
       .ilike('class_name', className.trim())
       .ilike('section', section.trim())
-      .gte('due_date', today);
+      .gte('due_date', cutoff);
 
     if (hwErr) {
       sendError(res, hwErr.message, 500);
@@ -1008,20 +1050,34 @@ router.get(
       return;
     }
 
-    // Fetch acknowledgements for this student
-    const { data: acks, error: ackErr } = await supabaseAdmin
-      .from('homework_acknowledgements')
-      .select('homework_id')
+    // Pending homework for students should reflect "needs action", not just "seen".
+    // We define "pending" as:
+    //   - not_submitted (not attempted), OR
+    //   - checked + partial/unclear (student should improve and re-submit)
+    const { data: subs, error: subErr } = await supabaseAdmin
+      .from('homework_submissions')
+      .select('homework_id, status, ai_result')
       .eq('student_id', studentId)
       .in('homework_id', allIds);
 
-    if (ackErr) {
-      sendError(res, ackErr.message, 500);
+    if (subErr) {
+      sendError(res, subErr.message, 500);
       return;
     }
 
-    const ackedIds = new Set((acks ?? []).map((a: { homework_id: string }) => a.homework_id));
-    const pendingCount = allIds.filter((id) => !ackedIds.has(id)).length;
+    const submissionMap = new Map<string, { status: string; ai_result: string | null }>();
+    (subs ?? []).forEach((s: { homework_id: string; status: string; ai_result: string | null }) => {
+      submissionMap.set(s.homework_id, { status: s.status, ai_result: s.ai_result ?? null });
+    });
+
+    const needsReSubmit = (aiResult: string | null) => aiResult === 'partial' || aiResult === 'unclear';
+
+    const pendingCount = allIds.filter((id) => {
+      const sub = submissionMap.get(id);
+      const status = sub?.status ?? 'not_submitted';
+      const aiResult = sub?.ai_result ?? null;
+      return status === 'not_submitted' || (status === 'checked' && needsReSubmit(aiResult));
+    }).length;
 
     sendSuccess(res, { count: pendingCount });
   }

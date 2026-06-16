@@ -310,8 +310,16 @@ export default function DashboardScreen() {
     // Mark all unread notifications as read in the backend (no-op if none).
     apiClient.put('/api/notifications/read-all').catch(() => {});
 
-    navigateToMore('Notifications');
-  }, [navigateToMore]);
+    // Open as a normal stack screen (so Back returns to wherever the user came from,
+    // e.g. Dashboard), instead of forcing the More tab.
+    const parent = (navigation as any).getParent?.();
+    if (parent?.navigate) {
+      parent.navigate('NotificationsModal');
+    } else {
+      // Fallback (shouldn't happen): use More tab
+      navigateToMore('Notifications');
+    }
+  }, [navigateToMore, navigation]);
 
   const fetchAll = useCallback(async () => {
     try {
