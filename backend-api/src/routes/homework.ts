@@ -1725,8 +1725,11 @@ router.post(
 
     for (const file of files) {
       const ts = Date.now();
+      const rand = Math.random().toString(36).slice(2, 10);
       const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const storagePath = `student-submissions/${schoolId}/${studentId}/${ts}_${safeName}`;
+      // Ensure the storage path is always unique (avoids rare collisions when multiple
+      // uploads happen within the same millisecond with the same original filename).
+      const storagePath = `student-submissions/${schoolId}/${studentId}/${ts}_${rand}_${safeName}`;
 
       const { error: uploadError } = await supabaseAdmin.storage
         .from(BUCKET)
@@ -1737,7 +1740,11 @@ router.post(
 
       if (uploadError) {
         console.error('[homework/submit-upload] Storage error:', uploadError.message);
-        sendError(res, `Failed to store image: ${uploadError.message}`, 500);
+        const msg = String(uploadError.message ?? 'Storage upload failed');
+        const isConflict =
+          (uploadError as unknown as { statusCode?: number }).statusCode === 409 ||
+          msg.toLowerCase().includes('already exists');
+        sendError(res, `Failed to store image: ${msg}`, isConflict ? 409 : 500);
         return;
       }
 

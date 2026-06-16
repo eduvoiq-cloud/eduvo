@@ -536,7 +536,13 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
       const uploaded = res.data.data.images?.[0];
       return { url: uploaded?.url ?? null, path: uploaded?.storage_path ?? null, error: null };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Upload failed';
+      // Axios throws an Error whose message is often just "Request failed with status code 500".
+      // Prefer the backend's message payload when available.
+      const anyErr = err as { message?: string; response?: { data?: { message?: string } } };
+      const msg =
+        anyErr?.response?.data?.message ??
+        anyErr?.message ??
+        'Upload failed';
       return { url: null, path: null, error: msg };
     }
   }, []);
