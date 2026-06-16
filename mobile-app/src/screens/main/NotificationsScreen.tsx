@@ -135,6 +135,11 @@ export default function NotificationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
 
+  // Mark announcements as "seen" as soon as this screen opens (even if fetch fails).
+  useEffect(() => {
+    AsyncStorage.setItem('notifications_last_viewed_at', new Date().toISOString()).catch(() => {});
+  }, []);
+
   // ── Fetch both feeds ────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async () => {
@@ -170,10 +175,6 @@ export default function NotificationsScreen() {
           is_seen: true, // all are considered seen once this screen is opened
         }));
         setAnnouncements(items);
-
-        // Record the time the user opened this screen so the Dashboard badge
-        // only lights up for announcements that arrive AFTER this visit.
-        await AsyncStorage.setItem('notifications_last_viewed_at', new Date().toISOString());
       }
     } catch (err) {
       console.warn('[Notifications] fetchAll error:', err);

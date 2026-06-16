@@ -422,7 +422,8 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
         const notifRows = studentIds.map((recipient_id: string) => ({
           title: 'New Test Available',
           message: `A new test "${testFields.title}" has been assigned to your class.`,
-          type: 'alert',
+          // Use a dedicated type so the mobile app can show a test icon and group it clearly.
+          type: 'test',
           recipient_id,
           sender_id: senderId,
           is_read: false,
@@ -1071,52 +1072,46 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
   });
 
   // ── Streak update (fire-and-forget) ─────────────────────────────────────────
-  // Only update streak if the test has contributes_to_streak = true
-  const { data: streakTestMeta } = await supabaseAdmin
-    .from('tests')
-    .select('contributes_to_streak')
-    .eq('id', attempt.test_id)
-    .maybeSingle();
+  // Count a submitted test as a streak activity day.
+  // This matches the app UI legend ("Test" contributes to streak) and prevents
+  // streaks from not updating when teachers forget to toggle a flag.
+  setImmediate(() => {
+    (async () => {
+      try {
+        const { data: studentRow } = await supabaseAdmin
+          .from('students')
+          .select('full_name, parent_id')
+          .eq('id', req.student!.id)
+          .single();
 
-  if ((streakTestMeta as Record<string, unknown> | null)?.contributes_to_streak === true) {
-    setImmediate(() => {
-      (async () => {
-        try {
-          const { data: studentRow } = await supabaseAdmin
-            .from('students')
-            .select('full_name, parent_id')
-            .eq('id', req.student!.id)
-            .single();
+        const studentName = (studentRow?.full_name as string) ?? '';
+        const parentId = (studentRow?.parent_id as string | null) ?? null;
 
-          const studentName = (studentRow?.full_name as string) ?? '';
-          const parentId = (studentRow?.parent_id as string | null) ?? null;
+        const streakResult = await updateStreakWithMilestone(
+          req.student!.id,
+          'test',
+          studentName,
+          parentId
+        );
 
-          const streakResult = await updateStreakWithMilestone(
-            req.student!.id,
-            'test',
-            studentName,
-            parentId
-          );
-
-          // Notify parent
-          if (parentId && streakResult.current_streak > 0) {
-            const parentTokens = await getTokensForUsers([parentId]);
-            if (parentTokens.length > 0) {
-              const streakMsg = ` 🔥 Streak: ${streakResult.current_streak} day${streakResult.current_streak !== 1 ? 's' : ''}!`;
-              await sendPushMulticast(
-                parentTokens,
-                'Test Completed! 🎉',
-                `${studentName} scored ${mcqScore}/${totalMcqMarks} on a test!${streakMsg}`,
-                { type: 'test_result', test_id: String(attempt.test_id) }
-              );
-            }
+        // Notify parent
+        if (parentId && streakResult.current_streak > 0) {
+          const parentTokens = await getTokensForUsers([parentId]);
+          if (parentTokens.length > 0) {
+            const streakMsg = ` 🔥 Streak: ${streakResult.current_streak} day${streakResult.current_streak !== 1 ? 's' : ''}!`;
+            await sendPushMulticast(
+              parentTokens,
+              'Test Completed! 🎉',
+              `${studentName} scored ${mcqScore}/${totalMcqMarks} on a test!${streakMsg}`,
+              { type: 'test_result', test_id: String(attempt.test_id) }
+            );
           }
-        } catch (err) {
-          console.error('[tests] Post-submit streak/FCM failed:', err);
         }
-      })();
-    });
-  }
+      } catch (err) {
+        console.error('[tests] Post-submit streak/FCM failed:', err);
+      }
+    })();
+  });
 
   sendSuccess(res, { mcq_score: mcqScore, total_mcq_marks: totalMcqMarks }, 'Test submitted');
 });

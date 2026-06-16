@@ -12,7 +12,19 @@ import {
 import apiClient from '../../api/client';
 
 // Notification types returned by the backend
-type NotificationType = 'announcement' | 'alert' | 'reminder' | 'grade' | 'attendance';
+// Keep this permissive so new backend notification types (e.g. 'test') don't
+// break the parent UI.
+type NotificationType =
+  | 'announcement'
+  | 'alert'
+  | 'reminder'
+  | 'grade'
+  | 'attendance'
+  | 'test'
+  | 'homework'
+  | 'marks'
+  | 'fee_reminder'
+  | 'complaint';
 
 interface Notification {
   id: string;
@@ -30,6 +42,11 @@ const TYPE_ICON: Record<NotificationType, string> = {
   announcement: '📢',
   alert: '⚠️',
   reminder: '🔔',
+  test: '📝',
+  homework: '📚',
+  marks: '📊',
+  fee_reminder: '💰',
+  complaint: '📋',
 };
 
 // ── Time-ago helper ───────────────────────────────────────────────────────────

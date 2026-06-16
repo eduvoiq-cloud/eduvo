@@ -289,6 +289,30 @@ export default function DashboardScreen() {
     });
   }, [navigation]);
 
+  /**
+   * When the user opens the notification bell, we want the badge to drop to 0
+   * immediately (UX expectation), while the actual "mark read" operation happens
+   * in the background and is re-checked on focus.
+   *
+   * This is intentionally fire-and-forget so a network hiccup doesn't block navigation.
+   */
+  const openNotifications = useCallback(() => {
+    // Optimistically clear badges
+    setNotifCount(0);
+    setAnnUnseenCount(0);
+
+    // Announcements are considered "seen" once the notifications feed is opened.
+    // Write this immediately so the Home badge doesn't get stuck if announcements
+    // fetch fails on the notifications screen.
+    const nowIso = new Date().toISOString();
+    AsyncStorage.setItem('notifications_last_viewed_at', nowIso).catch(() => {});
+
+    // Mark all unread notifications as read in the backend (no-op if none).
+    apiClient.put('/api/notifications/read-all').catch(() => {});
+
+    navigateToMore('Notifications');
+  }, [navigateToMore]);
+
   const fetchAll = useCallback(async () => {
     try {
       const today = todayISO();
@@ -515,7 +539,7 @@ export default function DashboardScreen() {
           </View>
           <TouchableOpacity
             style={[styles.bellWrapper, totalUnread > 0 && styles.bellWrapperActive]}
-            onPress={() => navigateToMore('Notifications')}
+            onPress={openNotifications}
             accessibilityRole="button"
             accessibilityLabel={`Notifications${totalUnread > 0 ? `, ${totalUnread} unread` : ''}`}
           >
