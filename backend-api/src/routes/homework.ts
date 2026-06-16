@@ -1723,6 +1723,37 @@ router.post(
     const BUCKET = 'homework-uploads';
     const results: Array<{ url: string; storage_path: string; file_name: string; file_size: number }> = [];
 
+    // Self-heal missing storage setup in production. The original migration notes
+    // required a manual bucket creation step; if that was skipped, uploads fail
+    // with a 500. We create the bucket on demand and make it public so the returned
+    // URLs work immediately in the app.
+    try {
+      const { data: existingBuckets, error: listErr } = await supabaseAdmin.storage.listBuckets();
+      if (listErr) {
+        console.error('[homework/submit-upload] listBuckets error:', listErr.message);
+      }
+
+      const bucketExists = (existingBuckets ?? []).some((b) => b.name === BUCKET);
+      if (!bucketExists) {
+        const { error: createErr } = await supabaseAdmin.storage.createBucket(BUCKET, {
+          public: true,
+        });
+        if (createErr && !String(createErr.message ?? '').toLowerCase().includes('already exists')) {
+          console.error('[homework/submit-upload] createBucket error:', createErr.message);
+          sendError(res, `Failed to initialize upload storage: ${createErr.message}`, 500);
+          return;
+        }
+      } else {
+        // Best effort: ensure public URLs resolve for existing buckets too.
+        await supabaseAdmin.storage.updateBucket(BUCKET, { public: true }).catch(() => {});
+      }
+    } catch (bucketErr) {
+      const msg = bucketErr instanceof Error ? bucketErr.message : 'Unknown storage setup error';
+      console.error('[homework/submit-upload] bucket init error:', msg);
+      sendError(res, `Failed to initialize upload storage: ${msg}`, 500);
+      return;
+    }
+
     for (const file of files) {
       const ts = Date.now();
       const rand = Math.random().toString(36).slice(2, 10);

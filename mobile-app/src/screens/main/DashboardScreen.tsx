@@ -10,7 +10,6 @@ import {
   Modal,
   ActivityIndicator,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, CommonActions, useFocusEffect } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuthStore } from '../../store/authStore';
@@ -247,10 +246,6 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [notifCount, setNotifCount] = useState(0);   // unread notifications
-  const [annUnseenCount, setAnnUnseenCount] = useState(0); // unseen announcements
-
-  // Bell badge = unread notifications + unseen announcements
-  const totalUnread = notifCount + annUnseenCount;
 
   // Active student: if linked children exist, use active child; else use logged-in student
   const activeStudent =
@@ -299,13 +294,6 @@ export default function DashboardScreen() {
   const openNotifications = useCallback(() => {
     // Optimistically clear badges
     setNotifCount(0);
-    setAnnUnseenCount(0);
-
-    // Announcements are considered "seen" once the notifications feed is opened.
-    // Write this immediately so the Home badge doesn't get stuck if announcements
-    // fetch fails on the notifications screen.
-    const nowIso = new Date().toISOString();
-    AsyncStorage.setItem('notifications_last_viewed_at', nowIso).catch(() => {});
 
     // Mark all unread notifications as read in the backend (no-op if none).
     apiClient.put('/api/notifications/read-all').catch(() => {});
@@ -403,17 +391,6 @@ export default function DashboardScreen() {
       let announcements: Announcement[] = [];
       if (annRes.status === 'fulfilled') {
         announcements = annRes.value.data.data ?? [];
-        // Count announcements newer than the last time user opened the Notifications screen
-        try {
-          const lastViewedRaw = await AsyncStorage.getItem('notifications_last_viewed_at');
-          const lastViewed = lastViewedRaw ? new Date(lastViewedRaw).getTime() : 0;
-          const unseen = announcements.filter(
-            (a) => new Date(a.created_at).getTime() > lastViewed
-          );
-          setAnnUnseenCount(unseen.length);
-        } catch {
-          setAnnUnseenCount(0);
-        }
       }
 
       // Notification badge count — only truly unread notifications
@@ -479,21 +456,12 @@ export default function DashboardScreen() {
             (Array.isArray(notifPayload) ? notifPayload.length : (notifPayload?.data?.length ?? 0));
           setNotifCount(unreadCount);
 
-          // Unseen announcements — count those newer than last Notifications screen visit
-          if (data?.announcements) {
-            const lastViewedRaw = await AsyncStorage.getItem('notifications_last_viewed_at');
-            const lastViewed = lastViewedRaw ? new Date(lastViewedRaw).getTime() : 0;
-            const unseen = data.announcements.filter(
-              (a) => new Date(a.created_at).getTime() > lastViewed
-            );
-            setAnnUnseenCount(unseen.length);
-          }
         } catch {
           // Silently ignore
         }
       };
       fetchCounts();
-    }, [data?.announcements])
+    }, [])
   );
 
   const onRefresh = useCallback(() => {
@@ -546,15 +514,15 @@ export default function DashboardScreen() {
             </Text>
           </View>
           <TouchableOpacity
-            style={[styles.bellWrapper, totalUnread > 0 && styles.bellWrapperActive]}
+            style={[styles.bellWrapper, notifCount > 0 && styles.bellWrapperActive]}
             onPress={openNotifications}
             accessibilityRole="button"
-            accessibilityLabel={`Notifications${totalUnread > 0 ? `, ${totalUnread} unread` : ''}`}
+            accessibilityLabel={`Notifications${notifCount > 0 ? `, ${notifCount} unread` : ''}`}
           >
             <Text style={styles.bell}>🔔</Text>
-            {totalUnread > 0 && (
+            {notifCount > 0 && (
               <View style={styles.badge}>
-                <Text style={styles.badgeText}>{totalUnread > 99 ? '99+' : totalUnread}</Text>
+                <Text style={styles.badgeText}>{notifCount > 99 ? '99+' : notifCount}</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -599,7 +567,14 @@ export default function DashboardScreen() {
                 value={hwValue}
                 sub={hwSub}
                 color="#F59E0B"
-                onPress={() => navigateToMore('Homework')}
+                onPress={() => {
+                  const parent = (navigation as any).getParent?.();
+                  if (parent?.navigate) {
+                    parent.navigate('HomeworkModal');
+                  } else {
+                    navigateToMore('Homework');
+                  }
+                }}
               />
             </View>
             <View style={[styles.cardsRow, { marginTop: 12 }]}>

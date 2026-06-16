@@ -33,6 +33,9 @@ type MoreStackParamList = {
 };
 
 type MoreNavProp = StackNavigationProp<MoreStackParamList>;
+type RootNavProp = StackNavigationProp<{
+  HomeworkSubmit: { homework: HomeworkMeta };
+}>;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -232,6 +235,7 @@ export default function HomeworkScreen() {
   const student = useAuthStore((s) => s.student);
   const { linkedChildren, activeChildIndex } = useChildStore();
   const navigation = useNavigation<MoreNavProp>();
+  const rootNavigation = useNavigation<RootNavProp>();
   const [homework, setHomework] = useState<HomeworkItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -297,7 +301,7 @@ export default function HomeworkScreen() {
   const handleOpenHomework = (item: HomeworkItem) => {
     // Mark as "seen" for teacher read receipt when the student opens it.
     if (!item.acknowledged) acknowledgeSeen(item.id);
-    navigation.navigate('HomeworkSubmit', {
+    const params = {
       homework: {
         id: item.id,
         title: item.title,
@@ -305,7 +309,17 @@ export default function HomeworkScreen() {
         due_date: item.due_date,
         teacher_name: null,
       },
-    });
+    };
+
+    const tabParent = (navigation as any).getParent?.();
+    const rootParent = tabParent?.getParent?.();
+    if (rootParent?.navigate) {
+      rootParent.navigate('HomeworkSubmit', params);
+    } else if (tabParent?.navigate) {
+      tabParent.navigate('HomeworkSubmit', params);
+    } else {
+      rootNavigation.navigate('HomeworkSubmit', params);
+    }
   };
 
   // Filter by tab

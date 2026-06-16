@@ -68,6 +68,7 @@ export type StudentTabParamList = MainTabParamList;
 export type MainStackParamList = {
   MainTabs: undefined;
   TestAttempt: { test: TestMeta };
+  HomeworkModal: undefined;
   HomeworkSubmit: { homework: HomeworkMeta };
   NotificationsModal: undefined;
   Resources: undefined;
@@ -414,6 +415,17 @@ function MainNavigator() {
       initialRouteName={isFirstLogin ? 'ChangePassword' : 'MainTabs'}
     >
       <MainStack.Screen name="MainTabs" component={MainTabNavigator} />
+      <MainStack.Screen
+        name="HomeworkModal"
+        component={HomeworkScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Homework',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
       <MainStack.Screen
         name="NotificationsModal"
         component={NotificationsScreen}
