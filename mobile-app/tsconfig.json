@@ -1,13 +1,12 @@
 {
-  // Manually mirrors expo/tsconfig.base but replaces module:"preserve"
-  // (requires TS ≥5.4) with module:"ESNext" which is valid for TS ~5.3.3.
-  // Remove this override and restore "extends":"expo/tsconfig.base" once
-  // TypeScript is upgraded to ≥5.4 in devDependencies.
   "compilerOptions": {
     "allowJs": true,
     "esModuleInterop": true,
     "jsx": "react-native",
-    "lib": ["DOM", "ESNext"],
+    "lib": [
+      "DOM",
+      "ESNext"
+    ],
     "module": "ESNext",
     "moduleDetection": "force",
     "moduleResolution": "Bundler",
@@ -15,7 +14,6 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "target": "ESNext",
-    // project-level additions
     "strict": true,
     "paths": {
       "@/*": [
@@ -35,5 +33,6 @@
     "jest.config.js",
     "android",
     "ios"
-  ]
+  ],
+  "extends": "expo/tsconfig.base"
 }
