@@ -618,7 +618,26 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
 
   const now = new Date().toISOString();
 
-  // ── Step 0: Reset overflow flags from previous days ───────────────────────
+  // ── Step 0a: Recover stale 'processing' submissions ──────────────────────
+  // If the server crashed or was restarted mid-batch, some submissions may be
+  // stuck in 'processing' indefinitely because the batch never set them to a
+  // final state. Reset any submission that has been in 'processing' for more
+  // than 30 minutes back to 'submitted' so this run can pick them up.
+  const staleThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+  const { error: recoverErr, count: recoveredCount } = await supabaseAdmin
+    .from('homework_submissions')
+    .update({ status: 'submitted' })
+    .eq('status', 'processing')
+    .lt('updated_at', staleThreshold);
+
+  if (recoverErr) {
+    console.warn('[homeworkEval] Could not recover stale processing submissions:', recoverErr.message);
+  } else if (recoveredCount && recoveredCount > 0) {
+    console.log(`[homeworkEval] Recovered ${recoveredCount} stale 'processing' submissions back to 'submitted'`);
+  }
+
+  // ── Step 0b: Reset overflow flags from previous days ─────────────────────
   // Submissions marked queued_overflow=true should be retried today.
   // Clear the flag for all overflow submissions from BEFORE today (UTC).
   const startOfToday = new Date();
@@ -722,10 +741,12 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
     const evalAt = new Date().toISOString();
 
     try {
-      // Mark as 'processing' first to avoid double-processing on re-runs
+      // Mark as 'processing' first to avoid double-processing on re-runs.
+      // updated_at is set here so the stale-recovery step at the top of
+      // this function can detect submissions that got stuck in this state.
       await supabaseAdmin
         .from('homework_submissions')
-        .update({ status: 'processing' })
+        .update({ status: 'processing', updated_at: new Date().toISOString() })
         .eq('id', row.id);
 
       const isPhotoOnly =

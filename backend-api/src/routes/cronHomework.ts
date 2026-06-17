@@ -101,6 +101,43 @@ router.post('/evaluate-batch', async (req: Request, res: Response) => {
   });
 });
 
+// ── POST /api/cron/homework/reset-stuck ──────────────────────────────────────
+/**
+ * Manually reset submissions stuck in 'processing' back to 'submitted'.
+ * Useful when a batch job crashed mid-run and left submissions stranded.
+ * Optionally accepts { older_than_minutes: number } to control the threshold
+ * (defaults to 30 minutes).
+ * Auth: CRON_SECRET required.
+ */
+router.post('/reset-stuck', async (req: Request, res: Response) => {
+  if (!verifyCronSecret(req, res)) return;
+
+  const olderThanMinutes = Math.max(1, Number(req.body?.older_than_minutes ?? 30));
+  const threshold = new Date(Date.now() - olderThanMinutes * 60 * 1000).toISOString();
+
+  try {
+    const { error, count } = await supabaseAdmin
+      .from('homework_submissions')
+      .update({ status: 'submitted' })
+      .eq('status', 'processing')
+      .lt('updated_at', threshold);
+
+    if (error) {
+      sendError(res, `Failed to reset stuck submissions: ${error.message}`, 500);
+      return;
+    }
+
+    sendSuccess(res, {
+      reset_count: count ?? 0,
+      older_than_minutes: olderThanMinutes,
+      threshold,
+    }, `${count ?? 0} stuck submissions reset to 'submitted'`);
+  } catch (err) {
+    console.error('[cron/homework] reset-stuck error:', err instanceof Error ? err.message : err);
+    sendError(res, 'Unexpected error', 500);
+  }
+});
+
 // ── POST /api/cron/homework/evaluate-batch/status ────────────────────────────
 /**
  * Returns a summary of recent batch evaluation activity.
