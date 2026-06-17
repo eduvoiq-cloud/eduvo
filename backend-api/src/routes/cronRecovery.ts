@@ -634,6 +634,53 @@ router.post('/check-batch-jobs', async (req: Request, res: Response) => {
   });
 });
 
+// Also accept GET for cron-job.org free plan
+router.get('/check-batch-jobs', async (req: Request, res: Response) => {
+  if (!verifyCronSecret(req, res)) return;
+
+  const startedAt = new Date().toISOString();
+  sendSuccess(res, { message: 'Batch job checker started', started_at: startedAt }, 'Job started');
+
+  setImmediate(async () => {
+    try {
+      console.log('[cron/recovery] check-batch-jobs (GET) starting at', startedAt);
+      // Reuse the same logic — find stuck processing rows and retry/mark failed
+      const stuckThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+
+      const { data: stuckPacks } = await supabaseAdmin
+        .from('recovery_packs')
+        .select('id')
+        .eq('generation_status', 'processing')
+        .lt('created_at', stuckThreshold);
+
+      for (const pack of (stuckPacks ?? []) as Array<{ id: string }>) {
+        await supabaseAdmin
+          .from('recovery_packs')
+          .update({ generation_status: 'failed' })
+          .eq('id', pack.id);
+      }
+
+      const { data: stuckTests } = await supabaseAdmin
+        .from('monthly_recovery_tests')
+        .select('id')
+        .eq('generation_status', 'processing')
+        .lt('created_at', stuckThreshold);
+
+      for (const test of (stuckTests ?? []) as Array<{ id: string }>) {
+        await supabaseAdmin
+          .from('monthly_recovery_tests')
+          .update({ generation_status: 'failed' })
+          .eq('id', test.id);
+      }
+
+      console.log(`[cron/recovery] check-batch-jobs (GET) complete — stuck packs: ${stuckPacks?.length ?? 0}, stuck tests: ${stuckTests?.length ?? 0}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[cron/recovery] check-batch-jobs (GET) crashed:', msg);
+    }
+  });
+});
+
 // ── POST /api/cron/recovery/activate-tests ───────────────────────────────────
 /**
  * Daily cron: set is_available=true on monthly_recovery_tests where:
