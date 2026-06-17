@@ -49,9 +49,21 @@ const TYPE_ICON: Record<NotificationType, string> = {
   complaint: '📋',
 };
 
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time — causing
+ * timestamps to appear shifted by the device UTC offset (e.g. +5:30h for IST).
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 // ── Time-ago helper ───────────────────────────────────────────────────────────
 function timeAgo(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMs = Date.now() - parseUtcDate(iso).getTime();
   const diffSec = Math.floor(diffMs / 1000);
   if (diffSec < 60) return 'just now';
   const diffMin = Math.floor(diffSec / 60);
@@ -60,7 +72,7 @@ function timeAgo(iso: string): string {
   if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? '' : 's'} ago`;
   const diffDay = Math.floor(diffHr / 24);
   if (diffDay < 7) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`;
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return parseUtcDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────

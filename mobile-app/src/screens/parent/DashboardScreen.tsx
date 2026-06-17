@@ -61,14 +61,18 @@ function todayISO(): string {
 }
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
+  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+    ? new Date(iso + 'Z') : new Date(iso);
+  return d.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
   });
 }
 
 function formatNotifDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
+  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+    ? new Date(iso + 'Z') : new Date(iso);
+  return d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

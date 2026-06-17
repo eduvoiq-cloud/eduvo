@@ -38,8 +38,20 @@ type FeedItem = NotificationItem | AnnouncementItem;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time — causing
+ * timestamps to appear shifted by the device UTC offset (e.g. +5:30h for IST).
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const diff = Date.now() - parseUtcDate(iso).getTime();
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;
@@ -47,7 +59,7 @@ function timeAgo(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return parseUtcDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
 function notifIcon(type: string): string {
@@ -267,10 +279,10 @@ export default function NotificationsScreen() {
 
   // Sort each group newest first, then combine into sections
   const sortedNotifs = [...notifications].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    (a, b) => parseUtcDate(b.created_at).getTime() - parseUtcDate(a.created_at).getTime()
   );
   const sortedAnns = [...announcements].sort(
-    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    (a, b) => parseUtcDate(b.created_at).getTime() - parseUtcDate(a.created_at).getTime()
   );
 
   const sections: Array<{ title: string; data: FeedItem[] }> = [];

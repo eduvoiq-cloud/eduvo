@@ -70,6 +70,17 @@ interface AiCostData {
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 async function apiFetch<T>(path: string, token: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
@@ -436,7 +447,7 @@ export default function SuperAdminDashboard() {
                     </td>
                     <td className="px-4 py-3.5 text-gray-500 text-xs">
                       {school.last_active_date
-                        ? new Date(school.last_active_date).toLocaleDateString()
+                        ? parseUtcDate(school.last_active_date).toLocaleDateString()
                         : '—'}
                     </td>
                     <td className="px-6 py-3.5">
@@ -614,7 +625,7 @@ export default function SuperAdminDashboard() {
                   </p>
                 </div>
                 <p className="text-xs text-gray-400 whitespace-nowrap shrink-0">
-                  {new Date(log.created_at).toLocaleString()}
+                  {parseUtcDate(log.created_at).toLocaleString()}
                 </p>
               </div>
             ))}

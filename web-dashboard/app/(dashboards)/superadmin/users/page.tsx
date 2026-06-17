@@ -11,6 +11,17 @@ import FormField, { inputClass } from '@/components/FormField';
 
 type AppRole = 'schooladmin' | 'teacher' | 'parent' | 'student';
 
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 interface UserRow {
   id: string;
   name: string;
@@ -262,7 +273,7 @@ export default function SuperAdminUsersPage() {
                     </td>
                     <td className="px-6 py-4 text-gray-600 text-sm">{schoolName(u.school_id)}</td>
                     <td className="px-6 py-4 text-gray-500 text-xs">
-                      {new Date(u.created_at).toLocaleDateString()}
+                      {parseUtcDate(u.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <button

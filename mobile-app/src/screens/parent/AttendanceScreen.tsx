@@ -68,7 +68,9 @@ const STATUS_COLOR: Record<string, string> = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
+  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+    ? new Date(iso + 'Z') : new Date(iso);
+  return d.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
   });

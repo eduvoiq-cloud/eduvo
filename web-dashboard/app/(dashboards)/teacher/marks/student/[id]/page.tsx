@@ -30,6 +30,30 @@ function pct(score: number, max: number): number {
   return Math.round((score / max) * 100);
 }
 
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
+}
+
+function IntegrityScoreBadge({ score, isSuspicious }: { score: number | null; isSuspicious: boolean | null }) {
+  if (isSuspicious) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+        ⚠ Suspicious
+      </span>
+    );
+  }
+  if (score === null) return <span className="text-gray-400 text-xs">—</span>;
+  const color = score >= 80 ? 'bg-green-100 text-green-700' : score >= 60 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700';
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${color}`}>
+      {score}
+    </span>
+  );
+}
+
 function GradeBadge({ percentage }: { percentage: number }) {
   const color =
     percentage >= 75 ? 'bg-green-100 text-green-700' :
@@ -332,7 +356,7 @@ export default function TeacherStudentMarksPage() {
                         : <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Pending</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">
-                      {t.submitted_at ? new Date(t.submitted_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                      {t.submitted_at ? ((t.submitted_at && !t.submitted_at.endsWith('Z') && !t.submitted_at.includes('+') && !/\d{2}:\d{2}$/.test(t.submitted_at)) ? new Date(t.submitted_at + 'Z') : new Date(t.submitted_at)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button
@@ -354,6 +378,65 @@ export default function TeacherStudentMarksPage() {
         )}
       </div>
 
+      {/* ── Test Integrity History ──────────────────────────────────────────── */}
+      {testSubmissions.some((t) => t.integrity_score !== null || t.is_suspicious !== null) && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden max-w-2xl mt-6">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-gray-900">Test Integrity History</h2>
+            <span className="text-xs text-gray-400">Sorted by recent first</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Test</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Subject</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Score</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Integrity</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Exits</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Time Outside</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Suspicious</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {[...testSubmissions]
+                  .sort((a, b) => {
+                    const da = a.submitted_at ? new Date(a.submitted_at).getTime() : 0;
+                    const db = b.submitted_at ? new Date(b.submitted_at).getTime() : 0;
+                    return db - da;
+                  })
+                  .filter((t) => t.integrity_score !== null || t.is_suspicious !== null || t.exit_count !== null)
+                  .map((t) => (
+                    <tr key={t.attempt_id} className={`hover:bg-gray-50 transition-colors ${t.is_suspicious ? 'bg-red-50' : ''}`}>
+                      <td className="px-6 py-3 font-medium text-gray-900">{t.test_title ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{t.subject ?? '—'}</td>
+                      <td className="px-4 py-3 text-center font-semibold text-gray-800">
+                        {t.total_score !== null ? t.total_score : t.mcq_score !== null ? t.mcq_score : '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        <IntegrityScoreBadge score={t.integrity_score} isSuspicious={t.is_suspicious ?? null} />
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">{t.exit_count !== null ? t.exit_count : '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 text-xs">
+                        {t.total_exit_duration_seconds !== null ? formatDuration(t.total_exit_duration_seconds) : '—'}
+                      </td>
+                      <td className="px-4 py-3">
+                        {t.is_suspicious ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Yes</span>
+                        ) : t.is_suspicious === false ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">No</span>
+                        ) : (
+                          <span className="text-gray-400 text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ── Theory Marking Modal ─────────────────────────────────────────────── */}
       <Modal
         open={!!viewAttempt || attemptLoading}
@@ -373,7 +456,7 @@ export default function TeacherStudentMarksPage() {
                 { label: 'Roll No', value: viewAttempt.roll_no },
                 { label: 'MCQ Score', value: viewAttempt.mcq_score ?? '—' },
                 { label: 'Total', value: viewAttempt.total_score ?? 'Pending' },
-                { label: 'Submitted', value: new Date(viewAttempt.submitted_at).toLocaleString() },
+                { label: 'Submitted', value: ((viewAttempt.submitted_at && !viewAttempt.submitted_at.endsWith('Z') && !viewAttempt.submitted_at.includes('+') && !/\d{2}:\d{2}$/.test(viewAttempt.submitted_at)) ? new Date(viewAttempt.submitted_at + 'Z') : new Date(viewAttempt.submitted_at)).toLocaleString() },
               ].map((item) => (
                 <span key={item.label} className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full">
                   <span className="font-medium">{item.label}:</span> {item.value}

@@ -82,7 +82,9 @@ const AI_RESULT_COLORS: Record<string, string> = {
 
 function formatTime(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString([], {
+  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+    ? new Date(iso + 'Z') : new Date(iso);
+  return d.toLocaleString([], {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });

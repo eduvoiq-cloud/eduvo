@@ -16,6 +16,19 @@ import FormField, { inputClass } from '@/components/FormField';
 
 const PAGE_SIZE = 50;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface StudentForm {
@@ -827,7 +840,7 @@ function StudentsPageInner() {
                       <td className="px-4 py-3 text-gray-500">{s.class_name}</td>
                       <td className="px-4 py-3 text-gray-500">{s.section ?? '—'}</td>
                       <td className="px-4 py-3 text-gray-400 text-xs">
-                        {s.deleted_at ? new Date(s.deleted_at).toLocaleDateString() : '—'}
+                        {s.deleted_at ? parseUtcDate(s.deleted_at).toLocaleDateString() : '—'}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <button onClick={() => setRestoreTarget(s)}

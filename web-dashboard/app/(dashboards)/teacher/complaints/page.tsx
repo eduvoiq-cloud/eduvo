@@ -13,6 +13,17 @@ const STATUS_STYLES: Record<Complaint['status'], string> = {
   resolved: 'bg-green-100 text-green-700',
 };
 
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 export default function ComplaintsPage() {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -138,7 +149,7 @@ export default function ComplaintsPage() {
                       {c.status.charAt(0).toUpperCase() + c.status.slice(1)}
                     </span>
                     <span className="text-xs text-gray-400">
-                      {new Date(c.created_at).toLocaleDateString()}
+                      {parseUtcDate(c.created_at).toLocaleDateString()}
                     </span>
                   </div>
                   <p className="font-medium text-gray-900 text-sm">{c.subject}</p>

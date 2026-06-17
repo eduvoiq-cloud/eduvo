@@ -26,6 +26,8 @@ type MoreStackParamList = {
   ChangePassword: undefined;
   LinkChild: undefined;
   Settings: undefined;
+  RecoveryPacks: undefined;
+  MonthlyRecoveryTests: undefined;
 };
 
 type MoreNavProp = StackNavigationProp<MoreStackParamList>;
@@ -112,6 +114,20 @@ export default function MoreHomeScreen() {
             description="Your weekly class schedule"
             color="#1D4ED8"
             onPress={() => navigation.navigate('Timetable')}
+          />
+          <MenuItem
+            icon="📘"
+            label="Recovery Packs"
+            description="Personalised study packs for your weak topics"
+            color="#7C3AED"
+            onPress={() => navigation.navigate('RecoveryPacks')}
+          />
+          <MenuItem
+            icon="🎯"
+            label="Recovery Tests"
+            description="Monthly tests based on your weak topics"
+            color="#7C3AED"
+            onPress={() => navigation.navigate('MonthlyRecoveryTests')}
           />
         </View>
 

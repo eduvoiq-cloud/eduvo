@@ -312,6 +312,12 @@ export interface TestResultsSummaryRow {
   max_score: number;
   submitted_at: string | null;
   theory_pending: boolean;
+  // Integrity fields — null if no integrity log exists yet
+  integrity_score: number | null;
+  exit_count: number | null;
+  total_exit_duration_seconds: number | null;
+  is_suspicious: boolean | null;
+  suspicious_reasons: string[] | null;
 }
 
 export interface TestResultsSummary {
@@ -747,6 +753,29 @@ export interface TestSubmissionRecord {
   mcq_score: number | null;
   total_score: number | null;
   submitted_at: string | null;
+  // Integrity fields — null if no integrity log exists yet
+  integrity_score: number | null;
+  exit_count: number | null;
+  total_exit_duration_seconds: number | null;
+  is_suspicious: boolean | null;
+  suspicious_reasons: string[] | null;
+}
+
+export interface SuspiciousActivityRow {
+  id: string;
+  attempt_id: string;
+  student_id: string;
+  student_name: string;
+  test_id: string | null;
+  test_title: string | null;
+  subject: string | null;
+  test_date: string | null;
+  exit_count: number;
+  total_exit_duration_seconds: number;
+  integrity_score: number | null;
+  is_suspicious: boolean;
+  suspicious_reasons: string[] | null;
+  created_at: string;
 }
 
 export interface StudentMarksDetail {
@@ -997,6 +1026,9 @@ export const testsApi = {
       method: 'PUT',
       body: JSON.stringify({ blocked_student_ids: blockedStudentIds }),
     }, token),
+
+  getSuspiciousActivity: (token: string) =>
+    request<SuspiciousActivityRow[]>('/api/tests/suspicious-activity', { method: 'GET' }, token),
 };
 
 // ── Onboarding endpoints ──────────────────────────────────────────────────────
@@ -1428,4 +1460,116 @@ export interface HomeworkAIStats {
 export const homeworkAIStatsApi = {
   get: (token: string) =>
     request<HomeworkAIStats>('/api/homework/ai-stats', { method: 'GET' }, token),
+};
+
+// ── Monthly Recovery Schedules ────────────────────────────────────────────────
+
+export type RecoveryScheduleStatus =
+  | 'pending_teacher_approval'
+  | 'approved'
+  | 'postponed'
+  | 'cancelled'
+  | 'pack_generated'
+  | 'test_generated'
+  | 'completed';
+
+export type TeacherDecision = 'generate_now' | 'postpone' | 'cancel' | null;
+
+export type PostponeReason =
+  | 'unit_test'
+  | 'final_exam'
+  | 'school_event'
+  | 'teacher_choice'
+  | 'other'
+  | null;
+
+export interface RecoverySchedule {
+  id: string;
+  school_id: string;
+  class: string;
+  section: string;
+  subject: string;
+  scheduled_month: string; // YYYY-MM-DD (first of month)
+  scheduled_test_date: string | null;
+  recovery_pack_date: string | null;
+  teacher_id: string | null;
+  status: RecoveryScheduleStatus;
+  teacher_decision: TeacherDecision;
+  teacher_decision_at: string | null;
+  teacher_decision_reason: string | null;
+  postpone_reason: PostponeReason;
+  created_at: string;
+  updated_at: string;
+}
+
+export const recoverySchedulesApi = {
+  /** GET pending/postponed schedules for the authenticated teacher */
+  listPending: (token: string) =>
+    request<RecoverySchedule[]>('/api/recovery-schedules', { method: 'GET' }, token),
+
+  /** GET all schedules for this month (read-only table) */
+  listAll: (token: string, month?: string) => {
+    const qs = month ? `?month=${month}` : '';
+    return request<RecoverySchedule[]>(`/api/recovery-schedules/all${qs}`, { method: 'GET' }, token);
+  },
+
+  /** GET count of pending_teacher_approval schedules */
+  pendingCount: (token: string) =>
+    request<{ count: number }>('/api/recovery-schedules/pending-count', { method: 'GET' }, token),
+
+  /** Approve — sets status=approved, teacher_decision=generate_now */
+  approve: (token: string, id: string) =>
+    request<RecoverySchedule>(`/api/recovery-schedules/${id}/approve`, { method: 'PUT' }, token),
+
+  /** Postpone — new date + reason */
+  postpone: (token: string, id: string, payload: { new_test_date: string; postpone_reason: PostponeReason }) =>
+    request<RecoverySchedule>(`/api/recovery-schedules/${id}/postpone`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, token),
+
+  /** Cancel this month's recovery test */
+  cancel: (token: string, id: string) =>
+    request<RecoverySchedule>(`/api/recovery-schedules/${id}/cancel`, { method: 'PUT' }, token),
+
+  /** GET pack + test generation status for a specific schedule */
+  generationStatus: (token: string, id: string) =>
+    request<RecoveryGenerationStatus>(`/api/recovery-schedules/${id}/generation-status`, { method: 'GET' }, token),
+};
+
+// ── Recovery generation status ────────────────────────────────────────────────
+
+export type GenerationStatusLevel = 'none' | 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface GenerationStatusSummary {
+  status: GenerationStatusLevel;
+  total: number;
+  completed: number;
+  processing: number;
+  failed: number;
+}
+
+export interface RecoveryGenerationStatus {
+  schedule_id: string;
+  scheduled_test_date: string | null;
+  pack: GenerationStatusSummary;
+  test: GenerationStatusSummary & { available_date: string | null };
+}
+
+// ── Recovery generation trigger ───────────────────────────────────────────────
+
+export const recoveryApi = {
+  generatePack: (token: string, scheduleId: string) =>
+    request<{ message: string; schedule_id: string }>(
+      '/api/recovery/generate-pack',
+      { method: 'POST', body: JSON.stringify({ schedule_id: scheduleId }) },
+      token
+    ),
+
+  generateTest: (token: string, scheduleId: string) =>
+    request<{ message: string; schedule_id: string }>(
+      '/api/recovery/generate-test',
+      { method: 'POST', body: JSON.stringify({ schedule_id: scheduleId }) },
+      token
+    ),
 };

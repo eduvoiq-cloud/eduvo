@@ -219,7 +219,7 @@ export default function SchoolDetailPage() {
             />
             <InfoRow
               label="Created"
-              value={new Date(school.created_at).toLocaleDateString('en-IN', {
+              value={((school.created_at && !school.created_at.endsWith('Z') && !school.created_at.includes('+') && !/\d{2}:\d{2}$/.test(school.created_at)) ? new Date(school.created_at + 'Z') : new Date(school.created_at)).toLocaleDateString('en-IN', {
                 day: 'numeric',
                 month: 'long',
                 year: 'numeric',
@@ -262,7 +262,7 @@ export default function SchoolDetailPage() {
                     )}
                   </div>
                   <p className="text-xs text-gray-400 shrink-0 ml-3">
-                    {new Date(admin.created_at).toLocaleDateString()}
+                    {((admin.created_at && !admin.created_at.endsWith('Z') && !admin.created_at.includes('+') && !/\d{2}:\d{2}$/.test(admin.created_at)) ? new Date(admin.created_at + 'Z') : new Date(admin.created_at)).toLocaleDateString()}
                   </p>
                 </div>
               ))}

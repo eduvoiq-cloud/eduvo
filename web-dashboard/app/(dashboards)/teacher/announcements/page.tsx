@@ -44,8 +44,19 @@ interface AdminAnnouncementRecord {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 function timeAgo(isoString: string): string {
-  const diff = Date.now() - new Date(isoString).getTime();
+  const diff = Date.now() - parseUtcDate(isoString).getTime();
   const mins = Math.floor(diff / 60_000);
   if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins} minute${mins !== 1 ? 's' : ''} ago`;
@@ -163,7 +174,7 @@ export default function TeacherAnnouncementsPage() {
       if (!res.ok) throw new Error(json.message ?? 'Failed to load announcements');
       const data: AnnouncementRecord[] = json.data ?? [];
       // Sort newest first
-      data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      data.sort((a, b) => parseUtcDate(b.created_at).getTime() - parseUtcDate(a.created_at).getTime());
       setAnnouncements(data);
     } catch (err: unknown) {
       setListError(err instanceof Error ? err.message : 'Failed to load announcements');

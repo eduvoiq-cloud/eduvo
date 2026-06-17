@@ -27,7 +27,8 @@ interface UploadedFileBannerProps {
 
 function UploadedFileBanner({ file, onDelete, deleting }: UploadedFileBannerProps) {
   const isPdf = !file.is_image;
-  const uploadedDate = new Date(file.uploaded_at).toLocaleString();
+  const uploadedDate = ((file.uploaded_at && !file.uploaded_at.endsWith('Z') && !file.uploaded_at.includes('+') && !/\d{2}:\d{2}$/.test(file.uploaded_at))
+    ? new Date(file.uploaded_at + 'Z') : new Date(file.uploaded_at)).toLocaleString();
 
   return (
     <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl mb-4 print:hidden">

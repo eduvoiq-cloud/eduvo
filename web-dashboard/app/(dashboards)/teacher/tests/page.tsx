@@ -59,6 +59,51 @@ const EXAM_TYPES_LIST = [
   { value: 'project', label: 'Project' },
 ] as const;
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Format seconds as "Xm Ys" */
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m === 0) return `${s}s`;
+  return `${m}m ${s}s`;
+}
+
+/** Integrity status badge */
+function IntegrityBadge({ row }: { row: { integrity_score: number | null; is_suspicious: boolean | null } }) {
+  if (row.is_suspicious) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+        ⚠ Suspicious
+      </span>
+    );
+  }
+  if (row.integrity_score === null) return <span className="text-gray-400 text-xs">Pending</span>;
+  if (row.integrity_score >= 80) {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+        Clean
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+      Review
+    </span>
+  );
+}
+
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -869,6 +914,10 @@ export default function TestsPage() {
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Student</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Status</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Score</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Integrity</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Exits</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Time Outside</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Integrity Status</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Submitted</th>
                       <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Action</th>
                     </tr>
@@ -901,8 +950,29 @@ export default function TestsPage() {
                             : <span className="text-gray-400">—</span>
                           }
                         </td>
+                        {/* Integrity columns */}
+                        <td className="px-3 py-3 text-gray-700 font-semibold text-xs">
+                          {!row.attempted ? <span className="text-gray-300">—</span>
+                            : row.integrity_score !== null ? row.integrity_score : <span className="text-gray-400">Pending</span>}
+                        </td>
+                        <td className="px-3 py-3 text-gray-600 text-xs">
+                          {!row.attempted ? <span className="text-gray-300">—</span>
+                            : row.exit_count !== null ? row.exit_count : <span className="text-gray-400">Pending</span>}
+                        </td>
+                        <td className="px-3 py-3 text-gray-600 text-xs">
+                          {!row.attempted ? <span className="text-gray-300">—</span>
+                            : row.total_exit_duration_seconds !== null
+                              ? formatDuration(row.total_exit_duration_seconds)
+                              : <span className="text-gray-400">Pending</span>}
+                        </td>
+                        <td className="px-3 py-3">
+                          {!row.attempted ? <span className="text-gray-300 text-xs">—</span>
+                            : row.integrity_score === null && row.is_suspicious === null
+                              ? <span className="text-gray-400 text-xs">Pending</span>
+                              : <IntegrityBadge row={row} />}
+                        </td>
                         <td className="px-3 py-3 text-gray-500 text-xs">
-                          {row.submitted_at ? new Date(row.submitted_at).toLocaleString() : '—'}
+                          {row.submitted_at ? parseUtcDate(row.submitted_at).toLocaleString() : '—'}
                         </td>
                         <td className="px-3 py-3 text-right">
                           {row.attempted && (
@@ -955,7 +1025,7 @@ export default function TestsPage() {
                 { label: 'Roll No', value: viewAttempt.roll_no },
                 { label: 'MCQ Score', value: viewAttempt.mcq_score ?? '—' },
                 { label: 'Total', value: viewAttempt.total_score ?? 'Pending' },
-                { label: 'Submitted', value: new Date(viewAttempt.submitted_at).toLocaleString() },
+                { label: 'Submitted', value: parseUtcDate(viewAttempt.submitted_at).toLocaleString() },
               ].map((item) => (
                 <span key={item.label} className="px-2.5 py-1 bg-gray-100 text-gray-600 rounded-full">
                   <span className="font-medium">{item.label}:</span> {item.value}

@@ -26,6 +26,10 @@ import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
 // Student-specific screens
 import StudentTestsScreen from '../screens/student/TestsScreen';
 import HomeworkSubmitScreen, { type HomeworkMeta } from '../screens/student/HomeworkSubmitScreen';
+import RecoveryPacksScreen from '../screens/student/RecoveryPacksScreen';
+import RecoveryPackDetailScreen from '../screens/student/RecoveryPackDetailScreen';
+import MonthlyRecoveryTestsScreen from '../screens/student/MonthlyRecoveryTestsScreen';
+import MonthlyRecoveryTestAttemptScreen from '../screens/student/MonthlyRecoveryTestAttemptScreen';
 
 // More home screen
 import MoreHomeScreen from '../screens/main/MoreHomeScreen';
@@ -75,6 +79,10 @@ export type MainStackParamList = {
   ChangePassword: undefined;
   LinkChild: undefined;
   Announcements: undefined;
+  RecoveryPacks: undefined;
+  RecoveryPackDetail: { packId: string };
+  MonthlyRecoveryTests: undefined;
+  MonthlyRecoveryTestAttempt: { testId: string };
 };
 
 // Keep StudentStackParamList as an alias so existing student screens don't break
@@ -482,6 +490,44 @@ function MainNavigator() {
           headerTintColor: '#FFFFFF',
           headerTitleStyle: { fontWeight: '600' },
         }}
+      />
+      <MainStack.Screen
+        name="RecoveryPacks"
+        component={RecoveryPacksScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Recovery Packs',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
+      <MainStack.Screen
+        name="RecoveryPackDetail"
+        component={RecoveryPackDetailScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Recovery Pack',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
+      <MainStack.Screen
+        name="MonthlyRecoveryTests"
+        component={MonthlyRecoveryTestsScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Recovery Tests',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
+      />
+      <MainStack.Screen
+        name="MonthlyRecoveryTestAttempt"
+        component={MonthlyRecoveryTestAttemptScreen}
+        options={{ headerShown: false }}
       />
     </MainStack.Navigator>
   );

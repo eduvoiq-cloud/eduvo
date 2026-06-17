@@ -861,7 +861,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         } else if (payload.resumed) {
           // Resumed without local save — use server timestamp.
           const elapsed = Math.floor(
-            (Date.now() - new Date(payload.started_at).getTime()) / 1000,
+            (Date.now() - ((payload.started_at && !payload.started_at.endsWith('Z') && !payload.started_at.includes('+') && !/\d{2}:\d{2}$/.test(payload.started_at)) ? new Date(payload.started_at + 'Z') : new Date(payload.started_at)).getTime()) / 1000,
           );
           const remaining = payload.time_limit_minutes * 60 - elapsed;
           setSecondsLeft(remaining > 0 ? remaining : 1);

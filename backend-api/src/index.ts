@@ -70,7 +70,11 @@ import studentProgressRoutes from './routes/studentProgress';
 import weeklyAnalysisRoutes from './routes/weeklyAnalysis';
 import cronNotificationRoutes from './routes/cronNotifications';
 import cronHomeworkRoutes from './routes/cronHomework';
+import cronRecoveryRoutes from './routes/cronRecovery';
 import subjectResourcesRoutes from './routes/subjectResources';
+import recoverySchedulesRoutes from './routes/recoverySchedules';
+import recoveryRoutes from './routes/recovery';
+import studentRecoveryRoutes from './routes/studentRecovery';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -304,7 +308,11 @@ async function startServer() {
   app.use('/api/weekly-analysis', weeklyAnalysisRoutes);
   app.use('/api/cron/notifications', cronNotificationRoutes);
   app.use('/api/cron/homework', cronHomeworkRoutes);
+  app.use('/api/cron/recovery', cronRecoveryRoutes);
   app.use('/api/subject-resources', subjectResourcesRoutes);
+  app.use('/api/recovery-schedules', recoverySchedulesRoutes);
+  app.use('/api/recovery', recoveryRoutes);
+  app.use('/api/student-recovery', studentRecoveryRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

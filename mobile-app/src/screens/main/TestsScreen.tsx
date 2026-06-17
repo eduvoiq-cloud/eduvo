@@ -29,6 +29,10 @@ interface TestRecord {
   available_until?: string | null;
   /** True when the teacher has blocked this student from the test */
   is_restricted?: boolean;
+  /** Integrity score (0-100), present only if integrity was recorded */
+  integrity_score?: number | null;
+  integrity_exit_count?: number | null;
+  integrity_exit_duration_seconds?: number | null;
 }
 
 interface TestsResponse {
@@ -38,7 +42,9 @@ interface TestsResponse {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
+  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+    ? new Date(iso + 'Z') : new Date(iso);
+  return d.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -132,6 +138,25 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
             : 'Start Test →'}
         </Text>
       </View>
+
+      {/* Integrity score — shown only for completed tests where data exists */}
+      {status === 'completed' && test.integrity_score !== null && test.integrity_score !== undefined && (
+        <View style={styles.integrityRow}>
+          <Text style={[
+            styles.integrityScore,
+            test.integrity_score >= 80
+              ? styles.integrityGreen
+              : test.integrity_score >= 60
+              ? styles.integrityAmber
+              : styles.integrityRed,
+          ]}>
+            Integrity: {test.integrity_score}/100
+          </Text>
+          <Text style={styles.integrityMeta}>
+            Exits: {test.integrity_exit_count ?? 0} · Outside: {test.integrity_exit_duration_seconds ?? 0}s
+          </Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -442,6 +467,22 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   ctaText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
+
+  // Integrity score row (completed tests only)
+  integrityRow: {
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  integrityScore: { fontSize: 12, fontWeight: '700' },
+  integrityGreen: { color: '#15803D' },
+  integrityAmber: { color: '#D97706' },
+  integrityRed:   { color: '#DC2626' },
+  integrityMeta:  { fontSize: 11, color: '#9CA3AF' },
 
   windowRow: {
     borderTopWidth: 1,

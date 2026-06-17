@@ -335,6 +335,40 @@ router.get('/student/:id', async (req: Request, res: Response) => {
     };
   });
 
+  // Fetch integrity logs for all submitted attempts of this student
+  const attemptIdsForIntegrity = (testAttempts ?? []).map((a: Record<string, unknown>) => a.id as string);
+  type IntegrityRow = {
+    daily_test_attempt_id: string;
+    integrity_score: number | null;
+    exit_count: number;
+    total_exit_duration_seconds: number;
+    is_suspicious: boolean;
+    suspicious_reasons: string[] | null;
+  };
+  const integrityByAttemptId = new Map<string, IntegrityRow>();
+  if (attemptIdsForIntegrity.length > 0) {
+    const { data: integrityRows } = await supabaseAdmin
+      .from('test_integrity_logs')
+      .select('daily_test_attempt_id, integrity_score, exit_count, total_exit_duration_seconds, is_suspicious, suspicious_reasons')
+      .eq('student_id', id)
+      .in('daily_test_attempt_id', attemptIdsForIntegrity);
+    for (const row of ((integrityRows ?? []) as IntegrityRow[])) {
+      integrityByAttemptId.set(row.daily_test_attempt_id, row);
+    }
+  }
+
+  const enrichedAttempts = formattedAttempts.map((a) => {
+    const integrity = integrityByAttemptId.get(a.attempt_id);
+    return {
+      ...a,
+      integrity_score: integrity?.integrity_score ?? null,
+      exit_count: integrity?.exit_count ?? null,
+      total_exit_duration_seconds: integrity?.total_exit_duration_seconds ?? null,
+      is_suspicious: integrity?.is_suspicious ?? null,
+      suspicious_reasons: integrity?.suspicious_reasons ?? null,
+    };
+  });
+
   sendSuccess(res, {
     student: {
       id: student.id,
@@ -347,8 +381,8 @@ router.get('/student/:id', async (req: Request, res: Response) => {
     total_obtained: totalObtained,
     total_max: totalMax,
     percentage,
-    test_submissions: formattedAttempts,
-    test_submissions_count: formattedAttempts.length,
+    test_submissions: enrichedAttempts,
+    test_submissions_count: enrichedAttempts.length,
   });
 });
 

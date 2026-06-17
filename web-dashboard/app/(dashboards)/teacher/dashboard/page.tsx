@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { complaintsApi, testsApi, teacherPremiumApi, type TeacherAssignment, type Student } from '@/lib/api';
+import { complaintsApi, testsApi, teacherPremiumApi, recoverySchedulesApi, type TeacherAssignment, type Student, type SuspiciousActivityRow } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
@@ -17,6 +17,8 @@ export default function TeacherDashboard() {
   const [pendingComplaints, setPendingComplaints] = useState(0);
   const [testsThisMonth, setTestsThisMonth] = useState(0);
   const [expiringSoonCount, setExpiringSoonCount] = useState(0);
+  const [suspiciousActivity, setSuspiciousActivity] = useState<SuspiciousActivityRow[]>([]);
+  const [pendingRecoveryCount, setPendingRecoveryCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,13 +47,15 @@ export default function TeacherDashboard() {
           return;
         }
 
-        const [classesRes, complaintsRes, testsRes, premiumRes] = await Promise.all([
+        const [classesRes, complaintsRes, testsRes, premiumRes, suspiciousRes, recoveryCountRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
           complaintsApi.list(token!, { status: 'pending', role: user!.role }).catch(() => ({ data: [] })),
           testsApi.list(token!).catch(() => ({ data: [] })),
           teacherPremiumApi.listStudents(token!).catch(() => ({ data: [] })),
+          testsApi.getSuspiciousActivity(token!).catch(() => ({ data: [] })),
+          recoverySchedulesApi.pendingCount(token!).catch(() => ({ data: { count: 0 } })),
         ]);
 
         const myAssignments: TeacherAssignment[] = classesRes?.data ?? [];
@@ -93,6 +97,8 @@ export default function TeacherDashboard() {
         setStudents(uniqueStudents);
         setPendingComplaints(complaintsRes.data.length);
         setTestsThisMonth((testsRes.data ?? []).length);
+        setSuspiciousActivity(Array.isArray(suspiciousRes.data) ? suspiciousRes.data : []);
+        setPendingRecoveryCount((recoveryCountRes.data as { count?: number })?.count ?? 0);
       } catch (err) {
         console.error('[TeacherDashboard] fetch error:', err);
       } finally {
@@ -108,6 +114,13 @@ export default function TeacherDashboard() {
     return `${cn} ${a.section}`;
   }))];
 
+  function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m === 0) return `${s}s`;
+    return `${m}m ${s}s`;
+  }
+
   return (
     <>
       <PageHeader
@@ -115,8 +128,30 @@ export default function TeacherDashboard() {
         description="Your classes and student overview"
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatCard label="My Students" value={loading ? '—' : students.length}
+      {/* Monthly Recovery Tests widget — only shown when there are pending approvals */}
+      {!loading && pendingRecoveryCount > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-6 py-4 mb-6 flex items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Monthly Recovery Tests</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                {pendingRecoveryCount} schedule{pendingRecoveryCount !== 1 ? 's' : ''} pending your approval
+              </p>
+            </div>
+          </div>
+          <Link
+            href="/teacher/recovery-schedule"
+            className="shrink-0 px-4 py-2 text-sm font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors whitespace-nowrap"
+          >
+            Go to Recovery Schedule →
+          </Link>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">        <StatCard label="My Students" value={loading ? '—' : students.length}
           sub="Across your classes" icon={<StudentsIcon />} />
         <StatCard label="Classes Assigned" value={loading ? '—' : uniqueClasses.length}
           sub="Class + section pairs" icon={<ClassIcon />} />
@@ -213,6 +248,72 @@ export default function TeacherDashboard() {
             </Link>
           ))}
         </div>
+      </div>
+
+      {/* ── Suspicious Activity Panel ──────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 mt-6">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <span>⚠</span> Suspicious Test Activity
+          </h2>
+          <span className="text-xs text-gray-400">Last 30 days</span>
+        </div>
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <div className="w-5 h-5 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : suspiciousActivity.length === 0 ? (
+          <p className="text-center py-8 text-sm text-gray-400">No suspicious activity in the last 30 days</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase">Student</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Test</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Date</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Exits</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Time Outside</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Integrity</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Reasons</th>
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {suspiciousActivity.map((row) => (
+                  <tr key={row.id} className="hover:bg-red-50 transition-colors">
+                    <td className="px-6 py-3 font-medium text-gray-900">{row.student_name}</td>
+                    <td className="px-4 py-3 text-gray-700">
+                      <span className="font-medium">{row.test_title ?? '—'}</span>
+                      {row.subject && <span className="text-gray-400 text-xs ml-1">· {row.subject}</span>}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {row.test_date ? new Date(row.test_date).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 font-semibold">{row.exit_count}</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs">{formatDuration(row.total_exit_duration_seconds)}</td>
+                    <td className="px-4 py-3 text-gray-700 font-semibold">{row.integrity_score ?? '—'}</td>
+                    <td className="px-4 py-3 text-red-600 text-xs max-w-xs truncate">
+                      {row.suspicious_reasons && row.suspicious_reasons.length > 0
+                        ? row.suspicious_reasons.join(', ')
+                        : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {row.test_id && (
+                        <Link
+                          href={`/teacher/tests?submissionsFor=${row.test_id}`}
+                          className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+                        >
+                          View Results
+                        </Link>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </>
   );

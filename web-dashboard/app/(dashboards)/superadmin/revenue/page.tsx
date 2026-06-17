@@ -24,6 +24,17 @@ type PayoutStatus = 'pending' | 'invoiced' | 'paid';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
+ * a timezone designator, which JavaScript would interpret as local time.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 /** First day of the current month as YYYY-MM-DD */
 function currentMonthFirst(): string {
   const now = new Date();
@@ -143,7 +154,7 @@ function SchoolDetailModal({
                       </td>
                       <td className="px-3 py-2.5 text-gray-500 text-xs">
                         {sub.activated_at
-                          ? new Date(sub.activated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                          ? parseUtcDate(sub.activated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
                           : '—'}
                       </td>
                     </tr>

@@ -563,7 +563,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   const studentId = studentRecord.id;
   const testIds = result.map((t) => t.id);
 
-  // Fetch attempt status, scores, and restrictions in parallel
+  // Fetch attempt status, scores, restrictions, and integrity logs in parallel
   const [attemptsResult, restrictionsResult, marksResult] = await Promise.all([
     supabaseAdmin
       .from('test_attempts')
@@ -600,6 +600,31 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     (restrictionsResult.data ?? []).map((r: { test_id: string }) => r.test_id)
   );
 
+  // Fetch integrity logs for all submitted attempts belonging to this student
+  const submittedAttemptIds = [...attemptMap.values()]
+    .filter((a) => a.is_submitted)
+    .map((a) => a.id);
+
+  type IntegrityRow = {
+    daily_test_attempt_id: string;
+    integrity_score: number | null;
+    exit_count: number;
+    total_exit_duration_seconds: number;
+  };
+  const integrityByAttemptId = new Map<string, IntegrityRow>();
+
+  if (submittedAttemptIds.length > 0) {
+    const { data: integrityRows } = await supabaseAdmin
+      .from('test_integrity_logs')
+      .select('daily_test_attempt_id, integrity_score, exit_count, total_exit_duration_seconds')
+      .eq('student_id', studentId)
+      .in('daily_test_attempt_id', submittedAttemptIds);
+
+    for (const row of ((integrityRows ?? []) as IntegrityRow[])) {
+      integrityByAttemptId.set(row.daily_test_attempt_id, row);
+    }
+  }
+
   const enriched = result.map((t) => {
     const attempt = attemptMap.get(t.id);
     const attemptStatus = attempt
@@ -613,6 +638,8 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     const maxScore = attempt ? (maxScoreByAttempt.get(attempt.id) ?? null) : null;
     const totalScorePending = attemptStatus === 'completed' && totalScore === null && mcqScore === null;
 
+    const integrity = attempt ? integrityByAttemptId.get(attempt.id) : undefined;
+
     return {
       ...t,
       attempt_status: attemptStatus,
@@ -621,6 +648,9 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       total_score: totalScore,
       max_score: maxScore,
       total_score_pending: totalScorePending,
+      integrity_score: integrity?.integrity_score ?? null,
+      integrity_exit_count: integrity?.exit_count ?? null,
+      integrity_exit_duration_seconds: integrity?.total_exit_duration_seconds ?? null,
     };
   });
 
@@ -1758,6 +1788,92 @@ router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'te
   sendSuccess(res, null, 'Test deleted');
 });
 
+// ── GET /api/tests/suspicious-activity ───────────────────────────────────────
+/**
+ * Teacher views all suspicious test integrity logs for their school in the last 30 days.
+ */
+router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id ?? '';
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: logs, error } = await supabaseAdmin
+    .from('test_integrity_logs')
+    .select(`
+      id,
+      daily_test_attempt_id,
+      student_id,
+      exit_count,
+      total_exit_duration_seconds,
+      integrity_score,
+      is_suspicious,
+      suspicious_reasons,
+      created_at
+    `)
+    .eq('school_id', schoolId)
+    .eq('is_suspicious', true)
+    .gte('created_at', thirtyDaysAgo)
+    .order('created_at', { ascending: false });
+
+  if (error) { sendError(res, error.message, 500); return; }
+
+  if (!logs || logs.length === 0) {
+    sendSuccess(res, []);
+    return;
+  }
+
+  // Fetch attempt → test info for each log
+  const attemptIds = logs.map((l: Record<string, unknown>) => l.daily_test_attempt_id as string);
+  const { data: attempts } = await supabaseAdmin
+    .from('test_attempts')
+    .select('id, test_id, tests!test_attempts_test_id_fkey(title, subject, date)')
+    .in('id', attemptIds);
+
+  const attemptTestMap = new Map<string, { test_id: string; test_title: string | null; subject: string | null; date: string | null }>();
+  for (const a of (attempts ?? []) as Array<Record<string, unknown>>) {
+    const test = a['tests'] as Record<string, unknown> | null;
+    attemptTestMap.set(a['id'] as string, {
+      test_id: a['test_id'] as string,
+      test_title: test?.['title'] as string ?? null,
+      subject: test?.['subject'] as string ?? null,
+      date: test?.['date'] as string ?? null,
+    });
+  }
+
+  // Fetch student names
+  const studentIds = [...new Set((logs as Array<Record<string, unknown>>).map((l) => l['student_id'] as string))];
+  const { data: students } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name')
+    .in('id', studentIds);
+
+  const studentNameMap = new Map<string, string>();
+  for (const s of (students ?? []) as Array<{ id: string; full_name: string }>) {
+    studentNameMap.set(s.id, s.full_name);
+  }
+
+  const result = (logs as Array<Record<string, unknown>>).map((log) => {
+    const attemptInfo = attemptTestMap.get(log['daily_test_attempt_id'] as string);
+    return {
+      id: log['id'],
+      attempt_id: log['daily_test_attempt_id'],
+      student_id: log['student_id'],
+      student_name: studentNameMap.get(log['student_id'] as string) ?? 'Unknown',
+      test_id: attemptInfo?.test_id ?? null,
+      test_title: attemptInfo?.test_title ?? null,
+      subject: attemptInfo?.subject ?? null,
+      test_date: attemptInfo?.date ?? null,
+      exit_count: log['exit_count'],
+      total_exit_duration_seconds: log['total_exit_duration_seconds'],
+      integrity_score: log['integrity_score'],
+      is_suspicious: log['is_suspicious'],
+      suspicious_reasons: log['suspicious_reasons'],
+      created_at: log['created_at'],
+    };
+  });
+
+  sendSuccess(res, result);
+});
+
 // ── GET /api/tests/:test_id/restrictions ─────────────────────────────────────
 /**
  * Teacher gets the list of students blocked from a specific test.
@@ -2273,19 +2389,48 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
     if (ans.marks_awarded === null) theoryPendingMap.set(ans.attempt_id, true);
   }
 
-  const attemptMap = new Map<string, { score: number | null; submitted_at: string; theory_pending: boolean }>();
+  type AttemptMapEntry = {
+    id: string;
+    score: number | null;
+    submitted_at: string;
+    theory_pending: boolean;
+  };
+  const attemptMap = new Map<string, AttemptMapEntry>();
   for (const a of (attempts ?? [])) {
     const score = a.total_score ?? a.mcq_score;
     attemptMap.set(a.student_id, {
+      id: a.id,
       score,
       submitted_at: a.submitted_at,
       theory_pending: theoryPendingMap.get(a.id) ?? false,
     });
   }
 
+  // Fetch integrity logs for all submitted attempts
+  const submittedAttemptIds = (attempts ?? []).map((a) => a.id);
+  type IntegrityRow = {
+    daily_test_attempt_id: string;
+    integrity_score: number | null;
+    exit_count: number;
+    total_exit_duration_seconds: number;
+    is_suspicious: boolean;
+    suspicious_reasons: string[] | null;
+  };
+  const integrityByAttemptId = new Map<string, IntegrityRow>();
+  if (submittedAttemptIds.length > 0) {
+    const { data: integrityRows } = await supabaseAdmin
+      .from('test_integrity_logs')
+      .select('daily_test_attempt_id, integrity_score, exit_count, total_exit_duration_seconds, is_suspicious, suspicious_reasons')
+      .in('daily_test_attempt_id', submittedAttemptIds);
+    for (const row of ((integrityRows ?? []) as IntegrityRow[])) {
+      integrityByAttemptId.set(row.daily_test_attempt_id, row);
+    }
+  }
+
   // Build per-student rows
   const rows = (students ?? []).map((s: { id: string; full_name: string; roll_number: string }) => {
     const attempt = attemptMap.get(s.id);
+    const integrity = attempt ? integrityByAttemptId.get(attempt.id) : undefined;
     return {
       student_id: s.id,
       student_name: s.full_name,
@@ -2295,6 +2440,11 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
       max_score: maxScore,
       submitted_at: attempt?.submitted_at ?? null,
       theory_pending: attempt?.theory_pending ?? false,
+      integrity_score: integrity?.integrity_score ?? null,
+      exit_count: integrity?.exit_count ?? null,
+      total_exit_duration_seconds: integrity?.total_exit_duration_seconds ?? null,
+      is_suspicious: integrity?.is_suspicious ?? null,
+      suspicious_reasons: integrity?.suspicious_reasons ?? null,
     };
   });
 
@@ -2418,6 +2568,214 @@ router.get('/:test_id/leaderboard', authenticateStudent, requireRole('student'),
   });
 
   sendSuccess(res, { leaderboard, max_score: maxScore });
+});
+
+// ── POST /api/student/test-integrity ─────────────────────────────────────────
+/**
+ * Called by the mobile app after a test is successfully submitted.
+ * Accepts visibility-tracking data, computes an integrity score, and persists
+ * a row in test_integrity_logs.
+ *
+ * Authentication: student token only.
+ */
+
+interface IntegrityData {
+  exit_count: number;
+  return_count: number;
+  total_exit_duration_seconds: number;
+  longest_single_exit_seconds: number;
+}
+
+interface IntegrityConfig {
+  base_score: number;
+  exit_deduction_per_exit: number;
+  long_exit_threshold_seconds: number;
+  long_exit_extra_deduction: number;
+  suspicious_exit_count_threshold: number;
+  suspicious_duration_threshold_seconds: number;
+  suspicious_rapid_exit_count: number;
+  minimum_score: number;
+}
+
+interface IntegrityResult {
+  integrity_score: number;
+  is_suspicious: boolean;
+  suspicious_reasons: string[];
+}
+
+function calculateIntegrityScore(data: IntegrityData, config: IntegrityConfig): IntegrityResult {
+  let score = config.base_score;
+
+  // Per-exit deductions
+  for (let i = 0; i < data.exit_count; i++) {
+    score -= config.exit_deduction_per_exit;
+  }
+
+  // Extra deduction for the longest exit if it exceeds the long threshold.
+  // Apply once per "qualifying" exit — we only have the longest, so apply once
+  // if it qualifies, and also apply if total ÷ exit_count exceeds threshold
+  // (conservative: at least the longest definitely qualifies).
+  if (data.longest_single_exit_seconds > config.long_exit_threshold_seconds) {
+    score -= config.long_exit_extra_deduction;
+  }
+  // Additional deduction if total time outside is high
+  if (data.total_exit_duration_seconds > config.suspicious_duration_threshold_seconds) {
+    score -= 15;
+  }
+
+  score = Math.max(score, config.minimum_score);
+  score = Math.round(score);
+
+  // Suspicious flag logic
+  let is_suspicious = false;
+  const suspicious_reasons: string[] = [];
+
+  if (data.exit_count >= config.suspicious_exit_count_threshold) {
+    is_suspicious = true;
+    suspicious_reasons.push(`High number of exits (${data.exit_count} times)`);
+  }
+  if (data.total_exit_duration_seconds >= config.suspicious_duration_threshold_seconds) {
+    is_suspicious = true;
+    suspicious_reasons.push(`Extended time outside test (${data.total_exit_duration_seconds} seconds)`);
+  }
+  if (
+    data.exit_count >= config.suspicious_rapid_exit_count &&
+    data.exit_count > 0 &&
+    data.total_exit_duration_seconds / data.exit_count < 30
+  ) {
+    is_suspicious = true;
+    suspicious_reasons.push('Rapid repeated exits detected');
+  }
+
+  return { integrity_score: score, is_suspicious, suspicious_reasons };
+}
+
+const integritySchema = z.object({
+  daily_test_attempt_id:       z.string().uuid(),
+  exit_count:                  z.number().int().min(0),
+  return_count:                z.number().int().min(0),
+  total_exit_duration_seconds: z.number().int().min(0),
+  longest_single_exit_seconds: z.number().int().min(0),
+});
+
+router.post('/student/test-integrity', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  const parsed = integritySchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  const {
+    daily_test_attempt_id,
+    exit_count,
+    return_count,
+    total_exit_duration_seconds,
+    longest_single_exit_seconds,
+  } = parsed.data;
+
+  const studentId = req.student!.id;
+  const schoolId  = req.student!.school_id;
+
+  // 1. Verify the attempt belongs to this student
+  const { data: attempt, error: attemptErr } = await supabaseAdmin
+    .from('test_attempts')
+    .select('id, test_id, student_id, is_submitted')
+    .eq('id', daily_test_attempt_id)
+    .eq('student_id', studentId)
+    .maybeSingle();
+
+  if (attemptErr || !attempt) {
+    sendError(res, 'Attempt not found or does not belong to you', 404);
+    return;
+  }
+  if (!attempt.is_submitted) {
+    sendError(res, 'Cannot log integrity for an unsubmitted attempt', 400);
+    return;
+  }
+
+  // 2. Fetch integrity config rows and build key→value map
+  const { data: configRows, error: configErr } = await supabaseAdmin
+    .from('integrity_score_config')
+    .select('config_key, config_value');
+
+  if (configErr || !configRows) {
+    sendError(res, 'Failed to load integrity config', 500);
+    return;
+  }
+
+  const rawConfig = (configRows as Array<{ config_key: string; config_value: number }>).reduce<Record<string, number>>(
+    (acc, row) => { acc[row.config_key] = Number(row.config_value); return acc; },
+    {}
+  );
+
+  const config: IntegrityConfig = {
+    base_score:                         rawConfig['base_score']                          ?? 100,
+    exit_deduction_per_exit:             rawConfig['exit_deduction_per_exit']              ?? 5,
+    long_exit_threshold_seconds:         rawConfig['long_exit_threshold_seconds']          ?? 120,
+    long_exit_extra_deduction:           rawConfig['long_exit_extra_deduction']            ?? 10,
+    suspicious_exit_count_threshold:     rawConfig['suspicious_exit_count_threshold']      ?? 5,
+    suspicious_duration_threshold_seconds: rawConfig['suspicious_duration_threshold_seconds'] ?? 300,
+    suspicious_rapid_exit_count:         rawConfig['suspicious_rapid_exit_count']          ?? 3,
+    minimum_score:                       rawConfig['minimum_score']                       ?? 0,
+  };
+
+  // 3. Calculate score
+  const integrityData: IntegrityData = {
+    exit_count,
+    return_count,
+    total_exit_duration_seconds,
+    longest_single_exit_seconds,
+  };
+  const { integrity_score, is_suspicious, suspicious_reasons } = calculateIntegrityScore(integrityData, config);
+
+  // 4. Upsert into test_integrity_logs (idempotent — one row per attempt)
+  const { data: existing } = await supabaseAdmin
+    .from('test_integrity_logs')
+    .select('id')
+    .eq('daily_test_attempt_id', daily_test_attempt_id)
+    .maybeSingle();
+
+  if (existing) {
+    // Update if somehow called twice
+    await supabaseAdmin
+      .from('test_integrity_logs')
+      .update({
+        exit_count,
+        return_count,
+        total_exit_duration_seconds,
+        longest_single_exit_seconds,
+        integrity_score,
+        is_suspicious,
+        suspicious_reasons,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existing.id);
+  } else {
+    const { error: insertErr } = await supabaseAdmin
+      .from('test_integrity_logs')
+      .insert({
+        daily_test_attempt_id,
+        student_id: studentId,
+        school_id:  schoolId,
+        exit_count,
+        return_count,
+        total_exit_duration_seconds,
+        longest_single_exit_seconds,
+        integrity_score,
+        is_suspicious,
+        suspicious_reasons,
+      });
+
+    if (insertErr) {
+      console.error('[integrity] insert error:', insertErr);
+      sendError(res, 'Failed to save integrity data', 500);
+      return;
+    }
+  }
+
+  sendSuccess(res, {
+    integrity_score,
+    exit_count,
+    total_exit_duration_seconds,
+    is_suspicious,
+  });
 });
 
 export default router;

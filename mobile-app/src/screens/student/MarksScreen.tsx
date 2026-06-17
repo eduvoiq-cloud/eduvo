@@ -45,7 +45,9 @@ function pct(score: number, max: number): number {
 }
 
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-US', {
+  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+    ? new Date(iso + 'Z') : new Date(iso);
+  return d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -66,7 +68,11 @@ function buildSubjectSummaries(marks: MarkRecord[]): SubjectSummary[] {
   map.forEach((records, subject) => {
     // Sort by date descending
     const sorted = [...records].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      (a, b) => {
+        const da = (a.created_at && !a.created_at.endsWith('Z') && !a.created_at.includes('+') && !/\d{2}:\d{2}$/.test(a.created_at)) ? new Date(a.created_at + 'Z') : new Date(a.created_at);
+        const db = (b.created_at && !b.created_at.endsWith('Z') && !b.created_at.includes('+') && !/\d{2}:\d{2}$/.test(b.created_at)) ? new Date(b.created_at + 'Z') : new Date(b.created_at);
+        return db.getTime() - da.getTime();
+      }
     );
 
     const latest = sorted[0];

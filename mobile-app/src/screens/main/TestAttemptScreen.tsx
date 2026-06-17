@@ -51,7 +51,7 @@ interface Answer {
   theory_answer?: string;
 }
 
-type Phase = 'pre' | 'active' | 'submitting' | 'results' | 'error';
+type Phase = 'pre' | 'integrity_warning' | 'active' | 'submitting' | 'results' | 'error';
 
 interface ResultAnswer {
   question_id: string;
@@ -75,6 +75,13 @@ interface ResultData {
   total_score: number | null;
   total_score_pending: boolean;
   answers: ResultAnswer[];
+}
+
+interface IntegrityApiResult {
+  integrity_score: number;
+  exit_count: number;
+  total_exit_duration_seconds: number;
+  is_suspicious: boolean;
 }
 
 // ── Navigation prop type (stack-compatible) ───────────────────────────────────
@@ -134,6 +141,184 @@ async function clearProgress(testId: string): Promise<void> {
 }
 
 // ── Timer hook ────────────────────────────────────────────────────────────────
+
+// ── Test integrity tracking ───────────────────────────────────────────────────
+
+export interface IntegrityResult {
+  exit_count: number;
+  return_count: number;
+  total_exit_duration_seconds: number;
+  longest_single_exit_seconds: number;
+}
+
+/**
+ * useTestIntegrity — tracks tab/app visibility events during a test.
+ *
+ * Call `startTracking()` when the test begins (after the warning modal).
+ * Call `finaliseTracking()` on submission to get the collected data.
+ */
+export function useTestIntegrity() {
+  const exitCountRef              = useRef(0);
+  const returnCountRef            = useRef(0);
+  const totalExitDurationMsRef    = useRef(0);
+  const longestSingleExitMsRef    = useRef(0);
+  const currentExitStartRef       = useRef<number | null>(null);
+  const isCurrentlyOutsideRef     = useRef(false);
+  const trackingActiveRef         = useRef(false);
+
+  const recordExit = useCallback(() => {
+    if (!trackingActiveRef.current) return;
+    if (isCurrentlyOutsideRef.current) return;
+    isCurrentlyOutsideRef.current = true;
+    currentExitStartRef.current   = Date.now();
+    exitCountRef.current         += 1;
+  }, []);
+
+  const recordReturn = useCallback(() => {
+    if (!trackingActiveRef.current) return;
+    if (!isCurrentlyOutsideRef.current) return;
+    const start = currentExitStartRef.current;
+    if (start !== null) {
+      const duration = Date.now() - start;
+      totalExitDurationMsRef.current += duration;
+      if (duration > longestSingleExitMsRef.current) {
+        longestSingleExitMsRef.current = duration;
+      }
+    }
+    returnCountRef.current        += 1;
+    isCurrentlyOutsideRef.current  = false;
+    currentExitStartRef.current    = null;
+  }, []);
+
+  const appStateSubRef = useRef<ReturnType<typeof AppState.addEventListener> | null>(null);
+
+  const startTracking = useCallback(() => {
+    trackingActiveRef.current = true;
+    appStateSubRef.current = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'background' || state === 'inactive') {
+        recordExit();
+      } else if (state === 'active') {
+        recordReturn();
+      }
+    });
+  }, [recordExit, recordReturn]);
+
+  const stopTracking = useCallback(() => {
+    trackingActiveRef.current = false;
+    appStateSubRef.current?.remove();
+    appStateSubRef.current = null;
+  }, []);
+
+  const finaliseTracking = useCallback((): IntegrityResult => {
+    if (isCurrentlyOutsideRef.current && currentExitStartRef.current !== null) {
+      const duration = Date.now() - currentExitStartRef.current;
+      totalExitDurationMsRef.current += duration;
+      if (duration > longestSingleExitMsRef.current) {
+        longestSingleExitMsRef.current = duration;
+      }
+      returnCountRef.current        += 1;
+      isCurrentlyOutsideRef.current  = false;
+      currentExitStartRef.current    = null;
+    }
+    stopTracking();
+    return {
+      exit_count:                  exitCountRef.current,
+      return_count:                returnCountRef.current,
+      total_exit_duration_seconds: Math.round(totalExitDurationMsRef.current / 1000),
+      longest_single_exit_seconds: Math.round(longestSingleExitMsRef.current / 1000),
+    };
+  }, [stopTracking]);
+
+  useEffect(() => {
+    return () => { stopTracking(); };
+  }, [stopTracking]);
+
+  return { startTracking, finaliseTracking };
+}
+
+// ── Integrity warning modal ───────────────────────────────────────────────────
+
+export function IntegrityWarningModal({
+  visible,
+  onConfirm,
+}: {
+  visible: boolean;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      accessibilityViewIsModal
+    >
+      <View style={integrityModalStyles.overlay}>
+        <View style={integrityModalStyles.card}>
+          <Text style={integrityModalStyles.icon}>🔒</Text>
+          <Text style={integrityModalStyles.title}>Test Integrity Monitoring Active</Text>
+          <Text style={integrityModalStyles.body}>
+            Leaving this page, switching tabs, or minimizing the browser during
+            the test will be recorded and shown to your teacher.
+          </Text>
+          <TouchableOpacity
+            style={integrityModalStyles.btn}
+            onPress={onConfirm}
+            accessibilityRole="button"
+            accessibilityLabel="I understand, start test"
+          >
+            <Text style={integrityModalStyles.btnText}>I Understand — Start Test</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const integrityModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  card: {
+    width: '100%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 28,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  icon: { fontSize: 44, marginBottom: 14 },
+  title: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 14,
+    lineHeight: 26,
+  },
+  body: {
+    fontSize: 14,
+    color: '#4B5563',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  btn: {
+    width: '100%',
+    backgroundColor: '#1D4ED8',
+    borderRadius: 12,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  btnText: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
+});
 
 // ── Timer hook ────────────────────────────────────────────────────────────────
 //
@@ -766,10 +951,12 @@ const modalStyles = StyleSheet.create({
 function ResultsScreen({
   testTitle,
   results,
+  integrityResult,
   onBack,
 }: {
   testTitle: string;
   results: ResultData;
+  integrityResult: IntegrityApiResult | null;
   onBack: () => void;
 }) {
   const mcqAnswers = results.answers.filter((a) => a.question_type === 'mcq');
@@ -809,6 +996,39 @@ function ResultsScreen({
           </>
         )}
       </View>
+
+      {/* ── Integrity score card ── */}
+      {integrityResult !== null && (
+        <>
+          <View style={resStyles.integrityCard}>
+            <View style={resStyles.integrityRow}>
+              <Text style={resStyles.integrityLabel}>Integrity Score</Text>
+              <Text style={[
+                resStyles.integrityScore,
+                integrityResult.integrity_score >= 80
+                  ? resStyles.integrityGreen
+                  : integrityResult.integrity_score >= 60
+                  ? resStyles.integrityAmber
+                  : resStyles.integrityRed,
+              ]}>
+                {integrityResult.integrity_score}/100
+              </Text>
+            </View>
+            <View style={resStyles.integritySub}>
+              <Text style={resStyles.integritySubText}>
+                Exits: {integrityResult.exit_count} · Time outside: {integrityResult.total_exit_duration_seconds}s
+              </Text>
+            </View>
+          </View>
+          {integrityResult.is_suspicious && (
+            <View style={resStyles.integrityWarning}>
+              <Text style={resStyles.integrityWarningText}>
+                ⚠️ Your activity during this test has been flagged for teacher review.
+              </Text>
+            </View>
+          )}
+        </>
+      )}
 
       {/* MCQ per-question breakdown */}
       {mcqAnswers.length > 0 && (
@@ -966,6 +1186,41 @@ const resStyles = StyleSheet.create({
     marginTop: 8,
   },
   backBtnText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
+
+  // Integrity score
+  integrityCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  integrityRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  integrityLabel: { fontSize: 14, color: '#6B7280', fontWeight: '600' },
+  integrityScore: { fontSize: 20, fontWeight: '800' },
+  integrityGreen: { color: '#15803D' },
+  integrityAmber: { color: '#D97706' },
+  integrityRed:   { color: '#DC2626' },
+  integritySub: {},
+  integritySubText: { fontSize: 12, color: '#9CA3AF' },
+  integrityWarning: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#D97706',
+  },
+  integrityWarningText: { fontSize: 13, color: '#92400E', fontWeight: '600', lineHeight: 19 },
 });
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -986,6 +1241,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [results, setResults] = useState<ResultData | null>(null);
+  const [integrityResult, setIntegrityResult] = useState<IntegrityApiResult | null>(null);
+
+  // ── Integrity tracking ──────────────────────────────────────────────────────
+  const { startTracking, finaliseTracking } = useTestIntegrity();
 
   // ── Timer ───────────────────────────────────────────────────────────────────
   const hasTimeLimit = test.time_limit_minutes > 0;
@@ -1166,7 +1425,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         setSecondsLeft(safeSeconds);
       }
 
-      setPhase('active');
+      setPhase('integrity_warning');
     } catch (err: unknown) {
       const attemptIdFromErr =
         (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
@@ -1193,6 +1452,12 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       setStarting(false);
     }
   }, [test.id, hasTimeLimit, setSecondsLeft]);
+
+  // ── Integrity warning acknowledged — begin monitoring and enter test ────────
+  const handleIntegrityAcknowledge = useCallback(() => {
+    startTracking();
+    setPhase('active');
+  }, [startTracking]);
 
   // ── Answer handlers ─────────────────────────────────────────────────────────
   const handleSelectOption = useCallback((opt: OptionKey) => {
@@ -1248,6 +1513,21 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
       // Clear saved progress
       await clearProgress(test.id);
+
+      // ── Call integrity API after successful submission ──────────────────────
+      try {
+        const integrityData = finaliseTracking();
+        const intRes = await apiClient.post('/api/tests/student/test-integrity', {
+          daily_test_attempt_id:       attemptId,
+          exit_count:                  integrityData.exit_count,
+          return_count:                integrityData.return_count,
+          total_exit_duration_seconds: integrityData.total_exit_duration_seconds,
+          longest_single_exit_seconds: integrityData.longest_single_exit_seconds,
+        });
+        setIntegrityResult(intRes.data.data as IntegrityApiResult);
+      } catch {
+        // Integrity logging is non-critical — don't block showing results
+      }
 
       setPhase('results');
     } catch (err: unknown) {
@@ -1328,12 +1608,23 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     );
   }
 
+  // ── Render: integrity warning modal (shown before test begins) ──────────────
+  if (phase === 'integrity_warning') {
+    return (
+      <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+        <IntegrityWarningModal visible onConfirm={handleIntegrityAcknowledge} />
+      </View>
+    );
+  }
+
   // ── Render: results ─────────────────────────────────────────────────────────
   if (phase === 'results' && results) {
     return (
       <ResultsScreen
         testTitle={test.title}
         results={results}
+        integrityResult={integrityResult}
         onBack={() => navigation.goBack()}
       />
     );

@@ -41,9 +41,24 @@ interface DashboardStats {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Parse an ISO timestamp string as UTC.
+ * Supabase/PostgREST may return timestamptz values without a timezone designator
+ * (e.g. "2026-06-16T04:27:00" instead of "2026-06-16T04:27:00Z"). Without the
+ * suffix, JavaScript's Date constructor treats the string as LOCAL time, which
+ * causes timestamps to appear shifted by the browser's UTC offset (e.g. +5:30h
+ * for IST users). Appending "Z" forces UTC interpretation.
+ */
+function parseUtcDate(iso: string): Date {
+  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
+    return new Date(iso + 'Z');
+  }
+  return new Date(iso);
+}
+
 /** Format a relative time string from an ISO timestamp. */
 function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const diff = Date.now() - parseUtcDate(iso).getTime();
   const mins = Math.floor(diff / 60_000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;

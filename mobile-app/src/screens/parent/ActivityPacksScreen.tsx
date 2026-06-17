@@ -326,7 +326,10 @@ export default function ActivityPacksScreen() {
                   <Text style={styles.completedText}>
                     🌟 Completed at{' '}
                     {pack.completion?.completed_at
-                      ? new Date(pack.completion.completed_at).toLocaleTimeString('en-IN', {
+                      ? ((pack.completion.completed_at && !pack.completion.completed_at.endsWith('Z') && !pack.completion.completed_at.includes('+') && !/\d{2}:\d{2}$/.test(pack.completion.completed_at))
+                          ? new Date(pack.completion.completed_at + 'Z')
+                          : new Date(pack.completion.completed_at)
+                        ).toLocaleTimeString('en-IN', {
                           hour: '2-digit',
                           minute: '2-digit',
                         })

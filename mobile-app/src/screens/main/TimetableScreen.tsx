@@ -89,7 +89,8 @@ function todayDayIndex(): number {
 
 function formatUploadDate(iso: string): string {
   try {
-    const d = new Date(iso);
+    const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+      ? new Date(iso + 'Z') : new Date(iso);
     return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   } catch {
     return '';
