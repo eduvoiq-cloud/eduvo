@@ -21,7 +21,7 @@ import { supabaseAdmin } from '../config/supabase';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface EvalResult {
-  result: 'correct' | 'incorrect' | 'partial' | 'needs_review';
+  result: 'correct' | 'incorrect' | 'partial' | 'unclear';
   confidence: number;
   feedback: string;
 }
@@ -365,16 +365,14 @@ function parseGeminiJson(raw: string): EvalResult | null {
     const parsed = JSON.parse(cleaned) as Record<string, unknown>;
 
     const rawResult = parsed.result as string;
-    // Map 'unclear' (Gemini may return this) to 'needs_review' to match DB constraint
-    const result = rawResult === 'unclear' ? 'needs_review' : rawResult;
     const confidence = Number(parsed.confidence ?? 0);
     const feedback = String(parsed.feedback ?? '');
 
-    if (!['correct', 'incorrect', 'partial', 'needs_review'].includes(result)) return null;
+    if (!['correct', 'incorrect', 'partial', 'unclear'].includes(rawResult)) return null;
     if (isNaN(confidence) || confidence < 0 || confidence > 1) return null;
 
     return {
-      result: result as EvalResult['result'],
+      result: rawResult as EvalResult['result'],
       confidence: Math.min(1, Math.max(0, confidence)),
       feedback: feedback.slice(0, 500), // cap feedback length
     };
