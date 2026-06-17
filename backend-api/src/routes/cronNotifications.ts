@@ -24,9 +24,9 @@ const router = Router();
 // ── Auth helper ───────────────────────────────────────────────────────────────
 
 function verifyCronSecret(req: Request, res: Response): boolean {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = (process.env.CRON_SECRET ?? '').trim();
   const rawHeader = req.headers['x-cron-secret'];
-  const provided = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  const provided = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader ?? '').trim();
 
   if (!cronSecret || provided !== cronSecret) {
     sendError(res, 'Unauthorized', 401);

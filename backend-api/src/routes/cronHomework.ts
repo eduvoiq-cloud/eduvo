@@ -23,20 +23,12 @@ const router = Router();
 // ── Auth helper ───────────────────────────────────────────────────────────────
 
 function verifyCronSecret(req: Request, res: Response): boolean {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = (process.env.CRON_SECRET ?? '').trim();
   const rawHeader = req.headers['x-cron-secret'];
   const fromHeader = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
   // Also accept secret as a query param for GET-only cron services (e.g. cron-job.org free)
   const fromQuery = req.query['secret'] as string | undefined;
-  const provided = fromHeader ?? fromQuery;
-
-  // Debug log — remove after diagnosing 401 issue
-  console.log('[cron/homework] verifyCronSecret debug:', {
-    cronSecretSet: !!cronSecret,
-    cronSecretLen: cronSecret?.length ?? 0,
-    providedLen: provided?.length ?? 0,
-    match: provided === cronSecret,
-  });
+  const provided = (fromHeader ?? fromQuery ?? '').trim();
 
   if (!cronSecret || provided !== cronSecret) {
     sendError(res, 'Unauthorized', 401);

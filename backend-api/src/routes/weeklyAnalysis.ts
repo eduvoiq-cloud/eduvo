@@ -83,9 +83,9 @@ function parseClassLevel(className: string): number {
  * Protected by CRON_SECRET header — not authenticated via JWT.
  */
 router.post('/run', async (req: Request, res: Response) => {
-  const cronSecret = process.env.CRON_SECRET;
+  const cronSecret = (process.env.CRON_SECRET ?? '').trim();
   const rawHeader = req.headers['x-cron-secret'];
-  const providedSecret = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  const providedSecret = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader ?? '').trim();
 
   if (!cronSecret || providedSecret !== cronSecret) {
     sendError(res, 'Unauthorized', 401);
