@@ -21,7 +21,7 @@ import { supabaseAdmin } from '../config/supabase';
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface EvalResult {
-  result: 'correct' | 'incorrect' | 'partial' | 'unclear';
+  result: 'correct' | 'incorrect' | 'partial' | 'needs_review';
   confidence: number;
   feedback: string;
 }
@@ -364,11 +364,13 @@ function parseGeminiJson(raw: string): EvalResult | null {
       .trim();
     const parsed = JSON.parse(cleaned) as Record<string, unknown>;
 
-    const result = parsed.result as string;
+    const rawResult = parsed.result as string;
+    // Map 'unclear' (Gemini may return this) to 'needs_review' to match DB constraint
+    const result = rawResult === 'unclear' ? 'needs_review' : rawResult;
     const confidence = Number(parsed.confidence ?? 0);
     const feedback = String(parsed.feedback ?? '');
 
-    if (!['correct', 'incorrect', 'partial', 'unclear'].includes(result)) return null;
+    if (!['correct', 'incorrect', 'partial', 'needs_review'].includes(result)) return null;
     if (isNaN(confidence) || confidence < 0 || confidence > 1) return null;
 
     return {
@@ -576,9 +578,16 @@ async function updateSubmission(
     evaluated_at: string;
   }
 ): Promise<void> {
+  // DB constraint allows: 'correct' | 'incorrect' | 'partial' | 'needs_review'
+  // Map 'unclear' (returned by Gemini) to 'needs_review' to satisfy the constraint
+  const safeFields = {
+    ...fields,
+    ai_result: fields.ai_result === 'unclear' ? 'needs_review' : fields.ai_result,
+  };
+
   const { error } = await supabaseAdmin
     .from('homework_submissions')
-    .update(fields)
+    .update(safeFields)
     .eq('id', submissionId);
 
   if (error) {
