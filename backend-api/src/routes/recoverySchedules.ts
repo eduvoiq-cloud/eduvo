@@ -110,7 +110,7 @@ async function getOwnedSchedule(
  */
 router.get('/pending-count', async (req: Request, res: Response) => {
   const teacherId = req.user!.id;
-  const schoolId = req.user!.school_id;
+  const schoolId = req.user!.school_id as string;
 
   if (!schoolId) {
     sendSuccess(res, { count: 0 });
@@ -148,7 +148,7 @@ router.get('/pending-count', async (req: Request, res: Response) => {
  */
 router.get('/', async (req: Request, res: Response) => {
   const teacherId = req.user!.id;
-  const schoolId = req.user!.school_id;
+  const schoolId = req.user!.school_id as string;
 
   if (!schoolId) {
     sendSuccess(res, []);
@@ -197,7 +197,7 @@ router.get('/', async (req: Request, res: Response) => {
  */
 router.get('/all', async (req: Request, res: Response) => {
   const teacherId = req.user!.id;
-  const schoolId = req.user!.school_id;
+  const schoolId = req.user!.school_id as string;
 
   if (!schoolId) {
     sendSuccess(res, []);
@@ -252,14 +252,14 @@ router.get('/all', async (req: Request, res: Response) => {
  */
 router.put('/:id/approve', async (req: Request, res: Response) => {
   const teacherId = req.user!.id;
-  const schoolId = req.user!.school_id;
+  const schoolId = req.user!.school_id as string;
 
   if (!schoolId) {
     sendError(res, 'No school associated with your account', 403);
     return;
   }
 
-  const schedule = await getOwnedSchedule(req.params.id, teacherId, schoolId);
+  const schedule = await getOwnedSchedule(req.params.id as string, teacherId, schoolId);
   if (!schedule) {
     sendError(res, 'Schedule not found or not accessible', 404);
     return;
@@ -336,7 +336,7 @@ router.put('/:id/approve', async (req: Request, res: Response) => {
  */
 router.put('/:id/postpone', async (req: Request, res: Response) => {
   const teacherId = req.user!.id;
-  const schoolId = req.user!.school_id;
+  const schoolId = req.user!.school_id as string;
 
   if (!schoolId) {
     sendError(res, 'No school associated with your account', 403);
@@ -349,7 +349,7 @@ router.put('/:id/postpone', async (req: Request, res: Response) => {
     return;
   }
 
-  const schedule = await getOwnedSchedule(req.params.id, teacherId, schoolId);
+  const schedule = await getOwnedSchedule(req.params.id as string, teacherId, schoolId);
   if (!schedule) {
     sendError(res, 'Schedule not found or not accessible', 404);
     return;
@@ -398,14 +398,14 @@ router.put('/:id/postpone', async (req: Request, res: Response) => {
  */
 router.put('/:id/cancel', async (req: Request, res: Response) => {
   const teacherId = req.user!.id;
-  const schoolId = req.user!.school_id;
+  const schoolId = req.user!.school_id as string;
 
   if (!schoolId) {
     sendError(res, 'No school associated with your account', 403);
     return;
   }
 
-  const schedule = await getOwnedSchedule(req.params.id, teacherId, schoolId);
+  const schedule = await getOwnedSchedule(req.params.id as string, teacherId, schoolId);
   if (!schedule) {
     sendError(res, 'Schedule not found or not accessible', 404);
     return;
@@ -479,7 +479,7 @@ router.get('/:id/generation-status', async (req: Request, res: Response) => {
   }
   const schoolId = schoolIdRaw as string;
 
-  const schedule = await getOwnedSchedule(req.params.id, teacherId, schoolId);
+  const schedule = await getOwnedSchedule(req.params.id as string, teacherId, schoolId);
   if (!schedule) {
     sendError(res, 'Schedule not found or not accessible', 404);
     return;
