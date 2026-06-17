@@ -30,6 +30,14 @@ function verifyCronSecret(req: Request, res: Response): boolean {
   const fromQuery = req.query['secret'] as string | undefined;
   const provided = fromHeader ?? fromQuery;
 
+  // Debug log — remove after diagnosing 401 issue
+  console.log('[cron/homework] verifyCronSecret debug:', {
+    cronSecretSet: !!cronSecret,
+    cronSecretLen: cronSecret?.length ?? 0,
+    providedLen: provided?.length ?? 0,
+    match: provided === cronSecret,
+  });
+
   if (!cronSecret || provided !== cronSecret) {
     sendError(res, 'Unauthorized', 401);
     return false;
