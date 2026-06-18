@@ -423,6 +423,62 @@ function writeLS(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* ignore */ }
 }
 
+// ── Subject fuzzy-match helper ────────────────────────────────────────────────
+// Maps a teacher assignment subject name (free-text, e.g. "Maths") to the
+// closest canonical name in the chapter library (e.g. "Mathematics").
+// Returns the matched library subject string, or null if nothing close enough.
+
+const SUBJECT_ALIASES: Record<string, string[]> = {
+  mathematics: ['maths', 'math', 'mathematics', 'ganit'],
+  science:     ['science', 'vigyan', 'general science', 'natural science', 'evs', 'environmental science'],
+  english:     ['english', 'angrezi', 'english language', 'english literature'],
+  hindi:       ['hindi', 'hindi language', 'hindi literature'],
+  gujarati:    ['gujarati', 'gujarati language', 'gujarati literature'],
+  sanskrit:    ['sanskrit'],
+  'social science': ['social science', 'social studies', 'sst', 'samajik vigyan', 'history', 'geography', 'civics'],
+  marathi:     ['marathi'],
+  bengali:     ['bengali', 'bangla'],
+  tamil:       ['tamil'],
+  telugu:      ['telugu'],
+  kannada:     ['kannada'],
+  punjabi:     ['punjabi'],
+  physics:     ['physics', 'bhautiki'],
+  chemistry:   ['chemistry', 'rasayan'],
+  biology:     ['biology', 'jeev vigyan', 'life science'],
+  'computer science': ['computer science', 'cs', 'computer', 'computers', 'information technology', 'it'],
+  economics:   ['economics', 'arthashastra'],
+  history:     ['history', 'itihas'],
+  geography:   ['geography', 'bhugol'],
+  civics:      ['civics', 'political science', 'pol science', 'pol. science'],
+  accountancy: ['accountancy', 'accounts', 'accounting'],
+  'business studies': ['business studies', 'business', 'commerce'],
+};
+
+function fuzzyMatchSubject(assignedName: string, librarySubjects: string[]): string | null {
+  if (!assignedName || librarySubjects.length === 0) return null;
+  const needle = assignedName.trim().toLowerCase();
+
+  // 1. Exact match (case-insensitive)
+  const exact = librarySubjects.find((s) => s.toLowerCase() === needle);
+  if (exact) return exact;
+
+  // 2. Library subject contains the assignment name or vice versa
+  const partial = librarySubjects.find(
+    (s) => s.toLowerCase().includes(needle) || needle.includes(s.toLowerCase())
+  );
+  if (partial) return partial;
+
+  // 3. Alias table lookup
+  for (const [canonical, aliases] of Object.entries(SUBJECT_ALIASES)) {
+    if (aliases.includes(needle)) {
+      const lib = librarySubjects.find((s) => s.toLowerCase() === canonical);
+      if (lib) return lib;
+    }
+  }
+
+  return null;
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function CreateTestPage() {
@@ -517,18 +573,17 @@ export default function CreateTestPage() {
 
   // When the teacher picks a subject in the top section, mirror it into the
   // library selection so they don't have to pick it again in the AI section.
+  // Uses fuzzy matching so "Maths" maps to "Mathematics", etc.
   useEffect(() => {
-    if (!details.subject) return;
+    if (!details.subject || libSubjects.length === 0) return;
     setLibSelection((prev) => {
-      // Only auto-set if the subject is present in available library subjects,
-      // or if libSubjects hasn't loaded yet (optimistic pre-fill).
-      const subjectMatches = libSubjects.length === 0 || libSubjects.includes(details.subject);
-      if (!subjectMatches) return prev;
-      if (prev.subject === details.subject) return prev; // already set
+      const matched = fuzzyMatchSubject(details.subject, libSubjects);
+      if (!matched) return prev;
+      if (prev.subject === matched) return prev; // already set
       // Reset chapter when subject changes
       return {
         ...prev,
-        subject: details.subject,
+        subject: matched,
         chapterId: '',
         chapterNumber: 0,
         chapterName: '',
@@ -539,7 +594,7 @@ export default function CreateTestPage() {
       };
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [details.subject]);
+  }, [details.subject, libSubjects]);
 
   // chapter_library_id and selected_topics stored after generation, passed to create
   const [savedChapterLibraryId, setSavedChapterLibraryId] = useState<string | null>(null);
@@ -576,14 +631,26 @@ export default function CreateTestPage() {
       const json = await res.json() as { success: boolean; data: { subjects: string[] } };
       const subjects = json.success ? (json.data.subjects ?? []) : [];
       setLibSubjects(subjects);
-      // Auto-select subject in library if it matches the top-section subject
-      setLibSelection((prev) => {
-        const targetSubject = prev.subject || '';
-        if (targetSubject && subjects.includes(targetSubject)) {
-          return prev; // already set correctly, chapter fetch handled by separate effect
+      // Auto-resolve library subject from the teacher's selected subject (fuzzy match)
+      if (details.subject && subjects.length > 0) {
+        const matched = fuzzyMatchSubject(details.subject, subjects);
+        if (matched) {
+          setLibSelection((prev) => {
+            if (prev.subject === matched) return prev;
+            return {
+              ...prev,
+              subject: matched,
+              chapterId: '',
+              chapterNumber: 0,
+              chapterName: '',
+              allTopics: [],
+              checkedTopics: new Set(),
+              customTopicChecked: false,
+              customTopicText: '',
+            };
+          });
         }
-        return prev;
-      });
+      }
     } catch { setLibSubjects([]); }
     finally { setLibSubjectsLoading(false); }
   }, []);
@@ -1403,28 +1470,51 @@ export default function CreateTestPage() {
                       </select>
                     </FormField>
 
-                    {/* Subject dropdown */}
-                    <FormField label="Subject" htmlFor="lib-subject">
-                      <div className="relative">
-                        <select id="lib-subject" className={inputClass}
-                          disabled={libSubjectsLoading || libSubjects.length === 0}
-                          value={libSelection.subject}
-                          onChange={(e) => {
-                            const s = e.target.value;
-                            setLibSelection((prev) => ({ ...prev, subject: s, chapterId: '', chapterNumber: 0, chapterName: '', allTopics: [], checkedTopics: new Set(), customTopicChecked: false, customTopicText: '' }));
-                            setLibChapters([]);
-                            if (s && details.class_name) fetchLibChapters(libSelection.board, details.class_name, s);
-                          }}>
-                          <option value="">{libSubjectsLoading ? 'Loading…' : 'Select subject…'}</option>
-                          {libSubjects.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        {libSubjectsLoading && (
-                          <div className="absolute right-9 top-1/2 -translate-y-1/2">
-                            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                    {/* Subject — auto-matched from teacher's assigned subject, or manual picker */}
+                    {(() => {
+                      const matched = details.subject ? fuzzyMatchSubject(details.subject, libSubjects) : null;
+                      if (matched) {
+                        // Exact or fuzzy match found — show locked display, no dropdown needed
+                        return (
+                          <div className="flex items-center gap-2 px-3 py-2 bg-indigo-100/60 border border-indigo-200 rounded-lg">
+                            <span className="text-xs text-indigo-600">📚 Subject:</span>
+                            <span className="text-sm font-semibold text-indigo-800">{matched}</span>
+                            {matched.toLowerCase() !== details.subject.toLowerCase() && (
+                              <span className="text-xs text-indigo-400 ml-auto">matched from &quot;{details.subject}&quot;</span>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </FormField>
+                        );
+                      }
+                      // No match — show manual picker with all library subjects
+                      return (
+                        <FormField label="Subject" htmlFor="lib-subject">
+                          <div className="relative">
+                            <select id="lib-subject" className={inputClass}
+                              disabled={libSubjectsLoading || libSubjects.length === 0}
+                              value={libSelection.subject}
+                              onChange={(e) => {
+                                const s = e.target.value;
+                                setLibSelection((prev) => ({ ...prev, subject: s, chapterId: '', chapterNumber: 0, chapterName: '', allTopics: [], checkedTopics: new Set(), customTopicChecked: false, customTopicText: '' }));
+                                setLibChapters([]);
+                                if (s && details.class_name) fetchLibChapters(libSelection.board, details.class_name, s);
+                              }}>
+                              <option value="">{libSubjectsLoading ? 'Loading…' : 'Select subject…'}</option>
+                              {libSubjects.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                            {libSubjectsLoading && (
+                              <div className="absolute right-9 top-1/2 -translate-y-1/2">
+                                <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                              </div>
+                            )}
+                          </div>
+                          {details.subject && !libSubjectsLoading && libSubjects.length > 0 && (
+                            <p className="text-xs text-amber-600 mt-1">
+                              ⚠️ &quot;{details.subject}&quot; wasn&apos;t found in the library for this board/class. Please pick the closest match.
+                            </p>
+                          )}
+                        </FormField>
+                      );
+                    })()}
 
                     {/* Chapter dropdown */}
                     <FormField label="Chapter" htmlFor="lib-chapter">

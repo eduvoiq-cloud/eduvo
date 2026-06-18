@@ -386,24 +386,34 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     return;
   }
 
-  // Resolve subject_id: if the value is not a valid UUID, treat it as a
-  // subject name and look up the UUID from the subjects table.
+  // Resolve subject_id + subject name.
+  // The frontend passes either a UUID (subject_id) or a plain name string.
+  // The tests table has BOTH a legacy `subject text NOT NULL` column and a
+  // nullable `subject_id uuid` column — we must populate both.
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  let resolvedSubjectId = testFields.subject_id;
-  if (!UUID_RE.test(resolvedSubjectId)) {
-    const { data: subjectRow, error: subjectErr } = await supabaseAdmin
+  let resolvedSubjectId: string | null = null;
+  let resolvedSubjectName: string = testFields.subject_id; // default: treat value as name
+
+  if (UUID_RE.test(testFields.subject_id)) {
+    // Value is already a UUID — look up the name
+    resolvedSubjectId = testFields.subject_id;
+    const { data: subjectRow } = await supabaseAdmin
+      .from('subjects')
+      .select('name')
+      .eq('id', resolvedSubjectId)
+      .maybeSingle();
+    if (subjectRow?.name) resolvedSubjectName = subjectRow.name;
+  } else {
+    // Value is a subject name — look up the UUID
+    resolvedSubjectName = testFields.subject_id.trim();
+    const { data: subjectRow } = await supabaseAdmin
       .from('subjects')
       .select('id')
       .eq('school_id', req.user!.school_id ?? '')
-      .ilike('name', resolvedSubjectId.trim())
+      .ilike('name', resolvedSubjectName)
       .limit(1)
       .maybeSingle();
-
-    if (subjectErr || !subjectRow) {
-      sendError(res, `Subject "${resolvedSubjectId}" not found. Please contact your administrator.`, 400);
-      return;
-    }
-    resolvedSubjectId = subjectRow.id;
+    resolvedSubjectId = subjectRow?.id ?? null;
   }
 
   // Teachers must be assigned to the class they're creating a test for
