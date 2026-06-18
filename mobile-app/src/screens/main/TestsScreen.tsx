@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 import { MainStackParamList } from '../../navigation/AppNavigator';
 
@@ -71,6 +72,43 @@ const STATUS_CONFIG: Record<
   completed:    { label: 'Completed',   color: '#15803D', bg: '#DCFCE7' },
 };
 
+// ── Countdown helpers ─────────────────────────────────────────────────────────
+
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function secondsUntilHHMM(hhmm: string | null | undefined): number | null {
+  if (!hhmm) return null;
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const diff = (toMinutes(hhmm) - nowMins) * 60;
+  return diff > 0 ? Math.round(diff) : null;
+}
+
+function formatCountdown(seconds: number): string {
+  if (seconds >= 3600) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+  if (seconds >= 60) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+  }
+  return `${seconds}s`;
+}
+
+function formatHHMM(hhmm: string): string {
+  const [hStr, mStr] = hhmm.split(':');
+  const h = parseInt(hStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${mStr} ${ampm}`;
+}
+
 // ── Test card ─────────────────────────────────────────────────────────────────
 
 function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) {
@@ -128,7 +166,16 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
       {!isFeeRestricted && (test.available_from || test.available_until) && (
         <View style={styles.windowRow}>
           <Text style={styles.windowText}>
-            🕐 Window: {formatTimeWindow(test.available_from, test.available_until)}
+            {(() => {
+              const secs = secondsUntilHHMM(test.available_from);
+              if (secs !== null) {
+                return `🕐 Opens at ${formatHHMM(test.available_from!)} · in ${formatCountdown(secs)}`;
+              }
+              if (test.available_from && test.available_until) {
+                return `🟢 Window: ${formatHHMM(test.available_from)} – ${formatHHMM(test.available_until)}`;
+              }
+              return `🕐 Window: ${formatTimeWindow(test.available_from, test.available_until)}`;
+            })()}
           </Text>
         </View>
       )}
@@ -176,7 +223,7 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
 type TabKey = 'current' | 'upcoming' | 'completed';
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'current',   label: 'Current' },
+  { key: 'current',   label: 'Ongoing' },
   { key: 'upcoming',  label: 'Upcoming' },
   { key: 'completed', label: 'Completed' },
 ];
@@ -227,6 +274,12 @@ export default function TestsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>('current');
+  // Tick every second so countdown timers on window banners stay live
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const navigation = useNavigation<StackNavigationProp<MainStackParamList>>();
 
@@ -248,6 +301,7 @@ export default function TestsScreen() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     fetchTests();
   }, [fetchTests]);
 
@@ -354,7 +408,7 @@ export default function TestsScreen() {
                 <Text style={styles.emptyIcon}>📝</Text>
                 <Text style={styles.emptyText}>
                   {activeTab === 'current'
-                    ? 'No active tests right now.'
+                    ? 'No ongoing tests right now.'
                     : activeTab === 'upcoming'
                     ? 'No upcoming tests.'
                     : 'No completed tests yet.'}

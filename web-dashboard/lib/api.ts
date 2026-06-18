@@ -1002,6 +1002,8 @@ export const testsApi = {
     selected_topics?: string | null;
     // Web proctoring
     require_camera?: boolean;
+    // Web attempt support
+    allow_web_attempt?: boolean;
     questions: TestQuestion[];
   }) =>
     request<Test>('/api/tests', {

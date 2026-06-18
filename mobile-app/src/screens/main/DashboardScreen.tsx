@@ -14,6 +14,7 @@ import { useNavigation, CommonActions, useFocusEffect } from '@react-navigation/
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuthStore } from '../../store/authStore';
 import { useChildStore } from '../../store/childStore';
+import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 import { MainTabParamList } from '../../navigation/AppNavigator';
 import StreakWidget from '../../components/StreakWidget';
@@ -50,6 +51,7 @@ interface DashboardData {
   homework: HomeworkSummary;
   recentMark: RecentMark | null;
   announcements: Announcement[];
+  worstSubject: string | null;
 }
 
 type MainNavProp = BottomTabNavigationProp<MainTabParamList>;
@@ -81,6 +83,25 @@ function timeAgo(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ── Worst subject helper ──────────────────────────────────────────────────────
+
+function deriveWorstSubject(marks: Array<{ subject: string; score: number; max_score: number }>): string | null {
+  if (!marks || marks.length < 2) return null;
+  const map = new Map<string, number[]>();
+  for (const m of marks) {
+    if (!map.has(m.subject)) map.set(m.subject, []);
+    map.get(m.subject)!.push(Math.round((m.score / m.max_score) * 100));
+  }
+  if (map.size < 2) return null;
+  let worstSubject = '';
+  let worstAvg = 101;
+  map.forEach((pcts, subject) => {
+    const avg = Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
+    if (avg < worstAvg) { worstAvg = avg; worstSubject = subject; }
+  });
+  return worstAvg < 65 ? worstSubject : null;
 }
 
 // ── Child switcher dropdown ───────────────────────────────────────────────────
@@ -380,10 +401,11 @@ export default function DashboardScreen() {
         hwRes.status === 'fulfilled' ? (hwRes.value.data.data?.count ?? 0) : 0;
       const homework: HomeworkSummary = { pendingCount };
 
-      // Recent mark
+      // Recent mark + worst subject
       // API wraps response as { success, data: { data: [...], total, ... } }
       // so the array lives at .data.data.data
       let recentMark: RecentMark | null = null;
+      let allMarksForWorst: Array<{ subject: string; score: number; max_score: number }> = [];
       if (marksRes.status === 'fulfilled') {
         const marksPayload = marksRes.value.data.data;
         const marks: any[] = Array.isArray(marksPayload)
@@ -397,6 +419,7 @@ export default function DashboardScreen() {
             max_score: latest.max_score,
           };
         }
+        allMarksForWorst = marks;
       }
 
       // Announcements for this student's class
@@ -416,7 +439,7 @@ export default function DashboardScreen() {
         setNotifCount(unreadCount);
       }
 
-      setData({ attendance, homework, recentMark, announcements });    } catch (err) {
+      setData({ attendance, homework, recentMark, announcements, worstSubject: deriveWorstSubject(allMarksForWorst) });    } catch (err) {
       console.warn('[Dashboard] fetchAll error:', err);
     } finally {
       setLoading(false);
@@ -478,6 +501,7 @@ export default function DashboardScreen() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     fetchAll();
   }, [fetchAll]);
 
@@ -628,6 +652,27 @@ export default function DashboardScreen() {
           </>
         )}
 
+        {/* Focus Area banner — shown when a subject avg is below 65% */}
+        {!loading && data?.worstSubject && (
+          <TouchableOpacity
+            style={styles.focusBanner}
+            onPress={() => navigation.navigate('Marks')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`Focus area: ${data.worstSubject}. Tap to view performance.`}
+          >
+            <View style={styles.focusLeft}>
+              <Text style={styles.focusEmoji}>🎯</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.focusTitle}>Focus Area</Text>
+                <Text style={styles.focusSubject}>{data.worstSubject}</Text>
+                <Text style={styles.focusHint}>Your lowest scoring subject · tap to review</Text>
+              </View>
+            </View>
+            <Text style={styles.focusArrow}>→</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Announcements section — always shown below the cards */}
         {!loading && (
           <View style={styles.annSection}>
@@ -712,6 +757,28 @@ const styles = StyleSheet.create({
   badgeText: { fontSize: 10, color: '#FFFFFF', fontWeight: '700' },
   loadingBox: { height: 200, justifyContent: 'center', alignItems: 'center' },
   cardsRow: { flexDirection: 'row', gap: 12 },
+  focusBanner: {
+    backgroundColor: '#FFF7ED',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#FED7AA',
+    padding: 14,
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  focusLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+  focusEmoji: { fontSize: 28 },
+  focusTitle: { fontSize: 11, fontWeight: '700', color: '#92400E', textTransform: 'uppercase', letterSpacing: 0.5 },
+  focusSubject: { fontSize: 16, fontWeight: '800', color: '#111827', marginTop: 1 },
+  focusHint: { fontSize: 12, color: '#B45309', marginTop: 2 },
+  focusArrow: { fontSize: 18, color: '#F59E0B', fontWeight: '700', marginLeft: 8 },
   annSection: {
     marginTop: 24,
   },

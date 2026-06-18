@@ -14,8 +14,11 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Animated,
+  Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -29,6 +32,7 @@ export interface TestMeta {
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
   available_from?: string | null;
   available_until?: string | null;
+  allow_web_attempt?: boolean;
 }
 
 interface Question {
@@ -441,6 +445,119 @@ function getWindowState(
   if (effectiveUntil && nowMins > toMinutes(effectiveUntil)) return 'closed';
   return 'open';
 }
+
+// ── Platform choice modal ─────────────────────────────────────────────────────
+// Shown when a test allows web attempts and the student hasn't started yet.
+
+function PlatformChoiceModal({
+  visible,
+  onPhone,
+  onWeb,
+}: {
+  visible: boolean;
+  onPhone: () => void;
+  onWeb: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      accessibilityViewIsModal
+    >
+      <View style={platformModalStyles.overlay}>
+        <View style={platformModalStyles.card}>
+          <Text style={platformModalStyles.title}>How would you like to take this test?</Text>
+          <Text style={platformModalStyles.subtitle}>
+            This test is available on both your phone and the Eduvo web portal.
+            Once you start on one platform you must finish there.
+          </Text>
+
+          <TouchableOpacity
+            style={platformModalStyles.optionBtn}
+            onPress={onPhone}
+            accessibilityRole="button"
+            accessibilityLabel="Continue on phone"
+          >
+            <Text style={platformModalStyles.optionIcon}>📱</Text>
+            <View style={platformModalStyles.optionText}>
+              <Text style={platformModalStyles.optionTitle}>Continue on Phone</Text>
+              <Text style={platformModalStyles.optionDesc}>Take the test right here in the app</Text>
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[platformModalStyles.optionBtn, platformModalStyles.optionBtnWeb]}
+            onPress={onWeb}
+            accessibilityRole="button"
+            accessibilityLabel="Continue on web"
+          >
+            <Text style={platformModalStyles.optionIcon}>💻</Text>
+            <View style={platformModalStyles.optionText}>
+              <Text style={platformModalStyles.optionTitle}>Continue on Web</Text>
+              <Text style={platformModalStyles.optionDesc}>
+                Opens eduvo.vercel.app in your browser — log in and the test will be there
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const platformModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 28,
+    paddingBottom: 40,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 8,
+    lineHeight: 25,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  optionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 2,
+    borderColor: '#E5E7EB',
+  },
+  optionBtnWeb: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  optionIcon: { fontSize: 28, marginRight: 14 },
+  optionText: { flex: 1 },
+  optionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 2 },
+  optionDesc: { fontSize: 12, color: '#6B7280', lineHeight: 18 },
+});
 
 // ── Pre-test screen ───────────────────────────────────────────────────────────
 
@@ -1049,45 +1166,161 @@ function MCQBreakdown({ mcqAnswers }: { mcqAnswers: ResultAnswer[] }) {
   );
 }
 
+// ── Post-mortem summary ────────────────────────────────────────────────────────
+
+function PostMortemSummary({
+  mcqAnswers,
+  timeTakenSeconds,
+  testTitle,
+}: {
+  mcqAnswers: ResultAnswer[];
+  timeTakenSeconds: number | null;
+  testTitle: string;
+}) {
+  const total   = mcqAnswers.length;
+  const correct = mcqAnswers.filter((a) => a.is_correct).length;
+  const skipped = mcqAnswers.filter((a) => a.selected_option == null).length;
+  const wrong   = total - correct - skipped;
+  const scorePct = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const avgTimePerQ =
+    timeTakenSeconds !== null && total > 0
+      ? Math.round(timeTakenSeconds / total)
+      : null;
+
+  const ringColor = scorePct >= 75 ? '#22C55E' : scorePct >= 50 ? '#F59E0B' : '#EF4444';
+
+  let verdict = ''; let verdictEmoji = '';
+  if (scorePct >= 90)      { verdict = 'Outstanding!';      verdictEmoji = '🏆'; }
+  else if (scorePct >= 75) { verdict = 'Great work!';       verdictEmoji = '🎉'; }
+  else if (scorePct >= 50) { verdict = 'Good effort!';      verdictEmoji = '👍'; }
+  else if (scorePct >= 30) { verdict = 'Keep practising';   verdictEmoji = '💪'; }
+  else                     { verdict = 'Needs improvement'; verdictEmoji = '📚'; }
+
+  const statItems = [
+    { label: 'Correct', value: String(correct), color: '#22C55E', bg: '#F0FDF4' },
+    { label: 'Wrong',   value: String(wrong),   color: '#EF4444', bg: '#FEF2F2' },
+    { label: 'Skipped', value: String(skipped), color: '#9CA3AF', bg: '#F3F4F6' },
+    ...(avgTimePerQ !== null
+      ? [{ label: 'Avg/Q', value: `${avgTimePerQ}s`, color: '#6366F1', bg: '#EEF2FF' }]
+      : []),
+  ];
+
+  return (
+    <View style={pmStyles.container}>
+      <View style={pmStyles.ringWrap}>
+        <View style={[pmStyles.ring, { borderColor: ringColor }]}>
+          <Text style={[pmStyles.ringPct, { color: ringColor }]}>{scorePct}%</Text>
+          <Text style={pmStyles.ringLabel}>{correct}/{total} correct</Text>
+        </View>
+        <Text style={pmStyles.verdict}>{verdictEmoji} {verdict}</Text>
+        <Text style={pmStyles.testName}>{testTitle}</Text>
+      </View>
+      <View style={pmStyles.statRow}>
+        {statItems.map((s) => (
+          <View key={s.label} style={[pmStyles.statCard, { backgroundColor: s.bg }]}>
+            <Text style={[pmStyles.statValue, { color: s.color }]}>{s.value}</Text>
+            <Text style={pmStyles.statLabel}>{s.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const pmStyles = StyleSheet.create({
+  container: { marginBottom: 24 },
+  ringWrap: { alignItems: 'center', marginBottom: 20 },
+  ring: {
+    width: 140, height: 140, borderRadius: 70, borderWidth: 8,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 12,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 4,
+  },
+  ringPct: { fontSize: 36, fontWeight: '800' },
+  ringLabel: { fontSize: 12, color: '#6B7280', marginTop: 2, fontWeight: '500' },
+  verdict: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  testName: { fontSize: 13, color: '#9CA3AF', textAlign: 'center' },
+  statRow: { flexDirection: 'row', gap: 10 },
+  statCard: {
+    flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1,
+  },
+  statValue: { fontSize: 22, fontWeight: '800' },
+  statLabel: { fontSize: 11, color: '#6B7280', fontWeight: '500', marginTop: 3 },
+});
+
 // ── Results screen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
   testTitle,
   results,
   integrityResult,
+  timeTakenSeconds,
   onBack,
 }: {
   testTitle: string;
   results: ResultData;
   integrityResult: IntegrityApiResult | null;
+  timeTakenSeconds: number | null;
   onBack: () => void;
 }) {
-  const mcqAnswers = results.answers.filter((a) => a.question_type === 'mcq');
+  const mcqAnswers   = results.answers.filter((a) => a.question_type === 'mcq');
   const theoryAnswers = results.answers.filter((a) => a.question_type === 'theory');
   const totalMcqMarks = mcqAnswers.reduce((s, a) => s + a.marks, 0);
-  const correctCount = mcqAnswers.filter((a) => a.is_correct).length;
+  const correctCount  = mcqAnswers.filter((a) => a.is_correct).length;
+
+  // Entrance animation
+  const fadeAnim  = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
+
+  useEffect(() => {
+    // Haptic feedback based on score
+    const scorePct = totalMcqMarks > 0
+      ? Math.round(((results.mcq_score ?? 0) / totalMcqMarks) * 100)
+      : 0;
+    if (scorePct >= 75) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else if (scorePct >= 50) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    // Fade + slide in
+    Animated.parallel([
+      Animated.timing(fadeAnim,  { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
-    <ScrollView style={resStyles.container} contentContainerStyle={resStyles.content}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+    <Animated.ScrollView
+      style={[resStyles.container, { opacity: fadeAnim }]}
+      contentContainerStyle={resStyles.content}
+    >
+      <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
 
-      <Text style={resStyles.heading}>Results</Text>
-      <Text style={resStyles.testTitle}>{testTitle}</Text>
+        {/* Post-mortem ring + stat cards */}
+        {mcqAnswers.length > 0 && (
+          <PostMortemSummary
+            mcqAnswers={mcqAnswers}
+            timeTakenSeconds={timeTakenSeconds}
+            testTitle={testTitle}
+          />
+        )}
 
-      {/* Score summary */}
-      <View style={resStyles.scoreCard}>
-        <View style={resStyles.scoreBlock}>
-          <Text style={resStyles.scoreLabel}>MCQ Score</Text>
-          <Text style={resStyles.scoreValue}>
-            {results.mcq_score ?? 0}
-            <Text style={resStyles.scoreMax}> / {totalMcqMarks}</Text>
-          </Text>
-          <Text style={resStyles.scoreSubtext}>
-            {correctCount} of {mcqAnswers.length} correct
-          </Text>
-        </View>
+        {/* Theory score card (only shown when theory exists alongside MCQ) */}
         {theoryAnswers.length > 0 && (
-          <>
+          <View style={resStyles.scoreCard}>
+            <View style={resStyles.scoreBlock}>
+              <Text style={resStyles.scoreLabel}>MCQ Score</Text>
+              <Text style={resStyles.scoreValue}>
+                {results.mcq_score ?? 0}
+                <Text style={resStyles.scoreMax}> / {totalMcqMarks}</Text>
+              </Text>
+              <Text style={resStyles.scoreSubtext}>{correctCount} of {mcqAnswers.length} correct</Text>
+            </View>
             <View style={resStyles.scoreDivider} />
             <View style={resStyles.scoreBlock}>
               <Text style={resStyles.scoreLabel}>Theory</Text>
@@ -1096,81 +1329,77 @@ function ResultsScreen({
               </Text>
               <Text style={resStyles.scoreSubtext}>Awaiting teacher review</Text>
             </View>
+          </View>
+        )}
+
+        {/* Integrity score card */}
+        {integrityResult !== null && (
+          <>
+            <View style={resStyles.integrityCard}>
+              <View style={resStyles.integrityRow}>
+                <Text style={resStyles.integrityLabel}>Integrity Score</Text>
+                <Text style={[
+                  resStyles.integrityScore,
+                  integrityResult.integrity_score >= 80 ? resStyles.integrityGreen
+                    : integrityResult.integrity_score >= 60 ? resStyles.integrityAmber
+                    : resStyles.integrityRed,
+                ]}>
+                  {integrityResult.integrity_score}/100
+                </Text>
+              </View>
+              <View style={resStyles.integritySub}>
+                <Text style={resStyles.integritySubText}>
+                  Exits: {integrityResult.exit_count} · Time outside: {integrityResult.total_exit_duration_seconds}s
+                </Text>
+              </View>
+            </View>
+            {integrityResult.is_suspicious && (
+              <View style={resStyles.integrityWarning}>
+                <Text style={resStyles.integrityWarningText}>
+                  ⚠️ Your activity during this test has been flagged for teacher review.
+                </Text>
+              </View>
+            )}
           </>
         )}
-      </View>
 
-      {/* ── Integrity score card ── */}
-      {integrityResult !== null && (
-        <>
-          <View style={resStyles.integrityCard}>
-            <View style={resStyles.integrityRow}>
-              <Text style={resStyles.integrityLabel}>Integrity Score</Text>
-              <Text style={[
-                resStyles.integrityScore,
-                integrityResult.integrity_score >= 80
-                  ? resStyles.integrityGreen
-                  : integrityResult.integrity_score >= 60
-                  ? resStyles.integrityAmber
-                  : resStyles.integrityRed,
-              ]}>
-                {integrityResult.integrity_score}/100
+        {/* MCQ per-question breakdown */}
+        {mcqAnswers.length > 0 && <MCQBreakdown mcqAnswers={mcqAnswers} />}
+
+        {/* Theory section */}
+        {theoryAnswers.length > 0 && (
+          <View style={resStyles.section}>
+            <Text style={resStyles.sectionTitle}>Theory Questions</Text>
+            <View style={resStyles.theoryNote}>
+              <Text style={resStyles.theoryNoteText}>
+                🕐 Theory answers are reviewed by your teacher. Marks will appear once graded.
               </Text>
             </View>
-            <View style={resStyles.integritySub}>
-              <Text style={resStyles.integritySubText}>
-                Exits: {integrityResult.exit_count} · Time outside: {integrityResult.total_exit_duration_seconds}s
-              </Text>
-            </View>
+            {theoryAnswers.map((ans, idx) => (
+              <View key={ans.question_id} style={resStyles.theoryRow}>
+                <Text style={resStyles.theoryQNum}>Theory Q{idx + 1}</Text>
+                <Text style={resStyles.theoryQText}>{ans.question_text}</Text>
+                <Text style={resStyles.theoryMarks}>
+                  Marks:{' '}
+                  {ans.marks_awarded === 'pending' || ans.marks_awarded === null
+                    ? 'Pending'
+                    : `${ans.marks_awarded} / ${ans.marks}`}
+                </Text>
+              </View>
+            ))}
           </View>
-          {integrityResult.is_suspicious && (
-            <View style={resStyles.integrityWarning}>
-              <Text style={resStyles.integrityWarningText}>
-                ⚠️ Your activity during this test has been flagged for teacher review.
-              </Text>
-            </View>
-          )}
-        </>
-      )}
+        )}
 
-      {/* MCQ per-question breakdown */}
-      {mcqAnswers.length > 0 && (
-        <MCQBreakdown mcqAnswers={mcqAnswers} />
-      )}
-
-      {/* Theory section */}
-      {theoryAnswers.length > 0 && (
-        <View style={resStyles.section}>
-          <Text style={resStyles.sectionTitle}>Theory Questions</Text>
-          <View style={resStyles.theoryNote}>
-            <Text style={resStyles.theoryNoteText}>
-              🕐 Theory answers are reviewed by your teacher. Marks will appear once graded.
-            </Text>
-          </View>
-          {theoryAnswers.map((ans, idx) => (
-            <View key={ans.question_id} style={resStyles.theoryRow}>
-              <Text style={resStyles.theoryQNum}>Theory Q{idx + 1}</Text>
-              <Text style={resStyles.theoryQText}>{ans.question_text}</Text>
-              <Text style={resStyles.theoryMarks}>
-                Marks:{' '}
-                {ans.marks_awarded === 'pending' || ans.marks_awarded === null
-                  ? 'Pending'
-                  : `${ans.marks_awarded} / ${ans.marks}`}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
-
-      <TouchableOpacity
-        style={resStyles.backBtn}
-        onPress={onBack}
-        accessibilityRole="button"
-        accessibilityLabel="Back to tests list"
-      >
-        <Text style={resStyles.backBtnText}>← Back to Tests</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        <TouchableOpacity
+          style={resStyles.backBtn}
+          onPress={onBack}
+          accessibilityRole="button"
+          accessibilityLabel="Back to tests list"
+        >
+          <Text style={resStyles.backBtnText}>← Back to Tests</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </Animated.ScrollView>
   );
 }
 
@@ -1313,8 +1542,11 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showPlatformModal, setShowPlatformModal] = useState(false);
   const [results, setResults] = useState<ResultData | null>(null);
   const [integrityResult, setIntegrityResult] = useState<IntegrityApiResult | null>(null);
+  const [timeTakenSeconds, setTimeTakenSeconds] = useState<number | null>(null);
+  const testStartWallTime = useRef<number | null>(null);
 
   // ── Integrity tracking ──────────────────────────────────────────────────────
   const { startTracking, finaliseTracking } = useTestIntegrity();
@@ -1461,10 +1693,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
     void checkAttemptStatus();
   }, [test.id, test.attempt_status]);
 
-  const handleStart = useCallback(async () => {
+  const handleStart = useCallback(async (platform: 'mobile' | 'web' = 'mobile') => {
     setStarting(true);
     try {
-      const res = await apiClient.post('/api/tests/attempt/start', { test_id: test.id });
+      const res = await apiClient.post('/api/tests/attempt/start', { test_id: test.id, platform });
       const payload = res.data.data as {
         attempt_id: string;
         time_limit_minutes: number;
@@ -1499,6 +1731,8 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       }
 
       setPhase('integrity_warning');
+      testStartWallTime.current = Date.now();
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (err: unknown) {
       const attemptIdFromErr =
         (err as { response?: { data?: { attempt_id?: string } } })?.response?.data?.attempt_id;
@@ -1586,6 +1820,10 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
       // Clear saved progress
       await clearProgress(test.id);
+
+      if (testStartWallTime.current !== null) {
+        setTimeTakenSeconds(Math.round((Date.now() - testStartWallTime.current) / 1000));
+      }
 
       // ── Call integrity API after successful submission ──────────────────────
       try {
@@ -1677,7 +1915,35 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       );
     }
     return (
-      <PreTestScreen test={test} onStart={handleStart} starting={starting} isResume={hasActiveAttempt} />
+      <>
+        <PreTestScreen
+          test={test}
+          onStart={() => {
+            // Show platform choice modal only if web is allowed AND not already in-progress
+            if (test.allow_web_attempt && test.attempt_status !== 'in_progress') {
+              setShowPlatformModal(true);
+            } else {
+              // Phone-only test or resuming — go straight to mobile attempt
+              handleStart('mobile');
+            }
+          }}
+          starting={starting}
+          isResume={hasActiveAttempt}
+        />
+        <PlatformChoiceModal
+          visible={showPlatformModal}
+          onPhone={() => {
+            setShowPlatformModal(false);
+            handleStart('mobile');
+          }}
+          onWeb={() => {
+            setShowPlatformModal(false);
+            Linking.openURL('https://eduvo.vercel.app/student/login').catch(() =>
+              Alert.alert('Could not open browser', 'Please open https://eduvo.vercel.app/student/login manually.')
+            );
+          }}
+        />
+      </>
     );
   }
 
@@ -1698,6 +1964,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         testTitle={test.title}
         results={results}
         integrityResult={integrityResult}
+        timeTakenSeconds={timeTakenSeconds}
         onBack={() => navigation.goBack()}
       />
     );

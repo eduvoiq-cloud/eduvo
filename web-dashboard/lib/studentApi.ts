@@ -42,6 +42,7 @@ export interface TestRecord {
   integrity_exit_count: number | null;
   integrity_exit_duration_seconds: number | null;
   require_camera?: boolean;
+  allow_web_attempt?: boolean;
 }
 
 export interface Question {
@@ -161,10 +162,10 @@ export const studentTestsApi = {
   list: (token: string) =>
     studentRequest<TestRecord[]>('/api/tests/student', { method: 'GET' }, token),
 
-  startAttempt: (token: string, testId: string) =>
+  startAttempt: (token: string, testId: string, platform: 'mobile' | 'web' = 'web') =>
     studentRequest<AttemptStartResponse>('/api/tests/attempt/start', {
       method: 'POST',
-      body: JSON.stringify({ test_id: testId }),
+      body: JSON.stringify({ test_id: testId, platform }),
     }, token),
 
   submitAttempt: (

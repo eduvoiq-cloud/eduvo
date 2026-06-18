@@ -717,7 +717,7 @@ export default function TestAttemptPage() {
     if (!token) { router.replace('/student/login'); return; }
     setStarting(true);
     try {
-      const res = await studentTestsApi.startAttempt(token, testId);
+      const res = await studentTestsApi.startAttempt(token, testId, 'web');
       const { attempt_id, questions: qs, seconds_remaining } = res.data;
       setAttemptId(attempt_id);
       setQuestions(qs);
@@ -730,7 +730,12 @@ export default function TestAttemptPage() {
       setPhase('integrity_warning');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to start test';
-      setErrorMsg(msg);
+      // Surface platform-mismatch 403 clearly
+      if (msg.includes('already started this test on')) {
+        setErrorMsg('You already started this test on your phone. Please continue there.');
+      } else {
+        setErrorMsg(msg);
+      }
       setPhase('error');
     } finally {
       setStarting(false);

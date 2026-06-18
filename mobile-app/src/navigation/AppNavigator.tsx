@@ -24,7 +24,7 @@ import FeeStatusScreen from '../screens/main/FeeStatusScreen';
 import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
 
 // Student-specific screens
-import StudentTestsScreen from '../screens/student/TestsScreen';
+import StudentTestsScreen from '../screens/main/TestsScreen';
 import HomeworkSubmitScreen, { type HomeworkMeta } from '../screens/student/HomeworkSubmitScreen';
 import RecoveryPacksScreen from '../screens/student/RecoveryPacksScreen';
 import RecoveryPackDetailScreen from '../screens/student/RecoveryPackDetailScreen';

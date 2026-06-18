@@ -35,6 +35,7 @@ interface TestDetails {
   contributes_to_streak: boolean;
   // Web proctoring
   require_camera: boolean;
+  allow_web_attempt: boolean;
   // AI generation
   use_ai: boolean;
   ai_topic: string;
@@ -122,6 +123,7 @@ const EMPTY_DETAILS: TestDetails = {
   title: '', subject: '', class_name: '', section: '', term: '', exam_type: 'class_test',
   date: getTodayDateString(), start_time: '', end_time: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: true,
   board: 'GSEB', chapter: '', language: 'English', contributes_to_streak: true,
+  allow_web_attempt: false,
   require_camera: false,
   use_ai: false, ai_topic: '', ai_count: 10, ai_difficulty: 'mixed',
   ai_easy_count: 4, ai_medium_count: 4, ai_hard_count: 2,
@@ -407,6 +409,20 @@ function QuestionRow({ q, index, onEdit, onDelete }: QuestionRowProps) {
   );
 }
 
+// ── localStorage helpers ──────────────────────────────────────────────────────
+
+const LS_TERM_KEY        = 'eduvo_last_term';
+const LS_EXAM_TYPE_KEY   = 'eduvo_last_exam_type';
+const LS_START_TIME_KEY  = 'eduvo_last_start_time';
+const LS_END_TIME_KEY    = 'eduvo_last_end_time';
+
+function readLS(key: string): string {
+  try { return localStorage.getItem(key) ?? ''; } catch { return ''; }
+}
+function writeLS(key: string, value: string) {
+  try { localStorage.setItem(key, value); } catch { /* ignore */ }
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function CreateTestPage() {
@@ -416,9 +432,29 @@ export default function CreateTestPage() {
   // Step state
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // Step 1 — test details
-  const [details, setDetails] = useState<TestDetails>({ ...EMPTY_DETAILS });
+  // Step 1 — test details (initialised with last-used values from localStorage)
+  const [details, setDetails] = useState<TestDetails>(() => {
+    const lastTerm      = readLS(LS_TERM_KEY);
+    const lastExamType  = readLS(LS_EXAM_TYPE_KEY) as ExamTypeValue | '';
+    const lastStartTime = readLS(LS_START_TIME_KEY);
+    const lastEndTime   = readLS(LS_END_TIME_KEY);
+    return {
+      ...EMPTY_DETAILS,
+      term:       lastTerm     || EMPTY_DETAILS.term,
+      exam_type:  (lastExamType && (EXAM_TYPES as readonly string[]).includes(lastExamType))
+                    ? (lastExamType as ExamTypeValue)
+                    : EMPTY_DETAILS.exam_type,
+      start_time: lastStartTime || EMPTY_DETAILS.start_time,
+      end_time:   lastEndTime   || EMPTY_DETAILS.end_time,
+    };
+  });
   const [detailsError, setDetailsError] = useState('');
+
+  // Persist last-used term, exam type and test-window times to localStorage
+  useEffect(() => { if (details.term)       writeLS(LS_TERM_KEY,       details.term);      }, [details.term]);
+  useEffect(() => { if (details.exam_type)  writeLS(LS_EXAM_TYPE_KEY,  details.exam_type); }, [details.exam_type]);
+  useEffect(() => {                          writeLS(LS_START_TIME_KEY, details.start_time); }, [details.start_time]);
+  useEffect(() => {                          writeLS(LS_END_TIME_KEY,   details.end_time);   }, [details.end_time]);
 
   // Step 2 — questions
   const [questions, setQuestions] = useState<QuestionDraft[]>([]);
@@ -459,7 +495,7 @@ export default function CreateTestPage() {
 
   // ── Chapter library state ───────────────────────────────────────────────────
   // Topic source mode (applies inside the AI section, "From Topic" only)
-  const [topicSourceMode, setTopicSourceMode] = useState<TopicSourceMode>('manual');
+  const [topicSourceMode, setTopicSourceMode] = useState<TopicSourceMode>('library');
 
   // Library cascading dropdowns state
   const [libSubjects, setLibSubjects] = useState<string[]>([]);
@@ -478,6 +514,32 @@ export default function CreateTestPage() {
     customTopicChecked: false,
     customTopicText: '',
   });
+
+  // When the teacher picks a subject in the top section, mirror it into the
+  // library selection so they don't have to pick it again in the AI section.
+  useEffect(() => {
+    if (!details.subject) return;
+    setLibSelection((prev) => {
+      // Only auto-set if the subject is present in available library subjects,
+      // or if libSubjects hasn't loaded yet (optimistic pre-fill).
+      const subjectMatches = libSubjects.length === 0 || libSubjects.includes(details.subject);
+      if (!subjectMatches) return prev;
+      if (prev.subject === details.subject) return prev; // already set
+      // Reset chapter when subject changes
+      return {
+        ...prev,
+        subject: details.subject,
+        chapterId: '',
+        chapterNumber: 0,
+        chapterName: '',
+        allTopics: [],
+        checkedTopics: new Set(),
+        customTopicChecked: false,
+        customTopicText: '',
+      };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [details.subject]);
 
   // chapter_library_id and selected_topics stored after generation, passed to create
   const [savedChapterLibraryId, setSavedChapterLibraryId] = useState<string | null>(null);
@@ -512,7 +574,16 @@ export default function CreateTestPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json() as { success: boolean; data: { subjects: string[] } };
-      setLibSubjects(json.success ? (json.data.subjects ?? []) : []);
+      const subjects = json.success ? (json.data.subjects ?? []) : [];
+      setLibSubjects(subjects);
+      // Auto-select subject in library if it matches the top-section subject
+      setLibSelection((prev) => {
+        const targetSubject = prev.subject || '';
+        if (targetSubject && subjects.includes(targetSubject)) {
+          return prev; // already set correctly, chapter fetch handled by separate effect
+        }
+        return prev;
+      });
     } catch { setLibSubjects([]); }
     finally { setLibSubjectsLoading(false); }
   }, []);
@@ -533,6 +604,22 @@ export default function CreateTestPage() {
     } catch { setLibChapters([]); }
     finally { setLibChaptersLoading(false); }
   }, []);
+
+  // ── Auto-fetch library subjects when class is selected (library mode is always active now) ──
+  useEffect(() => {
+    if (details.class_name && libSelection.board) {
+      fetchLibSubjects(libSelection.board, details.class_name);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [details.class_name, libSelection.board]);
+
+  // ── Auto-fetch chapters when library subject is set ─────────────────────────
+  useEffect(() => {
+    if (libSelection.subject && details.class_name && libSelection.board) {
+      fetchLibChapters(libSelection.board, details.class_name, libSelection.subject);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [libSelection.subject, details.class_name, libSelection.board]);
 
   // ── Fetch students for restriction selection ────────────────────────────────
 
@@ -942,6 +1029,7 @@ export default function CreateTestPage() {
         chapter_library_id: savedChapterLibraryId ?? null,
         selected_topics: savedSelectedTopics ?? null,
         require_camera: details.require_camera,
+        allow_web_attempt: details.allow_web_attempt,
         questions: builtQuestions,
       });
 
@@ -1139,17 +1227,48 @@ export default function CreateTestPage() {
                 <Toggle id="toggle-shuffle-o" checked={details.shuffle_options} onChange={(v) => setDetails((d) => ({ ...d, shuffle_options: v }))} />
               </div>
 
-              {/* Camera proctoring toggle */}
-              <div className="flex items-center justify-between p-4 bg-blue-50 rounded-xl border border-blue-100">
-                <div className="flex-1 pr-4">
-                  <label htmlFor="toggle-camera" className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-                    📷 Require Camera During Test
-                  </label>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Students must enable their webcam to take this test on the web portal. Face detection will monitor for suspicious activity.
-                  </p>
+              {/* Web attempt + camera proctoring toggles */}
+              <div className="rounded-xl border border-gray-200 overflow-hidden">
+                {/* Allow Web Attempt — always visible */}
+                <div className="flex items-center justify-between p-4 bg-blue-50 border-b border-blue-100">
+                  <div className="flex-1 pr-4">
+                    <label htmlFor="toggle-web-attempt" className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                      💻 Allow Web Attempt
+                    </label>
+                    <p className="text-xs text-gray-500 mt-1">
+                      When enabled, students can take this test from the Eduvo web portal. Off by default — tests are phone-only.
+                    </p>
+                  </div>
+                  <Toggle
+                    id="toggle-web-attempt"
+                    checked={details.allow_web_attempt}
+                    onChange={(v) => setDetails((d) => ({
+                      ...d,
+                      allow_web_attempt: v,
+                      // Reset camera when web is turned off
+                      require_camera: v ? d.require_camera : false,
+                    }))}
+                  />
                 </div>
-                <Toggle id="toggle-camera" checked={details.require_camera} onChange={(v) => setDetails((d) => ({ ...d, require_camera: v }))} />
+
+                {/* Require Camera — only visible when Allow Web Attempt is ON */}
+                {details.allow_web_attempt && (
+                  <div className="flex items-center justify-between p-4 pl-8 bg-white">
+                    <div className="flex-1 pr-4">
+                      <label htmlFor="toggle-camera" className="text-sm font-medium text-gray-700 flex items-center gap-2">
+                        📷 Require Camera During Test
+                      </label>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Students must enable their webcam. Face detection will monitor for suspicious activity.
+                      </p>
+                    </div>
+                    <Toggle
+                      id="toggle-camera"
+                      checked={details.require_camera}
+                      onChange={(v) => setDetails((d) => ({ ...d, require_camera: v }))}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* ── Extra metadata ───────────────────────────────────────── */}

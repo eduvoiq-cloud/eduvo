@@ -53,6 +53,8 @@ const createTestSchema = z.object({
   selected_topics: z.string().optional().nullable(),
   // Web proctoring
   require_camera: z.boolean().default(false),
+  // Web attempt support
+  allow_web_attempt: z.boolean().default(false),
   questions: z.array(questionSchema).min(1),
 });
 
@@ -419,7 +421,8 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       contributes_to_streak: testFields.contributes_to_streak ?? false,
       chapter_library_id: testFields.chapter_library_id ?? null,
       selected_topics: testFields.selected_topics ?? null,
-      require_camera:  testFields.require_camera ?? false,
+      require_camera:    testFields.require_camera ?? false,
+      allow_web_attempt: testFields.allow_web_attempt ?? false,
       school_id:  req.user!.school_id,
       created_by: req.user!.id,
     })
@@ -590,16 +593,18 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   }
 
   // Fetch tests — no correct_option, no shuffle config exposed
+  // Only return tests that are enabled for web attempt (web student portal)
   const { data: tests, error: tErr } = await supabaseAdmin
     .from('tests')
     .select(`
       id, title, subject_id, date, term, time_limit_minutes,
-      available_from, available_until, require_camera,
+      available_from, available_until, require_camera, allow_web_attempt,
       subject:subjects(name)
     `)
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
     .ilike('section', studentRecord.section)
+    .eq('allow_web_attempt', true)
     .order('date', { ascending: false });
 
   if (tErr) { sendError(res, tErr.message, 500); return; }
@@ -620,6 +625,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       available_from: t.available_from ?? null,
       available_until: t.available_until ?? null,
       require_camera: (t.require_camera as boolean | null) ?? false,
+      allow_web_attempt: (t.allow_web_attempt as boolean | null) ?? false,
       question_count: 0, // populated below via direct count query
     };
   });
@@ -649,18 +655,31 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       .select('notes, max_score')
       .eq('student_id', studentId)
       .like('notes', 'auto:attempt:%'),
-    // Direct count query — more reliable than the PostgREST relationship aggregate
+    // Direct count query — check both tables (test_questions = dashboard-created, questions = mobile-created)
     supabaseAdmin
-      .from('questions')
+      .from('test_questions')
       .select('test_id')
       .in('test_id', testIds),
   ]);
 
-  // Build map: test_id -> question count
+  // Build map: test_id -> question count (from test_questions table)
   const questionCountMap = new Map<string, number>();
   for (const row of ((questionCountsResult.data ?? []) as Array<{ test_id: string }>)) {
     questionCountMap.set(row.test_id, (questionCountMap.get(row.test_id) ?? 0) + 1);
   }
+
+  // For any tests still at 0, fall back to the legacy `questions` table
+  const missingIds = result.filter((t) => !questionCountMap.has(t.id)).map((t) => t.id);
+  if (missingIds.length > 0) {
+    const { data: legacyRows } = await supabaseAdmin
+      .from('questions')
+      .select('test_id')
+      .in('test_id', missingIds);
+    for (const row of ((legacyRows ?? []) as Array<{ test_id: string }>)) {
+      questionCountMap.set(row.test_id, (questionCountMap.get(row.test_id) ?? 0) + 1);
+    }
+  }
+
   // Apply real question counts
   for (const t of result) {
     t.question_count = questionCountMap.get(t.id) ?? 0;
@@ -748,8 +767,11 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
  * Applies shuffle if configured.
  */
 router.post('/attempt/start', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
-  const { test_id } = req.body as { test_id?: string };
+  const { test_id, platform: rawPlatform } = req.body as { test_id?: string; platform?: string };
   if (!test_id) { sendError(res, 'test_id is required', 400); return; }
+
+  // Default to 'mobile' if not provided (backwards compat with existing app)
+  const platform: 'mobile' | 'web' = rawPlatform === 'web' ? 'web' : 'mobile';
 
   // authenticateStudent already resolved and verified the student — use it directly
   const studentRecord = {
@@ -780,7 +802,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   // Fetch test config
   const { data: test, error: tErr } = await supabaseAdmin
     .from('tests')
-    .select('id, class, section, school_id, time_limit_minutes, shuffle_questions, shuffle_options, available_from, available_until, date')
+    .select('id, class, section, school_id, time_limit_minutes, shuffle_questions, shuffle_options, available_from, available_until, date, allow_web_attempt')
     .eq('id', test_id)
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
@@ -788,6 +810,12 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     .single();
 
   if (tErr || !test) { sendError(res, 'Test not found or not available for your class', 404); return; }
+
+  // Web platform check: reject if test doesn't allow web attempts
+  if (platform === 'web' && !(test as Record<string, unknown>).allow_web_attempt) {
+    sendError(res, 'This test is not available on web.', 403);
+    return;
+  }
 
   // Enforce scheduled time window if set
   // NOTE: available_from / available_until are stored as HH:MM in the school's
@@ -798,7 +826,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   // Prevent duplicate active attempts
   const { data: existingAttempt } = await supabaseAdmin
     .from('test_attempts')
-    .select('id, is_submitted')
+    .select('id, is_submitted, attempt_platform')
     .eq('test_id', test_id)
     .eq('student_id', studentRecord.id)
     .maybeSingle();
@@ -806,6 +834,19 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   if (existingAttempt) {
     if (existingAttempt.is_submitted) {
       res.status(409).json({ success: false, message: 'You have already submitted this test', attempt_id: existingAttempt.id });
+      return;
+    }
+
+    // Platform lock: if the attempt was started on a different platform, reject
+    const existingPlatform: 'mobile' | 'web' =
+      (existingAttempt as Record<string, unknown>).attempt_platform === 'web' ? 'web' : 'mobile';
+    if (existingPlatform !== platform) {
+      const otherPlatform = existingPlatform === 'mobile' ? 'mobile' : 'web';
+      sendError(
+        res,
+        `You already started this test on ${otherPlatform}. You can only continue on that platform.`,
+        403
+      );
       return;
     }
 
@@ -913,6 +954,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
         student_id: studentRecord.id,
         started_at: new Date().toISOString(),
         is_submitted: false,
+        attempt_platform: platform,
       })
       .select()
       .single();

@@ -10,6 +10,8 @@ import {
   StatusBar,
   ScrollView,
 } from 'react-native';
+import Svg, { Polyline, Circle } from 'react-native-svg';
+import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -147,6 +149,34 @@ const trendStyles = StyleSheet.create({
   flat: { fontSize: 18, fontWeight: '700', color: '#9CA3AF' },
 });
 
+// ── Sparkline chart ───────────────────────────────────────────────────────────
+
+const SPARK_W = 80;
+const SPARK_H = 32;
+
+function Sparkline({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) return null;
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const step = SPARK_W / (data.length - 1);
+  const points = data
+    .map((v, i) => {
+      const x = i * step;
+      const y = SPARK_H - ((v - min) / range) * (SPARK_H - 8) - 4;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const lastX = (data.length - 1) * step;
+  const lastY = SPARK_H - ((data[data.length - 1] - min) / range) * (SPARK_H - 8) - 4;
+  return (
+    <Svg width={SPARK_W} height={SPARK_H} accessibilityLabel={`Score trend: ${data.join(', ')}`}>
+      <Polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <Circle cx={lastX} cy={lastY} r={3} fill={color} />
+    </Svg>
+  );
+}
+
 // ── Term filter bar ───────────────────────────────────────────────────────────
 
 const TERM_OPTIONS: TermFilter[] = ['All', 'term_1', 'term_2', 'term_3'];
@@ -221,6 +251,12 @@ function SubjectCard({
   const latestPct = pct(summary.latestScore, summary.latestMaxScore);
   const scoreColor = latestPct >= 75 ? '#22C55E' : latestPct >= 50 ? '#F59E0B' : '#EF4444';
 
+  // Sparkline: oldest → newest percentage scores
+  const sparkData = useMemo(
+    () => [...summary.records].reverse().map((r) => pct(r.score, r.max_score)),
+    [summary.records],
+  );
+
   let borderColor = '#E5E7EB';
   let headerBg = '#FFFFFF';
   let labelEl: React.ReactNode = null;
@@ -257,12 +293,27 @@ function SubjectCard({
           {labelEl}
         </View>
         <View style={cardStyles.headerRight}>
-          <TrendArrow trend={summary.trend} />
-          <Text style={[cardStyles.latestScore, { color: scoreColor }]}>
-            {summary.latestScore}/{summary.latestMaxScore}
-          </Text>
-          <Text style={[cardStyles.latestPct, { color: scoreColor }]}>{latestPct}%</Text>
+          {sparkData.length >= 2 && (
+            <View style={{ marginRight: 10, marginTop: 2 }}>
+              <Sparkline data={sparkData} color={scoreColor} />
+            </View>
+          )}
+          <View style={{ alignItems: 'flex-end' }}>
+            <TrendArrow trend={summary.trend} />
+            <Text style={[cardStyles.latestScore, { color: scoreColor }]}>
+              {summary.latestScore}/{summary.latestMaxScore}
+            </Text>
+            <Text style={[cardStyles.latestPct, { color: scoreColor }]}>{latestPct}%</Text>
+          </View>
         </View>
+      </View>
+
+      {/* Mastery bar */}
+      <View style={cardStyles.masteryWrap}>
+        <View style={cardStyles.masteryTrack}>
+          <View style={[cardStyles.masteryFill, { width: `${summary.average}%` as `${number}%`, backgroundColor: scoreColor }]} />
+        </View>
+        <Text style={[cardStyles.masteryLabel, { color: scoreColor }]}>{summary.average}% avg</Text>
       </View>
 
       <View style={cardStyles.statsRow}>
@@ -377,6 +428,22 @@ const cardStyles = StyleSheet.create({
     alignItems: 'center',
   },
   expandText: { fontSize: 12, color: '#1D4ED8', fontWeight: '500' },
+  masteryWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    gap: 10,
+  },
+  masteryTrack: {
+    flex: 1,
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  masteryFill: { height: '100%', borderRadius: 3 },
+  masteryLabel: { fontSize: 11, fontWeight: '600', minWidth: 54, textAlign: 'right' },
   testList: {
     borderTopWidth: 1,
     borderTopColor: '#F3F4F6',
@@ -520,6 +587,7 @@ export default function MarksScreen() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     fetchAll();
   }, [fetchAll]);
 
