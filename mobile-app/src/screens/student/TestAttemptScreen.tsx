@@ -14,8 +14,10 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Animated,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -655,34 +657,154 @@ function MCQBreakdown({ mcqAnswers }: { mcqAnswers: ResultAnswer[] }) {
   );
 }
 
+// ── Post-mortem stat cards ─────────────────────────────────────────────────────
+
+function PostMortemCards({
+  mcqAnswers,
+  timeTakenSeconds,
+  testTitle,
+}: {
+  mcqAnswers: ResultAnswer[];
+  timeTakenSeconds: number | null;
+  testTitle: string;
+}) {
+  const total = mcqAnswers.length;
+  const correct = mcqAnswers.filter((a) => a.is_correct).length;
+  const skipped = mcqAnswers.filter((a) => a.selected_option == null).length;
+  const wrong = total - correct - skipped;
+  const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+  const avgTimePerQ =
+    timeTakenSeconds !== null && total > 0
+      ? Math.round(timeTakenSeconds / total)
+      : null;
+
+  const scoreColor = pct >= 75 ? '#22C55E' : pct >= 50 ? '#F59E0B' : '#EF4444';
+
+  const statItems = [
+    { label: 'Correct', value: String(correct), color: '#22C55E', bg: '#F0FDF4' },
+    { label: 'Wrong', value: String(wrong), color: '#EF4444', bg: '#FEF2F2' },
+    { label: 'Skipped', value: String(skipped), color: '#9CA3AF', bg: '#F3F4F6' },
+    ...(avgTimePerQ !== null
+      ? [{ label: 'Avg/Q', value: `${avgTimePerQ}s`, color: '#6366F1', bg: '#EEF2FF' }]
+      : []),
+  ];
+
+  let verdict = '';
+  let verdictEmoji = '';
+  if (pct >= 90) { verdict = 'Outstanding!'; verdictEmoji = '🏆'; }
+  else if (pct >= 75) { verdict = 'Great work!'; verdictEmoji = '🎉'; }
+  else if (pct >= 50) { verdict = 'Good effort!'; verdictEmoji = '👍'; }
+  else if (pct >= 30) { verdict = 'Keep practising'; verdictEmoji = '💪'; }
+  else { verdict = 'Needs improvement'; verdictEmoji = '📚'; }
+
+  return (
+    <View style={pmStyles.container}>
+      {/* Big score ring */}
+      <View style={pmStyles.ringWrap}>
+        <View style={[pmStyles.ring, { borderColor: scoreColor }]}>
+          <Text style={[pmStyles.ringPct, { color: scoreColor }]}>{pct}%</Text>
+          <Text style={pmStyles.ringLabel}>{correct}/{total} correct</Text>
+        </View>
+        <Text style={pmStyles.verdict}>{verdictEmoji} {verdict}</Text>
+        <Text style={pmStyles.testName}>{testTitle}</Text>
+      </View>
+
+      {/* Stat row */}
+      <View style={pmStyles.statRow}>
+        {statItems.map((s) => (
+          <View key={s.label} style={[pmStyles.statCard, { backgroundColor: s.bg }]}>
+            <Text style={[pmStyles.statValue, { color: s.color }]}>{s.value}</Text>
+            <Text style={pmStyles.statLabel}>{s.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const pmStyles = StyleSheet.create({
+  container: { marginBottom: 24 },
+  ringWrap: { alignItems: 'center', marginBottom: 20 },
+  ring: {
+    width: 140, height: 140, borderRadius: 70, borderWidth: 8,
+    justifyContent: 'center', alignItems: 'center', marginBottom: 12,
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 10, elevation: 4,
+  },
+  ringPct: { fontSize: 36, fontWeight: '800' },
+  ringLabel: { fontSize: 12, color: '#6B7280', marginTop: 2, fontWeight: '500' },
+  verdict: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  testName: { fontSize: 13, color: '#9CA3AF', textAlign: 'center' },
+  statRow: { flexDirection: 'row', gap: 10 },
+  statCard: {
+    flex: 1, borderRadius: 12, paddingVertical: 14, alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3, elevation: 1,
+  },
+  statValue: { fontSize: 22, fontWeight: '800' },
+  statLabel: { fontSize: 11, color: '#6B7280', fontWeight: '500', marginTop: 3 },
+});
+
 // ── Results screen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
-  testTitle, results, onBack,
+  testTitle, results, timeTakenSeconds, onBack,
 }: {
-  testTitle: string; results: ResultData; onBack: () => void;
+  testTitle: string; results: ResultData; timeTakenSeconds: number | null; onBack: () => void;
 }) {
   const mcqAnswers = results.answers.filter((a) => a.question_type === 'mcq');
   const theoryAnswers = results.answers.filter((a) => a.question_type === 'theory');
   const totalMcqMarks = mcqAnswers.reduce((s, a) => s + a.marks, 0);
   const correctCount = mcqAnswers.filter((a) => a.is_correct).length;
 
+  // Entrance animation
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
+
+  useEffect(() => {
+    // Haptic celebration on results
+    const pct = totalMcqMarks > 0 ? Math.round(((results.mcq_score ?? 0) / totalMcqMarks) * 100) : 0;
+    if (pct >= 75) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } else if (pct >= 50) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } else {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
   return (
-    <ScrollView style={resStyles.container} contentContainerStyle={resStyles.content}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
-      <Text style={resStyles.heading}>Results</Text>
-      <Text style={resStyles.testTitle}>{testTitle}</Text>
-      <View style={resStyles.scoreCard}>
-        <View style={resStyles.scoreBlock}>
-          <Text style={resStyles.scoreLabel}>MCQ Score</Text>
-          <Text style={resStyles.scoreValue}>
-            {results.mcq_score ?? 0}
-            <Text style={resStyles.scoreMax}> / {totalMcqMarks}</Text>
-          </Text>
-          <Text style={resStyles.scoreSubtext}>{correctCount} of {mcqAnswers.length} correct</Text>
-        </View>
+    <Animated.ScrollView
+      style={[resStyles.container, { opacity: fadeAnim }]}
+      contentContainerStyle={resStyles.content}
+    >
+      <Animated.View style={{ transform: [{ translateY: slideAnim }] }}>
+        <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+
+        {/* Post-mortem summary cards */}
+        {mcqAnswers.length > 0 && (
+          <PostMortemCards
+            mcqAnswers={mcqAnswers}
+            timeTakenSeconds={timeTakenSeconds}
+            testTitle={testTitle}
+          />
+        )}
+
+        {/* Score card (theory) */}
         {theoryAnswers.length > 0 && (
-          <>
+          <View style={resStyles.scoreCard}>
+            <View style={resStyles.scoreBlock}>
+              <Text style={resStyles.scoreLabel}>MCQ Score</Text>
+              <Text style={resStyles.scoreValue}>
+                {results.mcq_score ?? 0}
+                <Text style={resStyles.scoreMax}> / {totalMcqMarks}</Text>
+              </Text>
+              <Text style={resStyles.scoreSubtext}>{correctCount} of {mcqAnswers.length} correct</Text>
+            </View>
             <View style={resStyles.scoreDivider} />
             <View style={resStyles.scoreBlock}>
               <Text style={resStyles.scoreLabel}>Theory</Text>
@@ -691,38 +813,39 @@ function ResultsScreen({
               </Text>
               <Text style={resStyles.scoreSubtext}>Awaiting teacher review</Text>
             </View>
-          </>
-        )}
-      </View>
-      {mcqAnswers.length > 0 && (
-        <MCQBreakdown mcqAnswers={mcqAnswers} />
-      )}
-      {theoryAnswers.length > 0 && (
-        <View style={resStyles.section}>
-          <Text style={resStyles.sectionTitle}>Theory Questions</Text>
-          <View style={resStyles.theoryNote}>
-            <Text style={resStyles.theoryNoteText}>
-              🕐 Theory answers are reviewed by your teacher. Marks will appear once graded.
-            </Text>
           </View>
-          {theoryAnswers.map((ans, idx) => (
-            <View key={ans.question_id} style={resStyles.theoryRow}>
-              <Text style={resStyles.theoryQNum}>Theory Q{idx + 1}</Text>
-              <Text style={resStyles.theoryQText}>{ans.question_text}</Text>
-              <Text style={resStyles.theoryMarks}>
-                Marks:{' '}
-                {ans.marks_awarded === 'pending' || ans.marks_awarded === null
-                  ? 'Pending'
-                  : `${ans.marks_awarded} / ${ans.marks}`}
+        )}
+
+        {mcqAnswers.length > 0 && (
+          <MCQBreakdown mcqAnswers={mcqAnswers} />
+        )}
+        {theoryAnswers.length > 0 && (
+          <View style={resStyles.section}>
+            <Text style={resStyles.sectionTitle}>Theory Questions</Text>
+            <View style={resStyles.theoryNote}>
+              <Text style={resStyles.theoryNoteText}>
+                🕐 Theory answers are reviewed by your teacher. Marks will appear once graded.
               </Text>
             </View>
-          ))}
-        </View>
-      )}
-      <TouchableOpacity style={resStyles.backBtn} onPress={onBack} accessibilityRole="button" accessibilityLabel="Back to tests list">
-        <Text style={resStyles.backBtnText}>← Back to Tests</Text>
-      </TouchableOpacity>
-    </ScrollView>
+            {theoryAnswers.map((ans, idx) => (
+              <View key={ans.question_id} style={resStyles.theoryRow}>
+                <Text style={resStyles.theoryQNum}>Theory Q{idx + 1}</Text>
+                <Text style={resStyles.theoryQText}>{ans.question_text}</Text>
+                <Text style={resStyles.theoryMarks}>
+                  Marks:{' '}
+                  {ans.marks_awarded === 'pending' || ans.marks_awarded === null
+                    ? 'Pending'
+                    : `${ans.marks_awarded} / ${ans.marks}`}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+        <TouchableOpacity style={resStyles.backBtn} onPress={onBack} accessibilityRole="button" accessibilityLabel="Back to tests list">
+          <Text style={resStyles.backBtnText}>← Back to Tests</Text>
+        </TouchableOpacity>
+      </Animated.View>
+    </Animated.ScrollView>
   );
 }
 
@@ -808,6 +931,8 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [results, setResults] = useState<ResultData | null>(null);
   const [hasLocalProgress, setHasLocalProgress] = useState(false);
+  const [timeTakenSeconds, setTimeTakenSeconds] = useState<number | null>(null);
+  const testStartWallTime = useRef<number | null>(null);
 
   // ── Refs for use inside callbacks / AppState handler ─────────────────────
   const phaseRef = useRef<Phase>('pre');
@@ -937,6 +1062,8 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
       phaseRef.current = 'active';
       setPhase('active');
+      testStartWallTime.current = Date.now();
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch (err: unknown) {
       const errData = (err as { response?: { data?: { message?: string; attempt_id?: string } } })?.response?.data;
       const msg = errData?.message ?? (err instanceof Error ? err.message : 'Failed to start test');
@@ -1003,6 +1130,9 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       const resResponse = await apiClient.get(`/api/tests/results/${aid}`);
       setResults(resResponse.data.data as ResultData);
       await clearProgress(test.id);
+      if (testStartWallTime.current !== null) {
+        setTimeTakenSeconds(Math.round((Date.now() - testStartWallTime.current) / 1000));
+      }
       phaseRef.current = 'results';
       setPhase('results');
     } catch (err: unknown) {
@@ -1039,7 +1169,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
   }
 
   if (phase === 'results' && results) {
-    return <ResultsScreen testTitle={test.title} results={results} onBack={() => navigation.goBack()} />;
+    return <ResultsScreen testTitle={test.title} results={results} timeTakenSeconds={timeTakenSeconds} onBack={() => navigation.goBack()} />;
   }
 
   if (phase === 'submitting') {

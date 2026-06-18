@@ -286,6 +286,7 @@ export interface Test {
   time_limit_minutes?: number | null;
   shuffle_questions?: boolean;
   shuffle_options?: boolean;
+  require_camera?: boolean;
   school_id: string;
   created_by: string;
   created_at: string;
@@ -318,6 +319,11 @@ export interface TestResultsSummaryRow {
   total_exit_duration_seconds: number | null;
   is_suspicious: boolean | null;
   suspicious_reasons: string[] | null;
+  // Web proctoring fields — null if submitted from mobile
+  fullscreen_exit_count: number | null;
+  face_absent_count: number | null;
+  face_absent_duration_seconds: number | null;
+  multiple_faces_count: number | null;
 }
 
 export interface TestResultsSummary {
@@ -364,6 +370,11 @@ export interface TestAttemptDetail {
   submitted_at: string;
   mcq_score: number | null;
   total_score: number | null;
+  // Web proctoring fields — null if submitted from mobile
+  fullscreen_exit_count: number | null;
+  face_absent_count: number | null;
+  face_absent_duration_seconds: number | null;
+  multiple_faces_count: number | null;
   answers: TestAnswerDetail[];
 }
 
@@ -989,6 +1000,8 @@ export const testsApi = {
     // Chapter library fields
     chapter_library_id?: string | null;
     selected_topics?: string | null;
+    // Web proctoring
+    require_camera?: boolean;
     questions: TestQuestion[];
   }) =>
     request<Test>('/api/tests', {

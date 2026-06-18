@@ -33,6 +33,8 @@ interface TestDetails {
   chapter: string;
   language: string;
   contributes_to_streak: boolean;
+  // Web proctoring
+  require_camera: boolean;
   // AI generation
   use_ai: boolean;
   ai_topic: string;
@@ -120,6 +122,7 @@ const EMPTY_DETAILS: TestDetails = {
   title: '', subject: '', class_name: '', section: '', term: '', exam_type: 'class_test',
   date: getTodayDateString(), start_time: '', end_time: '', time_limit_minutes: '', shuffle_questions: true, shuffle_options: true,
   board: 'GSEB', chapter: '', language: 'English', contributes_to_streak: true,
+  require_camera: false,
   use_ai: false, ai_topic: '', ai_count: 10, ai_difficulty: 'mixed',
   ai_easy_count: 4, ai_medium_count: 4, ai_hard_count: 2,
 };
@@ -938,6 +941,7 @@ export default function CreateTestPage() {
         // Chapter library fields — set if teacher used library mode, null otherwise
         chapter_library_id: savedChapterLibraryId ?? null,
         selected_topics: savedSelectedTopics ?? null,
+        require_camera: details.require_camera,
         questions: builtQuestions,
       });
 
@@ -1133,6 +1137,19 @@ export default function CreateTestPage() {
                   <p className="text-xs text-gray-500 mt-0.5">Randomise MCQ option order for each student</p>
                 </div>
                 <Toggle id="toggle-shuffle-o" checked={details.shuffle_options} onChange={(v) => setDetails((d) => ({ ...d, shuffle_options: v }))} />
+              </div>
+
+              {/* Camera proctoring toggle */}
+              <div className="flex items-center justify-between p-4 bg-blue-50 rounded-xl border border-blue-100">
+                <div className="flex-1 pr-4">
+                  <label htmlFor="toggle-camera" className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                    📷 Require Camera During Test
+                  </label>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Students must enable their webcam to take this test on the web portal. Face detection will monitor for suspicious activity.
+                  </p>
+                </div>
+                <Toggle id="toggle-camera" checked={details.require_camera} onChange={(v) => setDetails((d) => ({ ...d, require_camera: v }))} />
               </div>
 
               {/* ── Extra metadata ───────────────────────────────────────── */}

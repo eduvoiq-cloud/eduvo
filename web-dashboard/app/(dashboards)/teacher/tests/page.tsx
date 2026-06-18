@@ -918,6 +918,7 @@ export default function TestsPage() {
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Exits</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Time Outside</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Integrity Status</th>
+                      <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Proctoring</th>
                       <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Submitted</th>
                       <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Action</th>
                     </tr>
@@ -970,6 +971,28 @@ export default function TestsPage() {
                             : row.integrity_score === null && row.is_suspicious === null
                               ? <span className="text-gray-400 text-xs">Pending</span>
                               : <IntegrityBadge row={row} />}
+                        </td>
+                        {/* Web proctoring summary cell */}
+                        <td className="px-3 py-3 text-xs">
+                          {!row.attempted ? <span className="text-gray-300">—</span> : (
+                            <div className="space-y-0.5">
+                              {row.fullscreen_exit_count !== null && row.fullscreen_exit_count !== undefined ? (
+                                <div className={row.fullscreen_exit_count > 3 ? 'text-red-600 font-medium' : 'text-gray-500'}>
+                                  ⛶ {row.fullscreen_exit_count} fullscreen
+                                </div>
+                              ) : null}
+                              {row.face_absent_count !== null && row.face_absent_count !== undefined && row.face_absent_count > 0 ? (
+                                <div className="text-amber-600 font-medium">👤 {row.face_absent_count} absent</div>
+                              ) : null}
+                              {row.multiple_faces_count !== null && row.multiple_faces_count !== undefined && row.multiple_faces_count > 0 ? (
+                                <div className="text-red-600 font-medium">👥 {row.multiple_faces_count} multiple</div>
+                              ) : null}
+                              {(row.fullscreen_exit_count === null || row.fullscreen_exit_count === undefined) &&
+                               (row.face_absent_count === null || row.face_absent_count === undefined) ? (
+                                <span className="text-gray-400">Mobile</span>
+                              ) : null}
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-gray-500 text-xs">
                           {row.submitted_at ? parseUtcDate(row.submitted_at).toLocaleString() : '—'}
@@ -1032,6 +1055,82 @@ export default function TestsPage() {
                 </span>
               ))}
             </div>
+
+            {/* ── Proctoring Report ─────────────────────────────────────── */}
+            {(() => {
+              const hasWebData = viewAttempt.fullscreen_exit_count !== null && viewAttempt.fullscreen_exit_count !== undefined;
+              const integrityRow = resultsSummary?.students.find((s) => s.student_id === viewAttempt.student_id);
+              const highViolations =
+                (viewAttempt.fullscreen_exit_count ?? 0) > 3 ||
+                (integrityRow?.exit_count ?? 0) > 5;
+
+              return (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 bg-gray-100 border-b border-gray-200 flex items-center justify-between">
+                    <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">📊 Proctoring Report</p>
+                    {integrityRow && <IntegrityBadge row={integrityRow} />}
+                  </div>
+                  <div className="divide-y divide-gray-200">
+                    {/* Tab switches row */}
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                      <span className="text-xs font-medium text-gray-600">Tab Switches</span>
+                      <span className={`text-xs font-semibold ${(integrityRow?.exit_count ?? 0) > 5 ? 'text-red-600' : 'text-gray-700'}`}>
+                        {integrityRow?.exit_count !== null && integrityRow?.exit_count !== undefined
+                          ? `${integrityRow.exit_count} exits · ${integrityRow.total_exit_duration_seconds ?? 0}s outside`
+                          : '—'}
+                      </span>
+                    </div>
+                    {/* Fullscreen row */}
+                    {hasWebData && (
+                      <div className={`flex items-center justify-between px-4 py-2.5 ${(viewAttempt.fullscreen_exit_count ?? 0) > 3 ? 'bg-red-50' : ''}`}>
+                        <span className="text-xs font-medium text-gray-600">Fullscreen Exits</span>
+                        <span className={`text-xs font-semibold ${(viewAttempt.fullscreen_exit_count ?? 0) > 3 ? 'text-red-600' : 'text-gray-700'}`}>
+                          {viewAttempt.fullscreen_exit_count} times
+                        </span>
+                      </div>
+                    )}
+                    {/* Camera rows */}
+                    <div className="flex items-center justify-between px-4 py-2.5">
+                      <span className="text-xs font-medium text-gray-600">Camera Monitoring</span>
+                      <span className="text-xs text-gray-600">
+                        {hasWebData ? '✓ Enabled' : 'Not required'}
+                      </span>
+                    </div>
+                    {hasWebData && (
+                      <>
+                        <div className={`flex items-center justify-between px-4 py-2.5 ${(viewAttempt.face_absent_count ?? 0) > 0 ? 'bg-amber-50' : ''}`}>
+                          <span className="text-xs font-medium text-gray-600">Face Absent</span>
+                          <span className={`text-xs font-semibold ${(viewAttempt.face_absent_count ?? 0) > 0 ? 'text-amber-700' : 'text-gray-700'}`}>
+                            {viewAttempt.face_absent_count ?? 0} time{viewAttempt.face_absent_count !== 1 ? 's' : ''} · {viewAttempt.face_absent_duration_seconds ?? 0}s total
+                          </span>
+                        </div>
+                        <div className={`flex items-center justify-between px-4 py-2.5 ${(viewAttempt.multiple_faces_count ?? 0) > 0 ? 'bg-red-50' : ''}`}>
+                          <span className="text-xs font-medium text-gray-600">Multiple Faces</span>
+                          <span className={`text-xs font-semibold ${(viewAttempt.multiple_faces_count ?? 0) > 0 ? 'text-red-600' : 'text-gray-700'}`}>
+                            {viewAttempt.multiple_faces_count ?? 0} time{viewAttempt.multiple_faces_count !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {/* Integrity score row */}
+                    {integrityRow && (
+                      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50">
+                        <span className="text-xs font-medium text-gray-600">Integrity Score</span>
+                        <span className="text-xs font-bold text-gray-800">
+                          {integrityRow.integrity_score !== null ? `${integrityRow.integrity_score}/100` : 'Pending'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {/* High violation warning */}
+                  {highViolations && (
+                    <div className="px-4 py-2.5 bg-red-50 border-t border-red-200">
+                      <p className="text-xs font-semibold text-red-700">⚠️ High violation count — review this submission carefully</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {markingError && (
               <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{markingError}</div>

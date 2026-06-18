@@ -51,6 +51,8 @@ const createTestSchema = z.object({
   // Chapter library fields (nullable — manual mode leaves them null)
   chapter_library_id: z.string().uuid().optional().nullable(),
   selected_topics: z.string().optional().nullable(),
+  // Web proctoring
+  require_camera: z.boolean().default(false),
   questions: z.array(questionSchema).min(1),
 });
 
@@ -64,6 +66,16 @@ const submitAttemptSchema = z.object({
       s.replace(/<[^>]*>/g, '').trim()
     ).optional(),
   })).min(1),
+  // Web proctoring integrity fields (optional — mobile submits without them)
+  integrity: z.object({
+    tab_exit_count:              z.number().int().min(0).optional().default(0),
+    total_exit_duration_seconds: z.number().int().min(0).optional().default(0),
+    longest_exit_seconds:        z.number().int().min(0).optional().default(0),
+    fullscreen_exit_count:       z.number().int().min(0).optional().default(0),
+    face_absent_count:           z.number().int().min(0).optional().default(0),
+    face_absent_duration_seconds:z.number().int().min(0).optional().default(0),
+    multiple_faces_count:        z.number().int().min(0).optional().default(0),
+  }).optional(),
 });
 
 const theoryMarkSchema = z.object({
@@ -407,6 +419,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       contributes_to_streak: testFields.contributes_to_streak ?? false,
       chapter_library_id: testFields.chapter_library_id ?? null,
       selected_topics: testFields.selected_topics ?? null,
+      require_camera:  testFields.require_camera ?? false,
       school_id:  req.user!.school_id,
       created_by: req.user!.id,
     })
@@ -571,7 +584,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .from('tests')
     .select(`
       id, title, subject_id, date, term, time_limit_minutes,
-      available_from, available_until,
+      available_from, available_until, require_camera,
       subject:subjects(name),
       questions(count)
     `)
@@ -597,6 +610,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       time_limit_minutes: t.time_limit_minutes,
       available_from: t.available_from ?? null,
       available_until: t.available_until ?? null,
+      require_camera: (t.require_camera as boolean | null) ?? false,
       question_count: Array.isArray(t.questions)
         ? (t.questions as Array<{ count: number }>)[0]?.count ?? 0
         : 0,
@@ -955,7 +969,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
   const parsed = submitAttemptSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { attempt_id, answers } = parsed.data;
+  const { attempt_id, answers, integrity: webIntegrity } = parsed.data;
 
   // authenticateStudent already resolved and verified the student — use directly
   const studentId = req.student!.id;
@@ -1074,13 +1088,20 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
     }
   }
 
-  // Update attempt as submitted
+  // Update attempt as submitted (including web proctoring fields if present)
   const { error: updateErr } = await supabaseAdmin
     .from('test_attempts')
     .update({
       mcq_score: mcqScore,
       is_submitted: true,
       submitted_at: now.toISOString(),
+      // Web proctoring fields (zero by default — only set if submitted from web portal)
+      ...(webIntegrity ? {
+        fullscreen_exit_count:        webIntegrity.fullscreen_exit_count        ?? 0,
+        face_absent_count:            webIntegrity.face_absent_count            ?? 0,
+        face_absent_duration_seconds: webIntegrity.face_absent_duration_seconds ?? 0,
+        multiple_faces_count:         webIntegrity.multiple_faces_count         ?? 0,
+      } : {}),
     })
     .eq('id', attempt_id);
 
@@ -1684,6 +1705,8 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     // Chapter library fields
     chapter_library_id: z.string().uuid().optional().nullable(),
     selected_topics:    z.string().optional().nullable(),
+    // Web proctoring
+    require_camera:     z.boolean().optional().default(false),
     questions:  z.array(z.object({
       type:           z.enum(['mcq', 'theory']),
       text:           z.string().min(1),
@@ -1732,6 +1755,7 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
       shuffle_options:    rest.shuffle_options ?? false,
       chapter_library_id: rest.chapter_library_id ?? null,
       selected_topics:    rest.selected_topics ?? null,
+      require_camera:     rest.require_camera  ?? false,
       school_id:          req.user!.school_id,
       created_by:         req.user!.id,
     })
@@ -2161,10 +2185,10 @@ router.get('/:test_id/attempts', authenticate, requireRole('teacher', 'schooladm
 router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
   const { attempt_id } = req.params;
 
-  // Fetch attempt
+  // Fetch attempt (include web proctoring fields)
   const { data: attempt, error: aErr } = await supabaseAdmin
     .from('test_attempts')
-    .select('id, test_id, student_id, started_at, submitted_at, is_submitted, mcq_score, total_score')
+    .select('id, test_id, student_id, started_at, submitted_at, is_submitted, mcq_score, total_score, fullscreen_exit_count, face_absent_count, face_absent_duration_seconds, multiple_faces_count')
     .eq('id', attempt_id)
     .single();
 
@@ -2299,6 +2323,11 @@ router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher',
     submitted_at: attempt.submitted_at,
     mcq_score: attempt.mcq_score,
     total_score: attempt.total_score,
+    // Web proctoring fields (null on mobile submissions)
+    fullscreen_exit_count: (attempt as Record<string, unknown>).fullscreen_exit_count as number | null ?? null,
+    face_absent_count: (attempt as Record<string, unknown>).face_absent_count as number | null ?? null,
+    face_absent_duration_seconds: (attempt as Record<string, unknown>).face_absent_duration_seconds as number | null ?? null,
+    multiple_faces_count: (attempt as Record<string, unknown>).multiple_faces_count as number | null ?? null,
     answers: formattedAnswers,
   });
 });
@@ -2422,10 +2451,10 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
 
   if (sErr) { sendError(res, sErr.message, 500); return; }
 
-  // Fetch all submitted attempts for this test
+  // Fetch all submitted attempts for this test (include web proctoring fields)
   const { data: attempts, error: aErr } = await supabaseAdmin
     .from('test_attempts')
-    .select('id, student_id, mcq_score, total_score, submitted_at, is_submitted')
+    .select('id, student_id, mcq_score, total_score, submitted_at, is_submitted, fullscreen_exit_count, face_absent_count, face_absent_duration_seconds, multiple_faces_count')
     .eq('test_id', test_id)
     .eq('is_submitted', true);
 
@@ -2455,6 +2484,10 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
     score: number | null;
     submitted_at: string;
     theory_pending: boolean;
+    fullscreen_exit_count: number | null;
+    face_absent_count: number | null;
+    face_absent_duration_seconds: number | null;
+    multiple_faces_count: number | null;
   };
   const attemptMap = new Map<string, AttemptMapEntry>();
   for (const a of (attempts ?? [])) {
@@ -2464,6 +2497,10 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
       score,
       submitted_at: a.submitted_at,
       theory_pending: theoryPendingMap.get(a.id) ?? false,
+      fullscreen_exit_count: (a as Record<string, unknown>).fullscreen_exit_count as number | null ?? null,
+      face_absent_count: (a as Record<string, unknown>).face_absent_count as number | null ?? null,
+      face_absent_duration_seconds: (a as Record<string, unknown>).face_absent_duration_seconds as number | null ?? null,
+      multiple_faces_count: (a as Record<string, unknown>).multiple_faces_count as number | null ?? null,
     });
   }
 
@@ -2506,6 +2543,11 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
       total_exit_duration_seconds: integrity?.total_exit_duration_seconds ?? null,
       is_suspicious: integrity?.is_suspicious ?? null,
       suspicious_reasons: integrity?.suspicious_reasons ?? null,
+      // Web proctoring fields
+      fullscreen_exit_count: attempt?.fullscreen_exit_count ?? null,
+      face_absent_count: attempt?.face_absent_count ?? null,
+      face_absent_duration_seconds: attempt?.face_absent_duration_seconds ?? null,
+      multiple_faces_count: attempt?.multiple_faces_count ?? null,
     };
   });
 
@@ -2664,7 +2706,14 @@ interface IntegrityResult {
   suspicious_reasons: string[];
 }
 
-function calculateIntegrityScore(data: IntegrityData, config: IntegrityConfig): IntegrityResult {
+interface WebIntegrityExtras {
+  fullscreen_exit_count?: number;
+  face_absent_count?: number;
+  face_absent_duration_seconds?: number;
+  multiple_faces_count?: number;
+}
+
+function calculateIntegrityScore(data: IntegrityData, config: IntegrityConfig, web?: WebIntegrityExtras): IntegrityResult {
   let score = config.base_score;
 
   // Per-exit deductions
@@ -2673,15 +2722,31 @@ function calculateIntegrityScore(data: IntegrityData, config: IntegrityConfig): 
   }
 
   // Extra deduction for the longest exit if it exceeds the long threshold.
-  // Apply once per "qualifying" exit — we only have the longest, so apply once
-  // if it qualifies, and also apply if total ÷ exit_count exceeds threshold
-  // (conservative: at least the longest definitely qualifies).
   if (data.longest_single_exit_seconds > config.long_exit_threshold_seconds) {
     score -= config.long_exit_extra_deduction;
   }
   // Additional deduction if total time outside is high
   if (data.total_exit_duration_seconds > config.suspicious_duration_threshold_seconds) {
     score -= 15;
+  }
+
+  // Web proctoring deductions
+  if (web) {
+    // Each fullscreen exit deducts same as a tab exit
+    if (web.fullscreen_exit_count) {
+      score -= web.fullscreen_exit_count * (config.exit_deduction_per_exit ?? 5);
+    }
+    // Face absent deductions
+    if (web.face_absent_count && web.face_absent_count > 0) {
+      score -= web.face_absent_count * 5;
+    }
+    if (web.face_absent_duration_seconds && web.face_absent_duration_seconds > 30) {
+      score -= 10;
+    }
+    // Multiple faces
+    if (web.multiple_faces_count && web.multiple_faces_count > 0) {
+      score -= web.multiple_faces_count * 10;
+    }
   }
 
   score = Math.max(score, config.minimum_score);
@@ -2706,6 +2771,19 @@ function calculateIntegrityScore(data: IntegrityData, config: IntegrityConfig): 
   ) {
     is_suspicious = true;
     suspicious_reasons.push('Rapid repeated exits detected');
+  }
+  // Web proctoring suspicious flags
+  if (web?.face_absent_count && web.face_absent_count > 0) {
+    is_suspicious = true;
+    suspicious_reasons.push(`Face absent detected (${web.face_absent_count} time${web.face_absent_count !== 1 ? 's' : ''})`);
+  }
+  if (web?.multiple_faces_count && web.multiple_faces_count > 0) {
+    is_suspicious = true;
+    suspicious_reasons.push(`Multiple faces detected (${web.multiple_faces_count} time${web.multiple_faces_count !== 1 ? 's' : ''})`);
+  }
+  if (web?.fullscreen_exit_count && web.fullscreen_exit_count > 3) {
+    is_suspicious = true;
+    suspicious_reasons.push(`Repeated fullscreen exits (${web.fullscreen_exit_count} times)`);
   }
 
   return { integrity_score: score, is_suspicious, suspicious_reasons };
@@ -2784,7 +2862,7 @@ router.post('/student/test-integrity', authenticateStudent, requireRole('student
     total_exit_duration_seconds,
     longest_single_exit_seconds,
   };
-  const { integrity_score, is_suspicious, suspicious_reasons } = calculateIntegrityScore(integrityData, config);
+  const { integrity_score, is_suspicious, suspicious_reasons } = calculateIntegrityScore(integrityData, config, undefined);
 
   // 4. Upsert into test_integrity_logs (idempotent — one row per attempt)
   const { data: existing } = await supabaseAdmin

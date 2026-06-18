@@ -76,10 +76,8 @@ ALTER TABLE public.teacher_premium_access
   ADD COLUMN IF NOT EXISTS can_create_activity_packs BOOLEAN NOT NULL DEFAULT TRUE,
   ADD COLUMN IF NOT EXISTS can_create_daily_tests BOOLEAN NOT NULL DEFAULT TRUE;
 
--- Sync new columns from existing columns where present
-UPDATE public.teacher_premium_access
-SET can_create_activity_packs = COALESCE(activity_packs, TRUE)
-WHERE can_create_activity_packs IS DISTINCT FROM COALESCE(activity_packs, TRUE);
+-- Note: DEFAULT TRUE on ADD COLUMN already backfills all existing rows correctly.
+-- No manual UPDATE needed — the old 'activity_packs' column does not exist.
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 7. notifications — ensure both body and message columns exist

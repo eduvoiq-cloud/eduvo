@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
+import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 import { StudentStackParamList } from '../../navigation/AppNavigator';
 
@@ -139,6 +140,33 @@ function formatHHMM(hhmm: string): string {
   return `${h12}:${mStr} ${ampm}`;
 }
 
+/**
+ * Returns how many seconds remain until the given HH:MM time today.
+ * Returns null if the time is in the past or missing.
+ */
+function secondsUntilHHMM(hhmm: string | null | undefined): number | null {
+  if (!hhmm) return null;
+  const now = new Date();
+  const nowMins = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const targetMins = toMinutes(hhmm);
+  const diff = (targetMins - nowMins) * 60;
+  return diff > 0 ? Math.round(diff) : null;
+}
+
+function formatCountdown(seconds: number): string {
+  if (seconds >= 3600) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${h}h ${m}m`;
+  }
+  if (seconds >= 60) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+  }
+  return `${seconds}s`;
+}
+
 // ── Status config ─────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<
@@ -239,7 +267,11 @@ function TestCard({
             {windowState === 'open'
               ? `🟢 Window open${test.available_until ? ` · closes at ${formatHHMM(test.available_until)}` : ''}`
               : windowState === 'before'
-              ? `🕐 Opens at ${formatHHMM(test.available_from!)}${test.available_until ? ` · closes ${formatHHMM(test.available_until)}` : ''}`
+              ? (() => {
+                  const secs = secondsUntilHHMM(test.available_from);
+                  const countdown = secs !== null ? ` · opens in ${formatCountdown(secs)}` : '';
+                  return `🕐 Opens at ${formatHHMM(test.available_from!)}${test.available_until ? ` · closes ${formatHHMM(test.available_until)}` : ''}${countdown}`;
+                })()
               : windowState === 'closed'
               ? '🔴 Test window closed · Unattempted'
               : `⏰ ${test.available_from ? formatHHMM(test.available_from) : ''}${test.available_from && test.available_until ? ' – ' : ''}${test.available_until ? formatHHMM(test.available_until) : ''}`
@@ -305,7 +337,7 @@ export default function StudentTestsScreen() {
   const navigation = useNavigation<StackNavigationProp<StudentStackParamList>>();
 
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    const id = setInterval(() => setTick((t) => t + 1), 1_000);
     return () => clearInterval(id);
   }, []);
 
@@ -332,6 +364,7 @@ export default function StudentTestsScreen() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     fetchTests();
   }, [fetchTests]);
 

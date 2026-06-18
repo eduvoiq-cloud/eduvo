@@ -12,6 +12,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useAuthStore } from '../../store/authStore';
+import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 import { StudentTabParamList } from '../../navigation/AppNavigator';
 
@@ -61,6 +62,7 @@ interface DashboardData {
   recentMarks: MarkRecord[];
   availableTests: TestRecord[];
   announcements: AnnouncementRecord[];
+  worstSubject: string | null;
 }
 
 type StudentNavProp = BottomTabNavigationProp<StudentTabParamList>;
@@ -110,6 +112,25 @@ function timeAgo(iso: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// ── Worst subject helper ──────────────────────────────────────────────────────
+
+function deriveWorstSubject(marks: MarkRecord[]): string | null {
+  if (marks.length < 2) return null;
+  const map = new Map<string, number[]>();
+  for (const m of marks) {
+    if (!map.has(m.subject)) map.set(m.subject, []);
+    map.get(m.subject)!.push(Math.round((m.score / m.max_score) * 100));
+  }
+  if (map.size < 2) return null;
+  let worstSubject = '';
+  let worstAvg = 101;
+  map.forEach((pcts, subject) => {
+    const avg = Math.round(pcts.reduce((a, b) => a + b, 0) / pcts.length);
+    if (avg < worstAvg) { worstAvg = avg; worstSubject = subject; }
+  });
+  return worstAvg < 65 ? worstSubject : null;
 }
 
 // ── Attendance status badge ───────────────────────────────────────────────────
@@ -246,7 +267,7 @@ export default function StudentDashboardScreen() {
       const announcements: AnnouncementRecord[] =
         annRes.status === 'fulfilled' ? (annRes.value.data.data ?? []) : [];
 
-      setData({ attendance, todayAttendance, recentMarks, availableTests, announcements });
+      setData({ attendance, todayAttendance, recentMarks, availableTests, announcements, worstSubject: deriveWorstSubject(recentMarks) });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load dashboard';
       console.warn('[StudentDashboard] fetchAll error:', msg);
@@ -261,6 +282,7 @@ export default function StudentDashboardScreen() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     fetchAll();
   }, [fetchAll]);
 
@@ -408,6 +430,27 @@ export default function StudentDashboardScreen() {
             <Text style={[styles.quickArrow, { color: '#B45309' }]}>View Tests →</Text>
           </TouchableOpacity>
         </View>
+
+        {/* ── Announcements ─────────────────────────────────────────────── */}
+        {!loading && data && data.worstSubject && (
+          <TouchableOpacity
+            style={styles.focusBanner}
+            onPress={() => navigation.navigate('Marks')}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`Focus area: ${data.worstSubject}. Tap to view performance.`}
+          >
+            <View style={styles.focusLeft}>
+              <Text style={styles.focusEmoji}>🎯</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.focusTitle}>Focus Area</Text>
+                <Text style={styles.focusSubject}>{data.worstSubject}</Text>
+                <Text style={styles.focusHint}>Your lowest scoring subject · tap to review</Text>
+              </View>
+            </View>
+            <Text style={styles.focusArrow}>→</Text>
+          </TouchableOpacity>
+        )}
 
         {/* ── Announcements ─────────────────────────────────────────────── */}
         {!loading && data && data.announcements.length > 0 && (
@@ -598,6 +641,30 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 12,
   },
+
+  // Focus area banner
+  focusBanner: {
+    backgroundColor: '#FFF7ED',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#FED7AA',
+    padding: 14,
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  focusLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, gap: 12 },
+  focusEmoji: { fontSize: 28 },
+  focusTitle: { fontSize: 11, fontWeight: '700', color: '#92400E', textTransform: 'uppercase', letterSpacing: 0.5 },
+  focusSubject: { fontSize: 16, fontWeight: '800', color: '#111827', marginTop: 1 },
+  focusHint: { fontSize: 12, color: '#B45309', marginTop: 2 },
+  focusArrow: { fontSize: 18, color: '#F59E0B', fontWeight: '700', marginLeft: 8 },
 
   // Announcement cards
   annCard: {
