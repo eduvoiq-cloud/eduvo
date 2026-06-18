@@ -32,7 +32,8 @@ const EXAM_TYPE_VALUES = ['quiz', 'midterm', 'final', 'assignment', 'project', '
 
 const createTestSchema = z.object({
   title: z.string().min(1),
-  subject_id: z.string().uuid(),
+  // Accept a UUID directly OR a subject name string (resolved to UUID below)
+  subject_id: z.string().min(1),
   class: z.string().min(1),
   section: z.string().min(1),
   term: z.string().min(1),
@@ -385,6 +386,26 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     return;
   }
 
+  // Resolve subject_id: if the value is not a valid UUID, treat it as a
+  // subject name and look up the UUID from the subjects table.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let resolvedSubjectId = testFields.subject_id;
+  if (!UUID_RE.test(resolvedSubjectId)) {
+    const { data: subjectRow, error: subjectErr } = await supabaseAdmin
+      .from('subjects')
+      .select('id')
+      .eq('school_id', req.user!.school_id ?? '')
+      .ilike('name', resolvedSubjectId.trim())
+      .limit(1)
+      .maybeSingle();
+
+    if (subjectErr || !subjectRow) {
+      sendError(res, `Subject "${resolvedSubjectId}" not found. Please contact your administrator.`, 400);
+      return;
+    }
+    resolvedSubjectId = subjectRow.id;
+  }
+
   // Teachers must be assigned to the class they're creating a test for
   if (req.user!.role === 'teacher') {
     const allowed = await teacherOwnsClass(
@@ -404,7 +425,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     .from('tests')
     .insert({
       title: testFields.title,
-      subject_id: testFields.subject_id,
+      subject_id: resolvedSubjectId,
       class:   testFields.class,       // DB column is "class"
       section: testFields.section,
       term:    normaliseTerm(testFields.term) ?? testFields.term,

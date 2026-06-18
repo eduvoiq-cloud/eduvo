@@ -1005,11 +1005,66 @@ export const testsApi = {
     // Web attempt support
     allow_web_attempt?: boolean;
     questions: TestQuestion[];
-  }) =>
-    request<Test>('/api/tests', {
+  }) => {
+    const OPTION_KEYS = ['a', 'b', 'c', 'd'] as const;
+
+    // Transform frontend question shape → backend schema shape
+    const mappedQuestions = payload.questions.map((q) => {
+      if (q.type === 'mcq') {
+        const mq = q as MCQQuestion;
+        return {
+          question_text: mq.text,
+          question_type: 'mcq' as const,
+          option_a: mq.options[0]?.text ?? '',
+          option_b: mq.options[1]?.text ?? '',
+          option_c: mq.options[2]?.text ?? '',
+          option_d: mq.options[3]?.text ?? '',
+          correct_option: OPTION_KEYS[mq.correct_option] ?? 'a',
+          marks: mq.marks,
+        };
+      } else {
+        const tq = q as TheoryQuestion;
+        return {
+          question_text: tq.text,
+          question_type: 'theory' as const,
+          marks: tq.marks,
+        };
+      }
+    });
+
+    // Resolve subject_id: the `subject` field holds either a UUID (subject_id)
+    // or a display name string. The backend requires subject_id (UUID).
+    // We pass it as subject_id directly; the caller is responsible for
+    // ensuring the value is a UUID when needed.
+    const body = {
+      title: payload.title,
+      subject_id: payload.subject,
+      class: payload.class_name,
+      section: payload.section,
+      term: payload.term,
+      date: payload.date,
+      exam_type: payload.exam_type ?? 'class_test',
+      available_from: payload.available_from ?? null,
+      available_until: payload.available_until ?? null,
+      time_limit_minutes: payload.time_limit_minutes ?? 30,
+      shuffle_questions: payload.shuffle_questions ?? false,
+      shuffle_options: payload.shuffle_options ?? false,
+      board: payload.board ?? null,
+      chapter: payload.chapter ?? null,
+      language: payload.language ?? null,
+      contributes_to_streak: payload.contributes_to_streak ?? false,
+      chapter_library_id: payload.chapter_library_id ?? null,
+      selected_topics: payload.selected_topics ?? null,
+      require_camera: payload.require_camera ?? false,
+      allow_web_attempt: payload.allow_web_attempt ?? false,
+      questions: mappedQuestions,
+    };
+
+    return request<Test>('/api/tests/create', {
       method: 'POST',
-      body: JSON.stringify(payload),
-    }, token),
+      body: JSON.stringify(body),
+    }, token);
+  },
 
   remove: (token: string, id: string) =>
     request<null>(`/api/tests/${id}`, { method: 'DELETE' }, token),
