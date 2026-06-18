@@ -1559,7 +1559,7 @@ router.get('/results/by-test/:test_id', authenticateStudent, requireRole('studen
   if (questionIds.length > 0) {
     const { data: tqData } = await supabaseAdmin
       .from('test_questions')
-      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks, explanation, reasoning')
       .in('id', questionIds);
 
     for (const q of (tqData ?? []) as QuestionDetail[]) {
@@ -1690,7 +1690,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
     // Try test_questions first
     const { data: tqData } = await supabaseAdmin
       .from('test_questions')
-      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+      .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks, explanation, reasoning')
       .in('id', questionIds);
 
     for (const q of (tqData ?? []) as QuestionDetail[]) {

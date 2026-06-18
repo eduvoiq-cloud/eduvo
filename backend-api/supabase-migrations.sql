@@ -393,6 +393,10 @@ ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS correct_option  text 
 ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS explanation text;
 ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS reasoning   text;
 
+-- Add explanation + reasoning to test_questions as well (legacy table)
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS explanation text;
+ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS reasoning   text;
+
 -- Back-fill question_text / question_type from the existing jsonb columns
 UPDATE public.test_questions
 SET
