@@ -468,31 +468,15 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     return;
   }
 
-  // Insert all questions — try with explanation/reasoning first, fall back
-  // without them if those columns don't exist in the DB yet.
-  const questionRowsFull = questions.map((q, idx) => ({
-    test_id: test.id,
-    order_index: idx,
-    question_text: q.question_text,
-    question_type: q.question_type,
-    option_a: q.option_a ?? null,
-    option_b: q.option_b ?? null,
-    option_c: q.option_c ?? null,
-    option_d: q.option_d ?? null,
-    correct_option: q.question_type === 'mcq' ? (q.correct_option ?? null) : null,
-    marks: q.marks,
-    explanation: q.explanation ?? null,
-    reasoning: q.reasoning ?? null,
-  }));
-
-  let qErr = (await supabaseAdmin.from('questions').insert(questionRowsFull)).error;
-
-  // If explanation/reasoning columns don't exist yet, retry without them
-  if (qErr && (qErr.message.includes('explanation') || qErr.message.includes('reasoning'))) {
-    console.warn('[tests/create] explanation/reasoning columns missing, retrying without them');
-    const questionRowsBase = questions.map((q, idx) => ({
+  // Insert all questions.
+  // Fallback chain handles columns that may be missing in older DB deployments:
+  //   Level 1 (full):  order_index + explanation + reasoning
+  //   Level 2:         order_index only (no explanation/reasoning)
+  //   Level 3 (bare):  no order_index, no explanation/reasoning
+  const makeRows = (opts: { withOrderIndex: boolean; withExplanation: boolean }) =>
+    questions.map((q, idx) => ({
       test_id: test.id,
-      order_index: idx,
+      ...(opts.withOrderIndex ? { order_index: idx } : {}),
       question_text: q.question_text,
       question_type: q.question_type,
       option_a: q.option_a ?? null,
@@ -501,8 +485,22 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       option_d: q.option_d ?? null,
       correct_option: q.question_type === 'mcq' ? (q.correct_option ?? null) : null,
       marks: q.marks,
+      ...(opts.withExplanation ? { explanation: q.explanation ?? null, reasoning: q.reasoning ?? null } : {}),
     }));
-    qErr = (await supabaseAdmin.from('questions').insert(questionRowsBase)).error;
+
+  // Attempt 1: full insert (order_index + explanation + reasoning)
+  let qErr = (await supabaseAdmin.from('questions').insert(makeRows({ withOrderIndex: true, withExplanation: true }))).error;
+
+  // Attempt 2: missing explanation/reasoning columns
+  if (qErr && (qErr.message.includes('explanation') || qErr.message.includes('reasoning'))) {
+    console.warn('[tests/create] explanation/reasoning columns missing, retrying without them');
+    qErr = (await supabaseAdmin.from('questions').insert(makeRows({ withOrderIndex: true, withExplanation: false }))).error;
+  }
+
+  // Attempt 3: missing order_index column (schema cache not refreshed yet)
+  if (qErr && qErr.message.includes('order_index')) {
+    console.warn('[tests/create] order_index column missing from schema cache, retrying without it');
+    qErr = (await supabaseAdmin.from('questions').insert(makeRows({ withOrderIndex: false, withExplanation: false }))).error;
   }
 
   if (qErr) {
