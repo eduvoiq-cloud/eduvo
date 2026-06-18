@@ -14,6 +14,8 @@
  */
 
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
+import * as Sentry from '@sentry/node';
 import { supabaseAdmin } from '../config/supabase';
 import { sendSuccess, sendError } from '../utils/response';
 import { runHomeworkBatchEval } from '../services/homeworkEvalService';
@@ -30,7 +32,12 @@ function verifyCronSecret(req: Request, res: Response): boolean {
   const fromQuery = req.query['secret'] as string | undefined;
   const provided = (fromHeader ?? fromQuery ?? '').trim();
 
-  if (!cronSecret || provided !== cronSecret) {
+  // Use timing-safe comparison to prevent timing-attack secret enumeration
+  if (
+    !cronSecret ||
+    provided.length !== cronSecret.length ||
+    !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(cronSecret))
+  ) {
     sendError(res, 'Unauthorized', 401);
     return false;
   }
@@ -70,6 +77,7 @@ router.get('/evaluate-batch', async (req: Request, res: Response) => {
       console.log('[cron/homework] evaluate-batch complete:', JSON.stringify(stats));
     } catch (err) {
       console.error('[cron/homework] evaluate-batch crashed:', err instanceof Error ? err.message : err);
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 });
@@ -97,6 +105,7 @@ router.post('/evaluate-batch', async (req: Request, res: Response) => {
         '[cron/homework] evaluate-batch crashed:',
         err instanceof Error ? err.message : err
       );
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 });

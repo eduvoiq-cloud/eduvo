@@ -250,7 +250,9 @@ async function startServer() {
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, Postman, server-to-server)
+        // Allow requests with no Origin header (mobile apps, curl, Postman,
+        // server-to-server calls). These are not subject to browser CORS
+        // enforcement — authentication via JWT is the access control for them.
         if (!origin) return callback(null, true);
 
         // Exact match against the configured allow-list
@@ -270,13 +272,20 @@ async function startServer() {
   );
 
   // ── Body parsing ─────────────────────────────────────────────────────────────
-  // 10MB limit: activity pack generation accepts base64-encoded images/PDFs
-  // which inflate ~33% over raw file size; a 6MB PDF becomes ~8MB in base64.
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  // Default limit is 1MB — sufficient for all normal API payloads.
+  // Routes that accept large uploads (activity packs, AI routes) apply a
+  // per-route 10MB override using the largeBodyParser exported below.
+  app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
   // ── Global rate limit (applies to every route) ───────────────────────────────
   app.use(globalRateLimit);
+
+  // ── Per-route body size overrides ────────────────────────────────────────────
+  // The global limit is 1MB. Routes that accept base64-encoded images/PDFs
+  // need a higher limit. A 6MB PDF becomes ~8MB in base64 (+33% inflation).
+  // We apply the override only on the specific route prefixes that need it.
+  const largeBody = express.json({ limit: '10mb' });
 
   // ── Routes ───────────────────────────────────────────────────────────────────
   app.use('/api/auth', authRoutes);
@@ -289,7 +298,7 @@ async function startServer() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/assignments', assignmentRoutes);
   app.use('/api/fees', feeRoutes);
-  app.use('/api/tests', testRoutes);
+  app.use('/api/tests', largeBody, testRoutes);   // supports base64 file upload for question generation
   app.use('/api/complaints', complaintRoutes);
   app.use('/api/teacher', teacherRoutes);
   app.use('/api/admin', adminRoutes);
@@ -298,13 +307,13 @@ async function startServer() {
   app.use('/api/performance', performanceRoutes);
   app.use('/api/import', bulkImportRoutes);
   app.use('/api/onboarding', onboardingRoutes);
-  app.use('/api/ai', aiAssistantRoutes);
+  app.use('/api/ai', largeBody, aiAssistantRoutes);   // AI chat may include base64 file context
   app.use('/api/timetable', timetableRoutes);
   app.use('/api/homework', homeworkRoutes);
   app.use('/api/marks-view', marksViewRoutes);
   app.use('/api/announcements', announcementRoutes);
   app.use('/api/premium', premiumRoutes);
-  app.use('/api/activity-packs', activityPacksRoutes);
+  app.use('/api/activity-packs', largeBody, activityPacksRoutes);  // base64 image/PDF generation
   app.use('/api/student-progress', studentProgressRoutes);
   app.use('/api/weekly-analysis', weeklyAnalysisRoutes);
   app.use('/api/cron/notifications', cronNotificationRoutes);

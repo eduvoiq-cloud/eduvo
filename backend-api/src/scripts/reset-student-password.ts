@@ -24,7 +24,7 @@ if (!phone) {
 
 async function run() {
   const defaultPwd = phone.slice(-5);
-  const hash = await bcrypt.hash(defaultPwd, 10);
+  const hash = await bcrypt.hash(defaultPwd, 12);
 
   const { data, error } = await supabaseAdmin
     .from('students')

@@ -1,18 +1,56 @@
 import rateLimit from 'express-rate-limit';
+import { RedisStore } from 'rate-limit-redis';
 import type { Request } from 'express';
+import redis from '../config/redis';
+
+/**
+ * Why validate: false appears on every limiter here
+ * ─────────────────────────────────────────────────
+ * express-rate-limit performs a self-check at startup to verify that the app
+ * has `app.set('trust proxy', ...)` configured correctly. Without it, req.ip
+ * resolves to the Railway load-balancer IP, making ALL users share the same
+ * rate-limit bucket — effectively disabling per-client throttling.
+ *
+ * `validate: false` suppresses that startup warning because we explicitly set
+ * `app.set('trust proxy', 1)` in src/index.ts. If you ever remove that line,
+ * re-enable `validate: true` here so the misconfiguration is caught at boot.
+ *
+ * DEPENDENCY: app.set('trust proxy', 1) in src/index.ts MUST remain in place.
+ * If it is removed, rate limiters will silently apply to the proxy's IP rather
+ * than the real client IP, rendering them useless.
+ *
+ * Redis store
+ * ───────────
+ * When REDIS_URL is set, all limiters use a shared RedisStore so counters are
+ * consistent across multiple instances (required for horizontal scaling).
+ * Without Redis the default MemoryStore is used — fine for a single instance
+ * but counters reset on restart and are not shared across replicas.
+ */
+
+/**
+ * Build a RedisStore for the given prefix if Redis is available,
+ * otherwise return undefined (falls back to MemoryStore).
+ */
+function makeStore(prefix: string): RedisStore | undefined {
+  if (!redis) return undefined;
+  return new RedisStore({
+    // rate-limit-redis v4 requires a sendCommand function
+    sendCommand: (...args: string[]) => redis!.call(...args) as Promise<unknown>,
+    prefix: `rl:${prefix}:`,
+  });
+}
 
 /**
  * Global rate limit — applied to every route in the app.
  * 300 requests per minute per IP (supports ~10k concurrent users at 1 req/2s each).
- * In production, Railway sits behind a load balancer so we trust the X-Forwarded-For
- * header — the `validate: false` flag suppresses the express-rate-limit warning.
  */
 export const globalRateLimit = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  validate: false, // suppresses "trust proxy" warning; Railway handles the proxy
+  validate: false,
+  store: makeStore('global'),
   message: {
     success: false,
     message: 'Too many requests. Please try again later.',
@@ -33,6 +71,7 @@ export const loginRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('login'),
   message: {
     success: false,
     message: 'Too many login attempts for this account. Please try again later.',
@@ -56,6 +95,7 @@ export const studentLoginRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('student_login'),
   message: {
     success: false,
     message: 'Too many login attempts for this account. Please try again later.',
@@ -72,6 +112,7 @@ export const registerRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('register'),
   message: {
     success: false,
     message: 'Too many registration attempts. Please try again later.',
@@ -88,6 +129,7 @@ export const templateDownloadRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('template'),
   message: {
     success: false,
     message: 'Too many template download requests. Please try again later.',
@@ -105,6 +147,7 @@ export const forgotPasswordRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('forgot_pwd'),
   message: {
     success: false,
     message: 'Too many password reset requests. Please try again later.',
@@ -122,6 +165,7 @@ export const testSubmitRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('test_submit'),
   message: {
     success: false,
     message: 'Too many test submissions. Please try again later.',
@@ -140,6 +184,7 @@ export const schoolListRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('school_list'),
   message: {
     success: false,
     message: 'Too many requests. Please try again later.',
@@ -157,6 +202,7 @@ export const authRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   validate: false,
+  store: makeStore('auth_legacy'),
   message: {
     success: false,
     message: 'Too many authentication attempts. Please try again later.',

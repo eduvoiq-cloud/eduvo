@@ -12,7 +12,10 @@ import {
 } from 'react-native';
 import Svg, { Polyline, Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 import apiClient from '../../api/client';
+import { MainStackParamList } from '../../navigation/AppNavigator';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -34,7 +37,10 @@ interface TestRecord {
   subject?: string | null;
   subject_id?: string | null;
   term?: string | null;
+  time_limit_minutes?: number;
+  question_count?: number;
   attempt_status?: 'not_started' | 'in_progress' | 'completed';
+  allow_web_attempt?: boolean;
   mcq_score?: number | null;
   total_score?: number | null;
   max_score?: number | null;
@@ -467,7 +473,7 @@ const cardStyles = StyleSheet.create({
 
 // ── Test result card ──────────────────────────────────────────────────────────
 
-function TestResultCard({ test }: { test: TestRecord }) {
+function TestResultCard({ test, onPress }: { test: TestRecord; onPress: () => void }) {
   // Prefer total_score (MCQ + theory) over mcq_score
   const rawScore = test.total_score ?? test.mcq_score;
   const maxScore = test.max_score ?? null;
@@ -492,7 +498,13 @@ function TestResultCard({ test }: { test: TestRecord }) {
   }
 
   return (
-    <View style={testCardStyles.card}>
+    <TouchableOpacity
+      style={testCardStyles.card}
+      onPress={onPress}
+      activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={`View results for ${test.title}`}
+    >
       <View style={testCardStyles.left}>
         <Text style={testCardStyles.title} numberOfLines={2}>{test.title}</Text>
         <Text style={testCardStyles.date}>
@@ -503,9 +515,9 @@ function TestResultCard({ test }: { test: TestRecord }) {
         <View style={[testCardStyles.badge, { backgroundColor: test.total_score_pending ? '#FEF3C7' : rawScore !== null && rawScore !== undefined ? '#DBEAFE' : '#F3F4F6' }]}>
           <Text style={[testCardStyles.badgeText, { color: scoreColor }]}>{scoreLabel}</Text>
         </View>
-        <Text style={testCardStyles.status}>✓ Completed</Text>
+        <Text style={testCardStyles.status}>View Results →</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -531,7 +543,7 @@ const testCardStyles = StyleSheet.create({
   right: { alignItems: 'flex-end' },
   badge: { borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginBottom: 4 },
   badgeText: { fontSize: 12, fontWeight: '600' },
-  status: { fontSize: 11, color: '#15803D', fontWeight: '500' },
+  status: { fontSize: 11, color: '#1D4ED8', fontWeight: '600' },
 });
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -545,6 +557,21 @@ export default function MarksScreen() {
   const [termFilter, setTermFilter] = useState<TermFilter>('All');
   const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
   const [showTests, setShowTests] = useState(true);
+
+  const navigation = useNavigation<StackNavigationProp<MainStackParamList>>();
+
+  const handleTestResultPress = useCallback((test: TestRecord) => {
+    navigation.navigate('TestAttempt', {
+      test: {
+        id: test.id,
+        title: test.title,
+        time_limit_minutes: test.time_limit_minutes ?? 0,
+        question_count: test.question_count ?? 0,
+        attempt_status: 'completed',
+        allow_web_attempt: test.allow_web_attempt ?? false,
+      },
+    });
+  }, [navigation]);
 
   const fetchAll = useCallback(async () => {
     setError(null);
@@ -681,7 +708,7 @@ export default function MarksScreen() {
                 {showTests && (
                   <View style={{ padding: 12, paddingTop: 8 }}>
                     {filteredTests.map((t) => (
-                      <TestResultCard key={t.id} test={t} />
+                      <TestResultCard key={t.id} test={t} onPress={() => handleTestResultPress(t)} />
                     ))}
                   </View>
                 )}

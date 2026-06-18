@@ -591,7 +591,7 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
     const defaultPassword = phone.slice(-5);
     let passwordHash: string;
     try {
-      passwordHash = await bcrypt.hash(defaultPassword, 10);
+      passwordHash = await bcrypt.hash(defaultPassword, 12);
     } catch (hashErr) {
       errors.push(`Row ${row.row_number}: Failed to hash password — ${hashErr instanceof Error ? hashErr.message : String(hashErr)}`);
       continue;

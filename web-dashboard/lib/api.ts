@@ -262,6 +262,8 @@ export interface MCQQuestion {
   marks: number;
   options: { text: string }[];
   correct_option: number;
+  reasoning?: string;
+  explanation?: string;
 }
 
 export interface TheoryQuestion {
@@ -1021,6 +1023,8 @@ export const testsApi = {
           option_d: mq.options[3]?.text ?? '',
           correct_option: OPTION_KEYS[mq.correct_option] ?? 'a',
           marks: mq.marks,
+          reasoning: mq.reasoning ?? undefined,
+          explanation: mq.explanation ?? undefined,
         };
       } else {
         const tq = q as TheoryQuestion;

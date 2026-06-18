@@ -751,11 +751,29 @@ router.get('/export/:school_id', async (req: Request, res: Response) => {
     .replace(/[^a-z0-9]/gi, '_')
     .toLowerCase();
 
-  // Fetch all school data in parallel
+  // ── Step 1: fetch the ID lists needed by child-table queries ─────────────
+  // Doing this up-front avoids nested `await` calls inside Promise.all, which
+  // were running additional sequential DB round-trips inside an already-parallel
+  // block and hiding the true query cost from the caller.
+  const [{ data: studentIdRows }, { data: userIdRows }] = await Promise.all([
+    supabaseAdmin.from('students').select('id').eq('school_id', school_id),
+    supabaseAdmin.from('users').select('id').eq('school_id', school_id),
+  ]);
+
+  const studentIds = (studentIdRows ?? []).map((s: { id: string }) => s.id);
+  const userIds    = (userIdRows    ?? []).map((u: { id: string }) => u.id);
+
+  // ── Step 2: fetch all school data in parallel ─────────────────────────────
+  // Attendance is capped at the most recent 10 000 records to prevent a single
+  // large school from spiking RAM (a school with 1 000 students and 250 days
+  // of data has 250 000 rows — fetching SELECT * in one shot risks OOM).
+  // The CSV will note this limit in the filename if the cap is hit.
+  const ATTENDANCE_EXPORT_LIMIT = 10_000;
+
   const [
     { data: students },
     { data: schoolUsers },
-    { data: attendanceRecords },
+    { data: attendanceRecords, count: attendanceTotal },
     { data: marksRecords },
     { data: feesRecords },
     { data: assignmentsRecords },
@@ -765,50 +783,27 @@ router.get('/export/:school_id', async (req: Request, res: Response) => {
   ] = await Promise.all([
     supabaseAdmin.from('students').select('*').eq('school_id', school_id),
     supabaseAdmin.from('users').select('id, name, email, role, phone, created_at').eq('school_id', school_id),
-    supabaseAdmin
-      .from('attendance')
-      .select('*')
-      .in(
-        'student_id',
-        ((await supabaseAdmin.from('students').select('id').eq('school_id', school_id)).data ?? []).map(
-          (s: { id: string }) => s.id
-        )
-      ),
-    supabaseAdmin
-      .from('marks')
-      .select('*')
-      .eq('school_id', school_id),
-    supabaseAdmin
-      .from('fees')
-      .select('*')
-      .eq('school_id', school_id),
-    supabaseAdmin
-      .from('assignments')
-      .select('*')
-      .eq('school_id', school_id),
-    supabaseAdmin
-      .from('complaints')
-      .select('*')
-      .eq('school_id', school_id),
-    supabaseAdmin
-      .from('notifications')
-      .select('*')
-      .in(
-        'user_id',
-        ((await supabaseAdmin.from('users').select('id').eq('school_id', school_id)).data ?? []).map(
-          (u: { id: string }) => u.id
-        )
-      ),
-    supabaseAdmin
-      .from('audit_logs')
-      .select('*')
-      .in(
-        'user_id',
-        ((await supabaseAdmin.from('users').select('id').eq('school_id', school_id)).data ?? []).map(
-          (u: { id: string }) => u.id
-        )
-      ),
+    studentIds.length > 0
+      ? supabaseAdmin
+          .from('attendance')
+          .select('*', { count: 'exact' })
+          .in('student_id', studentIds)
+          .order('date', { ascending: false })
+          .limit(ATTENDANCE_EXPORT_LIMIT)
+      : Promise.resolve({ data: [] as Record<string, unknown>[], count: 0, error: null }),
+    supabaseAdmin.from('marks').select('*').eq('school_id', school_id),
+    supabaseAdmin.from('fees').select('*').eq('school_id', school_id),
+    supabaseAdmin.from('assignments').select('*').eq('school_id', school_id),
+    supabaseAdmin.from('complaints').select('*').eq('school_id', school_id),
+    userIds.length > 0
+      ? supabaseAdmin.from('notifications').select('*').in('user_id', userIds).order('created_at', { ascending: false }).limit(10_000)
+      : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
+    userIds.length > 0
+      ? supabaseAdmin.from('audit_logs').select('*').in('user_id', userIds).order('created_at', { ascending: false }).limit(10_000)
+      : Promise.resolve({ data: [] as Record<string, unknown>[], error: null }),
   ]);
+
+  const attendanceTruncated = (attendanceTotal ?? 0) > ATTENDANCE_EXPORT_LIMIT;
 
   // Set response headers for ZIP download
   res.setHeader('Content-Type', 'application/zip');
@@ -836,7 +831,13 @@ router.get('/export/:school_id', async (req: Request, res: Response) => {
 
   appendCsv('students.csv',       students       as Record<string, unknown>[] | null);
   appendCsv('users.csv',          schoolUsers    as Record<string, unknown>[] | null);
-  appendCsv('attendance.csv',     attendanceRecords as Record<string, unknown>[] | null);
+  // Attendance filename signals truncation so the recipient knows the export is partial
+  appendCsv(
+    attendanceTruncated
+      ? `attendance_latest_${ATTENDANCE_EXPORT_LIMIT}.csv`
+      : 'attendance.csv',
+    attendanceRecords as Record<string, unknown>[] | null
+  );
   appendCsv('marks.csv',          marksRecords   as Record<string, unknown>[] | null);
   appendCsv('fees.csv',           feesRecords    as Record<string, unknown>[] | null);
   appendCsv('assignments.csv',    assignmentsRecords as Record<string, unknown>[] | null);

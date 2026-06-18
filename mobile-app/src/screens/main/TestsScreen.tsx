@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
@@ -30,6 +31,8 @@ interface TestRecord {
   available_until?: string | null;
   /** True when the teacher has blocked this student from the test */
   is_restricted?: boolean;
+  /** True when the teacher has enabled web attempt for this test */
+  allow_web_attempt?: boolean;
   /** Integrity score (0-100), present only if integrity was recorded */
   integrity_score?: number | null;
   integrity_exit_count?: number | null;
@@ -299,6 +302,13 @@ export default function TestsScreen() {
 
   useEffect(() => { fetchTests(); }, [fetchTests]);
 
+  // Re-fetch when screen comes back into focus (e.g. after completing a test)
+  // so attempt_status updates without needing a manual pull-to-refresh.
+  useFocusEffect(
+    useCallback(() => {
+      fetchTests();
+    }, [fetchTests])
+  );
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -321,6 +331,7 @@ export default function TestsScreen() {
         time_limit_minutes: test.time_limit_minutes ?? 0,
         question_count: test.question_count,
         attempt_status: test.attempt_status,
+        allow_web_attempt: test.allow_web_attempt ?? false,
       },
     });
   };

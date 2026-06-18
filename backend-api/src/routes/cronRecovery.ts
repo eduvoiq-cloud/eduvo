@@ -34,6 +34,8 @@
  */
 
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
+import * as Sentry from '@sentry/node';
 import { supabaseAdmin } from '../config/supabase';
 import { sendSuccess, sendError } from '../utils/response';
 import { sendPushNotification } from '../services/fcmService';
@@ -50,7 +52,12 @@ function verifyCronSecret(req: Request, res: Response): boolean {
   const fromQuery = req.query['secret'] as string | undefined;
   const provided = (fromHeader ?? fromQuery ?? '').trim();
 
-  if (!cronSecret || provided !== cronSecret) {
+  // Use timing-safe comparison to prevent timing-attack secret enumeration
+  if (
+    !cronSecret ||
+    provided.length !== cronSecret.length ||
+    !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(cronSecret))
+  ) {
     sendError(res, 'Unauthorized', 401);
     return false;
   }
@@ -314,6 +321,7 @@ async function runMonthlyScheduler(req: Request, res: Response): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[cron/recovery] monthly-scheduler crashed:', msg);
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 }
@@ -630,6 +638,7 @@ router.post('/check-batch-jobs', async (req: Request, res: Response) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[cron/recovery] check-batch-jobs crashed:', msg);
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 });
@@ -677,6 +686,7 @@ router.get('/check-batch-jobs', async (req: Request, res: Response) => {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[cron/recovery] check-batch-jobs (GET) crashed:', msg);
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 });
@@ -791,6 +801,7 @@ async function runActivateTests(req: Request, res: Response): Promise<void> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[cron/recovery] activate-tests crashed:', msg);
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 }

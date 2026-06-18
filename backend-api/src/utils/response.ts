@@ -38,6 +38,32 @@ export function sendError(
   });
 }
 
+/**
+ * Database/internal error response.
+ *
+ * Logs the raw error detail to the server console (for Sentry/Railway logs)
+ * and always sends a generic message to the client — even in development —
+ * to prevent DB schema, column names, or constraint names from leaking.
+ *
+ * Use this instead of `sendError(res, error.message, 500)` in route handlers.
+ */
+export function sendDbError(
+  res: Response,
+  err: { message: string } | unknown,
+  context?: string
+): void {
+  const detail = err instanceof Error
+    ? err.message
+    : (err as { message?: string })?.message ?? String(err);
+
+  console.error(`[db-error]${context ? ` [${context}]` : ''} ${detail}`);
+
+  res.status(500).json({
+    success: false,
+    message: 'An unexpected error occurred. Please try again later.',
+  });
+}
+
 /** Validation error response (422) */
 export function sendValidationError(res: Response, errors: unknown): void {
   res.status(422).json({

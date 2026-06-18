@@ -52,6 +52,8 @@ interface MCQDraft {
   marks: string;
   options: [string, string, string, string];
   correct_option: number; // 0-3
+  reasoning?: string;
+  explanation?: string;
 }
 
 interface TheoryDraft {
@@ -832,6 +834,7 @@ export default function CreateTestPage() {
               question_text?: string; question?: string;
               option_a: string; option_b: string; option_c: string; option_d: string;
               correct_option: 'a'|'b'|'c'|'d'; marks: number;
+              reasoning?: string; explanation?: string;
             };
             const generated: MCQDraft[] = ((event.mcq_questions ?? []) as GeneratedQ[]).map((q) => ({
               type: 'mcq' as const,
@@ -839,6 +842,8 @@ export default function CreateTestPage() {
               marks: String(q.marks ?? 1),
               options: [q.option_a, q.option_b, q.option_c, q.option_d] as [string,string,string,string],
               correct_option: ['a','b','c','d'].indexOf(q.correct_option),
+              reasoning: q.reasoning,
+              explanation: q.explanation,
             }));
             setQuestions(generated);
             if (!details.title.trim()) {
@@ -925,6 +930,7 @@ export default function CreateTestPage() {
       type GeneratedQ = {
         question_text: string; option_a: string; option_b: string;
         option_c: string; option_d: string; correct_option: 'a'|'b'|'c'|'d'; marks: number;
+        reasoning?: string; explanation?: string;
       };
       const generated: MCQDraft[] = (json.data.questions as GeneratedQ[]).map((q) => ({
         type: 'mcq' as const,
@@ -932,6 +938,8 @@ export default function CreateTestPage() {
         marks: String(q.marks ?? 1),
         options: [q.option_a, q.option_b, q.option_c, q.option_d] as [string,string,string,string],
         correct_option: ['a','b','c','d'].indexOf(q.correct_option),
+        reasoning: q.reasoning,
+        explanation: q.explanation,
       }));
 
       setQuestions(generated);
@@ -1064,6 +1072,8 @@ export default function CreateTestPage() {
             marks: parseFloat(mq.marks),
             options: mq.options.map((o) => ({ text: o })),
             correct_option: mq.correct_option,
+            reasoning: mq.reasoning,
+            explanation: mq.explanation,
           } satisfies MCQQuestion;
         } else {
           const tq = q as TheoryDraft;

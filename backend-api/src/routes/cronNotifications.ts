@@ -14,7 +14,9 @@
  *     Configure in Railway: 30 14 * * *  (8 PM IST = 14:30 UTC, adjust to your TZ)
  */
 
+import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
+import * as Sentry from '@sentry/node';
 import { supabaseAdmin } from '../config/supabase';
 import { sendSuccess, sendError } from '../utils/response';
 import { sendPushNotification } from '../services/fcmService';
@@ -28,7 +30,12 @@ function verifyCronSecret(req: Request, res: Response): boolean {
   const rawHeader = req.headers['x-cron-secret'];
   const provided = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader ?? '').trim();
 
-  if (!cronSecret || provided !== cronSecret) {
+  // Use timing-safe comparison to prevent timing-attack secret enumeration
+  if (
+    !cronSecret ||
+    provided.length !== cronSecret.length ||
+    !crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(cronSecret))
+  ) {
     sendError(res, 'Unauthorized', 401);
     return false;
   }
@@ -176,6 +183,9 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(msg);
       console.error('[cron/daily-reminder] Error:', msg);
+      // Report to Sentry so background job failures are tracked even though
+      // the HTTP response (200 OK) has already been sent to the cron caller.
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 });
@@ -264,6 +274,7 @@ router.post('/streak-reminder', async (req: Request, res: Response) => {
       console.log(`[cron/streak-reminder] Done — notified: ${notified}, skipped: ${skipped}`);
     } catch (err) {
       console.error('[cron/streak-reminder] Error:', err);
+      if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
 });

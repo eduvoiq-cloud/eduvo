@@ -4,14 +4,14 @@ import bcrypt from 'bcrypt';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
-import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { sendSuccess, sendError, sendValidationError, sendDbError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 
 const router = Router();
 
 router.use(authenticate);
 
-const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 12;
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -94,7 +94,11 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
 
   // Optional filters
   if (search) {
-    query = query.or(`full_name.ilike.%${search}%,roll_number.ilike.%${search}%`);
+    // Escape PostgREST ilike special characters to prevent query misparse.
+    // % and _ are wildcards in LIKE; \ is the escape char; , and . can break
+    // PostgREST's or() argument parsing.
+    const safeSearch = search.replace(/[\\%_,.]/g, (c) => `\\${c}`);
+    query = query.or(`full_name.ilike.%${safeSearch}%,roll_number.ilike.%${safeSearch}%`);
   }
   if (class_name) query = query.ilike('class_name', class_name.trim());
   if (section) query = query.ilike('section', section.trim());
@@ -109,11 +113,9 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
   const { data, error, count } = await query;
 
   if (error) {
-    sendError(res, error.message, 500);
+    sendDbError(res, error, 'students GET list');
     return;
   }
-
-  // Return paginated envelope when limit > 0, plain array when limit=0
   if (limit > 0) {
     const total = count ?? 0;
     const total_pages = Math.ceil(total / limit);
@@ -183,7 +185,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     .single();
 
   if (error) {
-    sendError(res, error.message, 500);
+    sendDbError(res, error, 'students POST insert');
     return;
   }
 
@@ -265,7 +267,7 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
     .eq('id', req.params.id);
 
   if (error) {
-    sendError(res, error.message, 500);
+    sendDbError(res, error, 'students DELETE');
     return;
   }
 

@@ -15,7 +15,7 @@ import 'dotenv/config';
 import * as bcrypt from 'bcrypt';
 import { supabaseAdmin } from '../config/supabase';
 
-const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 12;
 
 async function run() {
   console.log('\n═══ FIX MISSING PHONE NUMBERS ═══\n');

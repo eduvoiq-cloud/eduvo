@@ -1,7 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import rateLimit from 'express-rate-limit';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate, authenticateAny } from '../middleware/auth';
+import { authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
@@ -10,6 +11,26 @@ import { normaliseTerm, termFilterValues } from '../utils/term';
 const router = Router();
 
 router.use(authenticateAny);
+
+// ── Rate limiter: max 30 mark deletions per hour per admin account ────────────
+// Prevents a compromised schooladmin from bulk-wiping all marks in seconds.
+// Superadmin is exempt — they have a different threat model and are individually
+// audited. Keyed by user ID so it can't be bypassed by rotating IPs.
+const markDeleteRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30,
+  keyGenerator: (req: Request) => `mark_delete:${req.user?.id ?? req.ip ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // validate:false is intentional — see middleware/rateLimit.ts for explanation.
+  // app.set('trust proxy', 1) in index.ts ensures req.ip is the real client IP.
+  validate: false,
+  skip: (req: Request) => req.user?.role === 'superadmin',
+  message: {
+    success: false,
+    message: 'Mark deletion limit reached (30 per hour). Please try again later.',
+  },
+});
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -25,8 +46,6 @@ const createMarkSchema = z.object({
 
 const updateMarkSchema = createMarkSchema.partial();
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 /** GET /api/marks?student_id=&subject=&term= */
@@ -41,31 +60,38 @@ router.get('/', async (req: Request, res: Response) => {
 
   // ── Student token: simple select, no join needed — we already have their ID ──
   if (req.tokenType === 'student') {
-    let query = supabaseAdmin
+    let studentQuery = supabaseAdmin
       .from('marks')
       .select('*', { count: 'exact' })
       .eq('student_id', req.student!.id)
       .order('created_at', { ascending: false })
       .range((page - 1) * limit, page * limit - 1);
 
-    if (subject) query = query.eq('subject', subject);
+    if (subject) studentQuery = studentQuery.eq('subject', subject);
 
     if (term) {
       const termValues = termFilterValues(term);
-      query = termValues.length === 1
-        ? query.eq('term', termValues[0])
-        : query.in('term', termValues);
+      studentQuery = termValues.length === 1
+        ? studentQuery.eq('term', termValues[0])
+        : studentQuery.in('term', termValues);
     }
 
-    const { data, error, count } = await query;
+    const { data: studentData, error: studentError, count: studentCount } = await studentQuery;
 
-    if (error) {
-      sendError(res, error.message, 500);
+    if (studentError) {
+      console.error('[marks] GET student query error:', studentError.message);
+      sendError(res, 'Failed to fetch marks', 500);
       return;
     }
 
-    const total = count ?? 0;
-    sendSuccess(res, { data: data ?? [], total, page, limit, total_pages: Math.ceil(total / limit) });
+    const total = studentCount ?? 0;
+    sendSuccess(res, {
+      data: studentData ?? [],
+      total,
+      page,
+      limit,
+      total_pages: Math.ceil(total / limit),
+    });
     return;
   }
 
@@ -86,15 +112,9 @@ router.get('/', async (req: Request, res: Response) => {
       : query.in('term', termValues);
   }
 
-  // ── Staff token ─────────────────────────────────────────────────────────
   const role = req.user!.role;
 
-  if (!['superadmin', 'schooladmin', 'teacher', 'parent', 'student'].includes(role)) {
-    sendError(res, 'Access denied', 403);
-    return;
-  }
-
-  // Teachers and school admins: use a server-side join to scope by school_id
+  // Teachers and school admins: use a server-side join to scope by school_id.
   // This avoids fetching all student IDs first (N+1 pattern).
   if (role === 'teacher' || role === 'schooladmin') {
     const schoolId = req.user!.school_id;
@@ -102,7 +122,6 @@ router.get('/', async (req: Request, res: Response) => {
       sendError(res, 'Your account is not linked to a school', 403);
       return;
     }
-    // Use the inner join on students to filter by school_id directly in DB
     query = query.eq('students.school_id', schoolId);
     if (student_id) query = query.eq('student_id', student_id);
   } else if (role === 'superadmin') {
@@ -140,7 +159,8 @@ router.get('/', async (req: Request, res: Response) => {
   const { data, error, count } = await query;
 
   if (error) {
-    sendError(res, error.message, 500);
+    console.error('[marks] GET staff query error:', error.message);
+    sendError(res, 'Failed to fetch marks', 500);
     return;
   }
 
@@ -178,12 +198,17 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
 
   const { data, error } = await supabaseAdmin
     .from('marks')
-    .insert({ ...parsed.data, term: normaliseTerm(parsed.data.term) ?? parsed.data.term, recorded_by: req.user!.id })
+    .insert({
+      ...parsed.data,
+      term: normaliseTerm(parsed.data.term) ?? parsed.data.term,
+      recorded_by: req.user!.id,
+    })
     .select()
     .single();
 
   if (error) {
-    sendError(res, error.message, 500);
+    console.error('[marks] POST insert error:', error.message);
+    sendError(res, 'Failed to record mark', 500);
     return;
   }
 
@@ -238,7 +263,11 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
   // If only score is provided, validate against existing max_score
   if (parsed.data.score !== undefined && parsed.data.max_score === undefined) {
     if (parsed.data.score > (existing as { max_score: number }).max_score) {
-      sendError(res, `Score (${parsed.data.score}) cannot exceed existing max score (${(existing as { max_score: number }).max_score})`, 400);
+      sendError(
+        res,
+        `Score (${parsed.data.score}) cannot exceed existing max score (${(existing as { max_score: number }).max_score})`,
+        400
+      );
       return;
     }
   }
@@ -250,11 +279,7 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
     const existingTs = new Date((existing as { updated_at: string }).updated_at).getTime();
     const clientTs   = new Date(clientUpdatedAt).getTime();
     if (existingTs !== clientTs) {
-      sendError(
-        res,
-        'This record was modified by someone else. Please refresh and try again.',
-        409
-      );
+      sendError(res, 'This record was modified by someone else. Please refresh and try again.', 409);
       return;
     }
   }
@@ -280,7 +305,7 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
 });
 
 /** DELETE /api/marks/:id — superadmin, schooladmin only */
-router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+router.delete('/:id', requireRole('superadmin', 'schooladmin'), markDeleteRateLimit, async (req: Request, res: Response) => {
   // Verify the mark belongs to the requesting user's school before deleting
   if (req.user!.role !== 'superadmin') {
     const { data: existing } = await supabaseAdmin
@@ -307,7 +332,8 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
     .eq('id', req.params.id);
 
   if (error) {
-    sendError(res, error.message, 500);
+    console.error('[marks] DELETE error:', error.message);
+    sendError(res, 'Failed to delete mark', 500);
     return;
   }
 

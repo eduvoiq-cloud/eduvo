@@ -88,9 +88,9 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-/** Hash a password with bcrypt (10 rounds). */
+/** Hash a password with bcrypt (12 rounds). */
 async function hashPassword(plain: string): Promise<string> {
-  return bcrypt.hash(plain, 10);
+  return bcrypt.hash(plain, 12);
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────

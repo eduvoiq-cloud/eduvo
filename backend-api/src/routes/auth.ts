@@ -33,6 +33,7 @@ import {
   authenticate,
   authenticateStudent,
   authenticateAny,
+  invalidateAuthCache,
 } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
@@ -40,7 +41,7 @@ import { logAudit } from '../utils/audit';
 
 const router = Router();
 
-const BCRYPT_ROUNDS = 10;
+const BCRYPT_ROUNDS = 12;
 const STUDENT_TOKEN_TTL = '7d'; // students stay logged in for 7 days
 
 // ── Resend email client ───────────────────────────────────────────────────────
@@ -363,6 +364,10 @@ router.post(
       return;
     }
 
+    // Evict cached auth entry so the first_login gate lifts immediately
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) await invalidateAuthCache(token);
+
     await logAudit(studentId, 'STUDENT_PASSWORD_CHANGED', { student_id: studentId });
 
     sendSuccess(res, null, 'Password changed successfully');
@@ -494,6 +499,10 @@ router.post('/staff/change-password', authenticate, async (req: Request, res: Re
   }
 
   await logAudit(staffUser.id, 'STAFF_PASSWORD_CHANGED', { user_id: staffUser.id });
+
+  // Evict cached auth entry so must_reset_password gate lifts immediately
+  const oldToken = req.headers.authorization?.split(' ')[1];
+  if (oldToken) await invalidateAuthCache(oldToken);
 
   // Re-authenticate with the new password so we can return a fresh session token.
   // The old token is now dead (Supabase revokes all sessions on password change).

@@ -663,7 +663,6 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
     .ilike('section', studentRecord.section)
-    .eq('allow_web_attempt', true)
     .order('date', { ascending: false });
 
   if (tErr) { sendError(res, tErr.message, 500); return; }

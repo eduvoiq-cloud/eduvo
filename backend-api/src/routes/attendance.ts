@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
-import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { sendSuccess, sendError, sendValidationError, sendDbError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 import rateLimit from 'express-rate-limit';
 import { sendAttendanceNotifications } from '../services/attendanceNotifications';
@@ -107,15 +107,13 @@ router.get(
       .order('created_at', { ascending: false });
 
     if (error) {
-      sendError(res, error.message, 500);
+      sendDbError(res, error, 'attendance GET /');
       return;
     }
 
     sendSuccess(res, data ?? []);
   }
 );
-
-// ── GET /api/attendance/check ─────────────────────────────────────────────────
 /**
  * Check existing attendance for a class on a date.
  * Used by the dashboard for today's attendance % and by the attendance page.
@@ -203,7 +201,7 @@ router.get(
   }
 );
 
-// ── GET /api/attendance/bulk ──────────────────────────────────────────────────
+// ── POST /api/attendance/bulk ─────────────────────────────────────────────────
 // Alias kept for frontend compatibility — same as /check but POST for bulk ops
 router.post(
   '/bulk',
@@ -222,6 +220,35 @@ router.post(
     if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
     const userId = req.user!.id;
+
+    // ── School ownership check ────────────────────────────────────────────────
+    // For non-superadmin users, verify every submitted student_id belongs to
+    // the caller's school. This prevents a teacher from writing attendance for
+    // students in another school by supplying foreign UUIDs.
+    if (req.user!.role !== 'superadmin') {
+      const schoolId = req.user!.school_id;
+      if (!schoolId) {
+        sendError(res, 'Your account is not linked to a school', 403);
+        return;
+      }
+
+      const submittedIds = parsed.data.records.map((r) => r.student_id);
+      const { data: validStudents, error: validErr } = await supabaseAdmin
+        .from('students')
+        .select('id')
+        .in('id', submittedIds)
+        .eq('school_id', schoolId)
+        .eq('is_deleted', false);
+
+      if (validErr) { sendError(res, validErr.message, 500); return; }
+
+      const validIds = new Set((validStudents ?? []).map((s: { id: string }) => s.id));
+      if (validIds.size !== submittedIds.length) {
+        sendError(res, 'One or more students do not belong to your school', 403);
+        return;
+      }
+    }
+
     const rows = parsed.data.records.map((r) => ({
       ...r,
       recorded_by: userId,
@@ -233,7 +260,7 @@ router.post(
       .upsert(rows, { onConflict: 'student_id,date', ignoreDuplicates: false })
       .select();
 
-    if (error) { sendError(res, error.message, 500); return; }
+    if (error) { sendDbError(res, error, 'attendance POST /bulk'); return; }
 
     sendSuccess(res, data ?? [], 'Attendance saved');
   }
@@ -714,7 +741,7 @@ router.get(
       .order('date', { ascending: false });
 
     if (error) {
-      sendError(res, error.message, 500);
+      sendDbError(res, error, 'attendance GET /history');
       return;
     }
 

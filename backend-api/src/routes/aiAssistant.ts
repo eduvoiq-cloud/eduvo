@@ -34,6 +34,10 @@ const ALLOWED_MIME_TYPES = new Set([
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.docx', '.txt']);
 const EXTRACTION_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_DAILY_GENERATIONS = parseInt(process.env.AI_MAX_DAILY_GENERATIONS ?? '10', 10);
+// Cap how many characters of extracted content are passed to the AI prompt.
+// Prevents runaway token costs if a large text file is uploaded (e.g. a 5 MB .txt).
+// ~300k chars ≈ ~75k tokens, well within Gemini Flash's context window.
+const MAX_PROMPT_CONTENT_CHARS = 300_000;
 
 // ── In-memory extraction cache ────────────────────────────────────────────────
 // Keyed by extraction_id. Entries expire after EXTRACTION_CACHE_TTL_MS.
@@ -55,6 +59,10 @@ function pruneExtractionCache(): void {
     }
   }
 }
+
+// Also prune on a timer so memory is reclaimed even when uploads stop coming in.
+// Runs every 5 minutes — intervals are automatically cleared when the process exits.
+setInterval(pruneExtractionCache, 5 * 60 * 1000).unref();
 
 /** Retrieve a non-expired extraction entry, or null if missing/expired. */
 function getExtraction(id: string): ExtractionEntry | null {
@@ -297,9 +305,14 @@ router.post(
     }
 
     // ── Prompt-hash cache check ───────────────────────────────────────────────
+    // Truncate content to MAX_PROMPT_CONTENT_CHARS to cap Gemini token costs.
+    const promptContent = extraction.extraction.data.length > MAX_PROMPT_CONTENT_CHARS
+      ? extraction.extraction.data.slice(0, MAX_PROMPT_CONTENT_CHARS)
+      : extraction.extraction.data;
+
     const promptHash = crypto
       .createHash('md5')
-      .update(extraction.extraction.data + safeSubject + safeClassLevel + difficulty + mcq_count + theory_count)
+      .update(promptContent + safeSubject + safeClassLevel + difficulty + mcq_count + theory_count)
       .digest('hex');
 
     const cachedResult = await getCachedResult(promptHash);
@@ -327,7 +340,7 @@ router.post(
     let questions;
     try {
       questions = await generateQuestions({
-        extraction: extraction.extraction,
+        extraction: { ...extraction.extraction, data: promptContent },
         subject: safeSubject,
         class_level: safeClassLevel,
         difficulty,
@@ -448,10 +461,15 @@ router.post(
     }
 
     // ── Prompt-hash cache check ───────────────────────────────────────────────
+    // Truncate content to MAX_PROMPT_CONTENT_CHARS to cap Gemini token costs.
+    const promptContent = extraction.extraction.data.length > MAX_PROMPT_CONTENT_CHARS
+      ? extraction.extraction.data.slice(0, MAX_PROMPT_CONTENT_CHARS)
+      : extraction.extraction.data;
+
     const promptHash = crypto
       .createHash('md5')
       .update(
-        extraction.extraction.data +
+        promptContent +
           safeSubject +
           safeClassLevel +
           difficulty +
@@ -494,7 +512,7 @@ router.post(
     let questions;
     try {
       questions = await generateQuestions({
-        extraction: extraction.extraction,
+        extraction: { ...extraction.extraction, data: promptContent },
         subject: safeSubject,
         class_level: safeClassLevel,
         difficulty,

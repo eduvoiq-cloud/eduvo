@@ -171,7 +171,7 @@ router.post('/students', async (req: Request, res: Response) => {
   const defaultPassword = phone_number.slice(-5);
   let passwordHash: string;
   try {
-    passwordHash = await bcrypt.hash(defaultPassword, 10);
+    passwordHash = await bcrypt.hash(defaultPassword, 12);
   } catch (hashErr) {
     sendError(res, 'Failed to hash password', 500);
     return;
