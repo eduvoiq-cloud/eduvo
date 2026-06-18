@@ -65,6 +65,31 @@ interface StudentOption {
   roll_number?: string;
 }
 
+// ── Chapter library types ─────────────────────────────────────────────────────
+
+interface ChapterOption {
+  id: string;
+  chapter_number: number;
+  chapter_name: string;
+  topics: string;
+}
+
+// Topic source mode for the AI section
+type TopicSourceMode = 'manual' | 'library';
+
+// Library selection state
+interface LibrarySelection {
+  board: string;
+  subject: string;
+  chapterId: string;
+  chapterNumber: number;
+  chapterName: string;
+  allTopics: string[];       // parsed from chapter.topics
+  checkedTopics: Set<string>;
+  customTopicChecked: boolean;
+  customTopicText: string;
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const TERMS = ['term_1', 'term_2', 'term_3'] as const;
@@ -429,6 +454,32 @@ export default function CreateTestPage() {
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
 
+  // ── Chapter library state ───────────────────────────────────────────────────
+  // Topic source mode (applies inside the AI section, "From Topic" only)
+  const [topicSourceMode, setTopicSourceMode] = useState<TopicSourceMode>('manual');
+
+  // Library cascading dropdowns state
+  const [libSubjects, setLibSubjects] = useState<string[]>([]);
+  const [libSubjectsLoading, setLibSubjectsLoading] = useState(false);
+  const [libChapters, setLibChapters] = useState<ChapterOption[]>([]);
+  const [libChaptersLoading, setLibChaptersLoading] = useState(false);
+
+  const [libSelection, setLibSelection] = useState<LibrarySelection>({
+    board: details.board || 'CBSE',
+    subject: '',
+    chapterId: '',
+    chapterNumber: 0,
+    chapterName: '',
+    allTopics: [],
+    checkedTopics: new Set<string>(),
+    customTopicChecked: false,
+    customTopicText: '',
+  });
+
+  // chapter_library_id and selected_topics stored after generation, passed to create
+  const [savedChapterLibraryId, setSavedChapterLibraryId] = useState<string | null>(null);
+  const [savedSelectedTopics, setSavedSelectedTopics] = useState<string | null>(null);
+
   // ── Fetch teacher assignments ───────────────────────────────────────────────
 
   const fetchAssignments = useCallback(async () => {
@@ -443,6 +494,42 @@ export default function CreateTestPage() {
   }, [user]);
 
   useEffect(() => { fetchAssignments(); }, [fetchAssignments]);
+
+  // ── Library: fetch subjects when board or class changes ────────────────────
+
+  const fetchLibSubjects = useCallback(async (board: string, classNum: string) => {
+    if (!board || !classNum) { setLibSubjects([]); return; }
+    const token = getToken();
+    if (!token) return;
+    setLibSubjectsLoading(true);
+    setLibSubjects([]);
+    try {
+      const qs = new URLSearchParams({ board, class: classNum });
+      const res = await fetch(`${BASE_URL}/api/chapter-library/subjects?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json() as { success: boolean; data: { subjects: string[] } };
+      setLibSubjects(json.success ? (json.data.subjects ?? []) : []);
+    } catch { setLibSubjects([]); }
+    finally { setLibSubjectsLoading(false); }
+  }, []);
+
+  const fetchLibChapters = useCallback(async (board: string, classNum: string, subject: string) => {
+    if (!board || !classNum || !subject) { setLibChapters([]); return; }
+    const token = getToken();
+    if (!token) return;
+    setLibChaptersLoading(true);
+    setLibChapters([]);
+    try {
+      const qs = new URLSearchParams({ board, class: classNum, subject });
+      const res = await fetch(`${BASE_URL}/api/chapter-library/chapters?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json() as { success: boolean; data: { chapters: ChapterOption[] } };
+      setLibChapters(json.success ? (json.data.chapters ?? []) : []);
+    } catch { setLibChapters([]); }
+    finally { setLibChaptersLoading(false); }
+  }, []);
 
   // ── Fetch students for restriction selection ────────────────────────────────
 
@@ -612,6 +699,16 @@ export default function CreateTestPage() {
     }
   }
 
+  // ── Compute final topics string for library mode ────────────────────────────
+
+  function getLibraryFinalTopics(): string {
+    const topics = [...libSelection.checkedTopics];
+    if (libSelection.customTopicChecked && libSelection.customTopicText.trim()) {
+      topics.push(libSelection.customTopicText.trim());
+    }
+    return topics.join(', ');
+  }
+
   // ── AI generate questions ───────────────────────────────────────────────
 
   async function handleAIGenerate() {
@@ -620,16 +717,27 @@ export default function CreateTestPage() {
             ai_count, ai_difficulty, ai_easy_count, ai_medium_count, ai_hard_count } = details;
     if (!class_name) { setGenerateError('Please select a class first.'); return; }
     if (!subject) { setGenerateError('Please select a subject first.'); return; }
-    if (!ai_topic.trim()) { setGenerateError('Please enter a topic.'); return; }
+
+    // Validate based on topic source mode
+    if (topicSourceMode === 'manual') {
+      if (!ai_topic.trim()) { setGenerateError('Please enter a topic.'); return; }
+    } else {
+      // Library mode
+      if (!libSelection.chapterId) { setGenerateError('Please select a chapter from the library.'); return; }
+    }
 
     setGenerating(true);
     try {
       const token = getToken();
+
+      const isLibrary = topicSourceMode === 'library';
+      const finalTopics = isLibrary ? getLibraryFinalTopics() : '';
+
       const body: Record<string, unknown> = {
         class: class_name,
-        subject,
-        topic: ai_topic.trim(),
-        board: board || 'GSEB',
+        subject: isLibrary ? libSelection.subject : subject,
+        topic: isLibrary ? finalTopics : ai_topic.trim(),
+        board: isLibrary ? libSelection.board : (board || 'GSEB'),
         chapter: chapter || '',
         language: language || 'English',
         count: ai_count,
@@ -639,7 +747,15 @@ export default function CreateTestPage() {
           medium_count: ai_medium_count,
           hard_count: ai_hard_count,
         } : {}),
+        // Library-specific fields
+        ...(isLibrary ? {
+          chapter_library_id: libSelection.chapterId,
+          chapter_number: libSelection.chapterNumber,
+          chapter_name: libSelection.chapterName,
+          selected_topics: finalTopics,
+        } : {}),
       };
+
       const res = await fetch(`${BASE_URL}/api/tests/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -662,9 +778,22 @@ export default function CreateTestPage() {
       }));
 
       setQuestions(generated);
-      // Auto-fill title from topic if empty
+
+      // Store library references for use when saving the test
+      if (isLibrary) {
+        setSavedChapterLibraryId(json.data.chapter_library_id ?? libSelection.chapterId);
+        setSavedSelectedTopics(json.data.selected_topics ?? finalTopics);
+      } else {
+        setSavedChapterLibraryId(null);
+        setSavedSelectedTopics(null);
+      }
+
+      // Auto-fill title
       if (!title.trim()) {
-        setDetails((d) => ({ ...d, title: `${subject} — ${ai_topic.trim()}` }));
+        const titleText = isLibrary
+          ? `${libSelection.subject} — Ch. ${libSelection.chapterNumber}: ${libSelection.chapterName}`
+          : `${subject} — ${ai_topic.trim()}`;
+        setDetails((d) => ({ ...d, title: titleText }));
       }
       setStep(2);
     } catch (e: unknown) {
@@ -806,6 +935,9 @@ export default function CreateTestPage() {
         chapter: details.chapter || null,
         language: details.language || null,
         contributes_to_streak: details.contributes_to_streak,
+        // Chapter library fields — set if teacher used library mode, null otherwise
+        chapter_library_id: savedChapterLibraryId ?? null,
+        selected_topics: savedSelectedTopics ?? null,
         questions: builtQuestions,
       });
 
@@ -1069,6 +1201,43 @@ export default function CreateTestPage() {
 
                   {/* ── Topic mode ── */}
                   {aiSource === 'topic' && (<>
+
+                  {/* Topic source toggle: Manual vs Library */}
+                  <div>
+                    <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Topic Source</p>
+                    <div className="flex gap-2">
+                      <button type="button"
+                        onClick={() => setTopicSourceMode('manual')}
+                        className={`flex-1 py-2 px-3 text-xs font-semibold rounded-lg border-2 transition-colors ${
+                          topicSourceMode === 'manual'
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                        }`}>
+                        ✏️ Type Topic Manually
+                      </button>
+                      <button type="button"
+                        onClick={() => {
+                          setTopicSourceMode('library');
+                          // Pre-populate library board from current details.board if it's CBSE or GSEB
+                          const validBoards = ['CBSE', 'GSEB'];
+                          const preBoard = validBoards.includes(details.board) ? details.board : 'CBSE';
+                          setLibSelection((s) => ({ ...s, board: preBoard }));
+                          if (details.class_name) {
+                            fetchLibSubjects(preBoard, details.class_name);
+                          }
+                        }}
+                        className={`flex-1 py-2 px-3 text-xs font-semibold rounded-lg border-2 transition-colors ${
+                          topicSourceMode === 'library'
+                            ? 'bg-indigo-600 text-white border-indigo-600'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
+                        }`}>
+                        📚 Choose from Library
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Manual topic mode — unchanged */}
+                  {topicSourceMode === 'manual' && (
                   <FormField label="Topic" htmlFor="d-ai-topic" required>
                     <input id="d-ai-topic" type="text" className={inputClass}
                       placeholder="e.g. Laws of Motion, Photosynthesis, Linear Equations…"
@@ -1077,6 +1246,164 @@ export default function CreateTestPage() {
                       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAIGenerate(); } }}
                     />
                   </FormField>
+                  )}
+
+                  {/* Library mode — cascading dropdowns + topic checkboxes */}
+                  {topicSourceMode === 'library' && (
+                  <div className="space-y-3 p-4 bg-indigo-50/60 border border-indigo-100 rounded-xl">
+
+                    {/* Board dropdown */}
+                    <FormField label="Board" htmlFor="lib-board">
+                      <select id="lib-board" className={inputClass}
+                        value={libSelection.board}
+                        onChange={(e) => {
+                          const b = e.target.value;
+                          setLibSelection({ board: b, subject: '', chapterId: '', chapterNumber: 0, chapterName: '', allTopics: [], checkedTopics: new Set(), customTopicChecked: false, customTopicText: '' });
+                          setLibChapters([]);
+                          if (details.class_name) fetchLibSubjects(b, details.class_name);
+                        }}>
+                        <option value="CBSE">CBSE</option>
+                        <option value="GSEB">GSEB</option>
+                      </select>
+                    </FormField>
+
+                    {/* Subject dropdown */}
+                    <FormField label="Subject" htmlFor="lib-subject">
+                      <div className="relative">
+                        <select id="lib-subject" className={inputClass}
+                          disabled={libSubjectsLoading || libSubjects.length === 0}
+                          value={libSelection.subject}
+                          onChange={(e) => {
+                            const s = e.target.value;
+                            setLibSelection((prev) => ({ ...prev, subject: s, chapterId: '', chapterNumber: 0, chapterName: '', allTopics: [], checkedTopics: new Set(), customTopicChecked: false, customTopicText: '' }));
+                            setLibChapters([]);
+                            if (s && details.class_name) fetchLibChapters(libSelection.board, details.class_name, s);
+                          }}>
+                          <option value="">{libSubjectsLoading ? 'Loading…' : 'Select subject…'}</option>
+                          {libSubjects.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        {libSubjectsLoading && (
+                          <div className="absolute right-9 top-1/2 -translate-y-1/2">
+                            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                    </FormField>
+
+                    {/* Chapter dropdown */}
+                    <FormField label="Chapter" htmlFor="lib-chapter">
+                      <div className="relative">
+                        <select id="lib-chapter" className={inputClass}
+                          disabled={libChaptersLoading || libChapters.length === 0 || !libSelection.subject}
+                          value={libSelection.chapterId}
+                          onChange={(e) => {
+                            const chId = e.target.value;
+                            const ch = libChapters.find((c) => c.id === chId);
+                            if (!ch) {
+                              setLibSelection((prev) => ({ ...prev, chapterId: '', chapterNumber: 0, chapterName: '', allTopics: [], checkedTopics: new Set() }));
+                              return;
+                            }
+                            const topicList = ch.topics
+                              ? ch.topics.split(',').map((t) => t.trim()).filter(Boolean)
+                              : [];
+                            setLibSelection((prev) => ({
+                              ...prev,
+                              chapterId: chId,
+                              chapterNumber: ch.chapter_number,
+                              chapterName: ch.chapter_name,
+                              allTopics: topicList,
+                              checkedTopics: new Set(topicList), // all checked by default
+                              customTopicChecked: false,
+                              customTopicText: '',
+                            }));
+                          }}>
+                          <option value="">{libChaptersLoading ? 'Loading…' : 'Select chapter…'}</option>
+                          {libChapters.map((ch) => (
+                            <option key={ch.id} value={ch.id}>
+                              Ch. {ch.chapter_number} — {ch.chapter_name}
+                            </option>
+                          ))}
+                        </select>
+                        {libChaptersLoading && (
+                          <div className="absolute right-9 top-1/2 -translate-y-1/2">
+                            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                    </FormField>
+
+                    {/* Topic checkboxes — shown after chapter is selected */}
+                    {libSelection.chapterId && libSelection.allTopics.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-gray-700">
+                          Select topics to include
+                          <span className="font-normal text-gray-400 ml-1">(uncheck to exclude)</span>
+                        </p>
+                        <div className="space-y-1.5 bg-white border border-indigo-100 rounded-lg p-3 max-h-48 overflow-y-auto">
+                          {libSelection.allTopics.map((topic) => (
+                            <label key={topic} className="flex items-center gap-2.5 cursor-pointer group">
+                              <input
+                                type="checkbox"
+                                checked={libSelection.checkedTopics.has(topic)}
+                                onChange={(e) => {
+                                  const next = new Set(libSelection.checkedTopics);
+                                  if (e.target.checked) next.add(topic);
+                                  else next.delete(topic);
+                                  setLibSelection((prev) => ({ ...prev, checkedTopics: next }));
+                                }}
+                                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 shrink-0"
+                              />
+                              <span className="text-sm text-gray-700 group-hover:text-gray-900">{topic}</span>
+                            </label>
+                          ))}
+
+                          {/* "Other" custom topic option */}
+                          <div className="border-t border-gray-100 pt-2 mt-1">
+                            <label className="flex items-center gap-2.5 cursor-pointer group">
+                              <input
+                                type="checkbox"
+                                checked={libSelection.customTopicChecked}
+                                onChange={(e) => setLibSelection((prev) => ({
+                                  ...prev,
+                                  customTopicChecked: e.target.checked,
+                                  customTopicText: e.target.checked ? prev.customTopicText : '',
+                                }))}
+                                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 shrink-0"
+                              />
+                              <span className="text-sm text-gray-500 italic">Other — type your own topic</span>
+                            </label>
+                            {libSelection.customTopicChecked && (
+                              <input
+                                type="text"
+                                className={`${inputClass} mt-2 ml-6`}
+                                placeholder="Enter custom topic…"
+                                value={libSelection.customTopicText}
+                                onChange={(e) => setLibSelection((prev) => ({ ...prev, customTopicText: e.target.value }))}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Summary box */}
+                    {libSelection.chapterId && (
+                      <div className="bg-indigo-600/5 border border-indigo-200 rounded-xl p-3.5 text-xs text-indigo-900 space-y-0.5">
+                        <p className="font-semibold text-indigo-700 mb-1.5">📋 Generating test for:</p>
+                        <p><span className="font-medium">{libSelection.board}</span> · Class {details.class_name} · <span className="font-medium">{libSelection.subject}</span></p>
+                        <p>Chapter {libSelection.chapterNumber}: <span className="font-medium">{libSelection.chapterName}</span></p>
+                        {(() => {
+                          const finalTopics = getLibraryFinalTopics();
+                          return finalTopics ? (
+                            <p className="text-indigo-600 mt-0.5">Topics: {finalTopics}</p>
+                          ) : (
+                            <p className="text-gray-400 italic">No topics selected — all chapter topics will be used</p>
+                          );
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  )}
 
                   <div className="space-y-2">
                     <p className="text-sm font-medium text-gray-700">Number of questions</p>
@@ -1134,7 +1461,7 @@ export default function CreateTestPage() {
                   )}
 
                   <button type="button" onClick={handleAIGenerate}
-                    disabled={generating || !details.class_name || !details.subject || !details.ai_topic.trim()}
+                    disabled={generating || !details.class_name || !details.subject || (topicSourceMode === 'manual' && !details.ai_topic.trim()) || (topicSourceMode === 'library' && !libSelection.chapterId)}
                     className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-semibold rounded-lg transition-colors">
                     {generating ? (
                       <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Generating…</>

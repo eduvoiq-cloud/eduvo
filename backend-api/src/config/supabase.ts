@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
@@ -10,14 +11,22 @@ if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
   );
 }
 
+// Node 20 does not have native WebSocket — provide `ws` as the transport
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const realtimeOpts = { transport: ws as any };
+
 /**
  * Public client — uses the anon key.
  * Safe for operations that respect Row Level Security (RLS).
  */
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  realtime: realtimeOpts,
+});
 
 /**
  * Admin client — uses the service role key.
  * Bypasses RLS. Use only in trusted server-side code (e.g. audit logging, admin ops).
  */
-export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+  realtime: realtimeOpts,
+});

@@ -467,7 +467,7 @@ router.get('/complaints', async (req: Request, res: Response) => {
 
   let query = supabaseAdmin
     .from('complaints')
-    .select('*, users!complaints_submitted_by_fkey(name, email)')
+    .select('*, users!submitted_by(name, email)')
     .eq('school_id', req.user!.school_id ?? '')
     .order('created_at', { ascending: false });
 

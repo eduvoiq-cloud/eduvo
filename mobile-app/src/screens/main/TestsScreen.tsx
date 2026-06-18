@@ -41,15 +41,25 @@ interface TestsResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatDate(iso: string): string {
-  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
-    ? new Date(iso + 'Z') : new Date(iso);
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  // Handle plain YYYY-MM-DD (treat as local date to avoid timezone shift)
+  const plainDate = /^\d{4}-\d{2}-\d{2}$/.test(iso);
+  const d = plainDate
+    ? (() => { const [y, m, day] = iso.split('-').map(Number); return new Date(y, m - 1, day); })()
+    : new Date(iso);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
     year: 'numeric',
   });
+}
+
+function formatTimeWindow(from: string | null | undefined, until: string | null | undefined): string | null {
+  if (!from && !until) return null;
+  return `${from ?? '—'} – ${until ?? '—'}`;
 }
 
 const STATUS_CONFIG: Record<
@@ -118,7 +128,7 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
       {!isFeeRestricted && (test.available_from || test.available_until) && (
         <View style={styles.windowRow}>
           <Text style={styles.windowText}>
-            🕐 {test.available_from ?? '—'} – {test.available_until ?? '—'}
+            🕐 Window: {formatTimeWindow(test.available_from, test.available_until)}
           </Text>
         </View>
       )}
@@ -163,39 +173,50 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
-type TabKey = 'not_attempted' | 'attempted' | 'upcoming';
+type TabKey = 'current' | 'upcoming' | 'completed';
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: 'not_attempted', label: 'Not Attempted' },
-  { key: 'attempted',     label: 'Attempted' },
-  { key: 'upcoming',      label: 'Upcoming' },
+  { key: 'current',   label: 'Current' },
+  { key: 'upcoming',  label: 'Upcoming' },
+  { key: 'completed', label: 'Completed' },
 ];
+
+function parseLocalDate(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? null : d;
+}
 
 function filterTests(tests: TestRecord[], tab: TabKey): TestRecord[] {
   const now = new Date();
-  // Strip time so "today" counts as today not upcoming
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   return tests.filter((t) => {
-    const testDate = new Date(t.date);
-    const testDay = new Date(testDate.getFullYear(), testDate.getMonth(), testDate.getDate());
-    const isFuture = testDay > todayStart;
+    const testDay = parseLocalDate(t.date);
+    const isFuture = testDay ? testDay > todayStart : false;
     const status = t.attempt_status ?? 'not_started';
 
     switch (tab) {
+      case 'current':
+        // Today or past tests that are not yet completed (not_started or in_progress)
+        return !isFuture && (status === 'not_started' || status === 'in_progress');
       case 'upcoming':
         // Future-dated tests that haven't been completed
         return isFuture && status !== 'completed';
-      case 'attempted':
-        // in_progress OR completed (student has engaged with this test)
-        return status === 'in_progress' || status === 'completed';
-      case 'not_attempted':
-        // not_started and NOT a future test (past/today tests student hasn't touched)
-        return status === 'not_started' && !isFuture;
+      case 'completed':
+        return status === 'completed';
       default:
         return true;
     }
-  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }).sort((a, b) => {
+    const da = parseLocalDate(a.date);
+    const db = parseLocalDate(b.date);
+    return (db?.getTime() ?? 0) - (da?.getTime() ?? 0);
+  });
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -205,7 +226,7 @@ export default function TestsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabKey>('attempted');
+  const [activeTab, setActiveTab] = useState<TabKey>('current');
 
   const navigation = useNavigation<StackNavigationProp<MainStackParamList>>();
 
@@ -260,9 +281,9 @@ export default function TestsScreen() {
 
   const allTests = testsData?.tests ?? [];
   const tabCounts: Record<TabKey, number> = {
-    not_attempted: filterTests(allTests, 'not_attempted').length,
-    attempted:     filterTests(allTests, 'attempted').length,
-    upcoming:      filterTests(allTests, 'upcoming').length,
+    current:   filterTests(allTests, 'current').length,
+    upcoming:  filterTests(allTests, 'upcoming').length,
+    completed: filterTests(allTests, 'completed').length,
   };
   const visibleTests = filterTests(allTests, activeTab);
 
@@ -280,8 +301,6 @@ export default function TestsScreen() {
           {TABS.map((tab) => {
             const isActive = activeTab === tab.key;
             const count = tabCounts[tab.key];
-            // Hide "Upcoming" tab when there are no upcoming tests
-            if (tab.key === 'upcoming' && count === 0) return null;
             return (
               <TouchableOpacity
                 key={tab.key}
@@ -334,11 +353,11 @@ export default function TestsScreen() {
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>📝</Text>
                 <Text style={styles.emptyText}>
-                  {activeTab === 'not_attempted'
-                    ? 'No pending tests.'
+                  {activeTab === 'current'
+                    ? 'No active tests right now.'
                     : activeTab === 'upcoming'
                     ? 'No upcoming tests.'
-                    : 'No attempted tests yet.'}
+                    : 'No completed tests yet.'}
                 </Text>
               </View>
             )

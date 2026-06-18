@@ -67,6 +67,8 @@ interface ResultAnswer {
   marks: number;
   marks_awarded: number | 'pending' | null;
   theory_answer?: string | null;
+  explanation?: string | null;
+  reasoning?: string | null;
 }
 
 interface ResultData {
@@ -946,6 +948,107 @@ const modalStyles = StyleSheet.create({
   btnConfirmText: { fontSize: 15, fontWeight: '700', color: '#FFFFFF' },
 });
 
+// ── MCQ Breakdown with reasoning ─────────────────────────────────────────────
+
+function MCQBreakdown({ mcqAnswers }: { mcqAnswers: ResultAnswer[] }) {
+  const [expandedCorrect, setExpandedCorrect] = useState<Set<string>>(new Set());
+
+  const toggleCorrect = (id: string) => {
+    setExpandedCorrect((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+  };
+
+  return (
+    <View style={resStyles.section}>
+      <Text style={resStyles.sectionTitle}>MCQ Breakdown</Text>
+      {mcqAnswers.map((ans, idx) => {
+        const correct = ans.is_correct === true;
+        const skipped = ans.selected_option == null;
+        const optionText = (opt: string | null | undefined) => {
+          if (!opt) return null;
+          const map: Record<string, string | null | undefined> = {
+            a: ans.option_a, b: ans.option_b, c: ans.option_c, d: ans.option_d,
+          };
+          return map[opt] ?? opt.toUpperCase();
+        };
+
+        const hasReasoning = Boolean(ans.reasoning);
+        const hasExplanation = Boolean(ans.explanation);
+        const isExpanded = expandedCorrect.has(ans.question_id);
+
+        return (
+          <View
+            key={ans.question_id}
+            style={[resStyles.qRow, correct ? resStyles.qRowCorrect : resStyles.qRowWrong]}
+          >
+            <View style={resStyles.qRowHeader}>
+              <Text style={resStyles.qNum}>Q{idx + 1}</Text>
+              <Text style={correct ? resStyles.tick : resStyles.cross}>
+                {skipped ? '—' : correct ? '✓ Correct' : '✗ Incorrect'}
+              </Text>
+            </View>
+            <Text style={resStyles.qText}>{ans.question_text}</Text>
+
+            {!skipped && (
+              <Text style={resStyles.qYourAnswer}>
+                Your answer:{' '}
+                <Text style={correct ? resStyles.ansCorrect : resStyles.ansWrong}>
+                  {ans.selected_option?.toUpperCase()} — {optionText(ans.selected_option)}
+                </Text>
+              </Text>
+            )}
+            {skipped && <Text style={resStyles.qYourAnswer}>Not answered</Text>}
+
+            {!correct && ans.correct_option && (
+              <Text style={resStyles.qCorrectAnswer}>
+                ✓ Correct answer:{' '}
+                <Text style={resStyles.ansCorrect}>
+                  {ans.correct_option.toUpperCase()} — {optionText(ans.correct_option)}
+                </Text>
+              </Text>
+            )}
+
+            {/* For INCORRECT answers — always expanded reasoning */}
+            {!correct && (hasReasoning || hasExplanation) && (
+              <View style={resStyles.reasoningBox}>
+                <Text style={resStyles.reasoningTitle}>Understanding this question</Text>
+                {hasReasoning && (
+                  <Text style={resStyles.reasoningText}>{ans.reasoning}</Text>
+                )}
+                {hasExplanation && (
+                  <Text style={resStyles.explanationLine}>{ans.explanation}</Text>
+                )}
+              </View>
+            )}
+
+            {/* For CORRECT answers — collapsible reasoning */}
+            {correct && hasReasoning && (
+              <TouchableOpacity
+                style={resStyles.whyCorrectToggle}
+                onPress={() => toggleCorrect(ans.question_id)}
+                accessibilityRole="button"
+                accessibilityLabel={isExpanded ? 'Collapse explanation' : 'Why is this correct?'}
+              >
+                <Text style={resStyles.whyCorrectToggleText}>
+                  {isExpanded ? '▲ Hide explanation' : '▼ Why is this correct?'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {correct && hasReasoning && isExpanded && (
+              <View style={resStyles.reasoningBox}>
+                <Text style={resStyles.reasoningText}>{ans.reasoning}</Text>
+              </View>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 // ── Results screen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
@@ -1032,51 +1135,7 @@ function ResultsScreen({
 
       {/* MCQ per-question breakdown */}
       {mcqAnswers.length > 0 && (
-        <View style={resStyles.section}>
-          <Text style={resStyles.sectionTitle}>MCQ Breakdown</Text>
-          {mcqAnswers.map((ans, idx) => {
-            const correct = ans.is_correct === true;
-            const skipped = ans.selected_option == null;
-            const optionText = (opt: string | null | undefined) => {
-              if (!opt) return null;
-              const map: Record<string, string | null | undefined> = {
-                a: ans.option_a, b: ans.option_b, c: ans.option_c, d: ans.option_d,
-              };
-              return map[opt] ?? opt.toUpperCase();
-            };
-
-            return (
-              <View
-                key={ans.question_id}
-                style={[resStyles.qRow, correct ? resStyles.qRowCorrect : resStyles.qRowWrong]}
-              >
-                <View style={resStyles.qRowHeader}>
-                  <Text style={resStyles.qNum}>Q{idx + 1}</Text>
-                  <Text style={correct ? resStyles.tick : resStyles.cross}>
-                    {skipped ? '—' : correct ? '✓' : '✗'}
-                  </Text>
-                </View>
-                <Text style={resStyles.qText}>{ans.question_text}</Text>
-                {!skipped && (
-                  <Text style={resStyles.qYourAnswer}>
-                    Your answer:{' '}
-                    <Text style={correct ? resStyles.ansCorrect : resStyles.ansWrong}>
-                      {ans.selected_option?.toUpperCase()} — {optionText(ans.selected_option)}
-                    </Text>
-                  </Text>
-                )}
-                {skipped && (
-                  <Text style={resStyles.qYourAnswer}>Not answered</Text>
-                )}
-                {!correct && ans.correct_option && (
-                  <Text style={resStyles.qCorrectAnswer}>
-                    ✓ Correct answer: <Text style={resStyles.ansCorrect}>{ans.correct_option.toUpperCase()} — {optionText(ans.correct_option)}</Text>
-                  </Text>
-                )}
-              </View>
-            );
-          })}
-        </View>
+        <MCQBreakdown mcqAnswers={mcqAnswers} />
       )}
 
       {/* Theory section */}
@@ -1160,6 +1219,20 @@ const resStyles = StyleSheet.create({
   ansCorrect: { color: '#15803D', fontWeight: '600' },
   ansWrong: { color: '#DC2626', fontWeight: '600' },
   qCorrectAnswer: { fontSize: 13, color: '#15803D', marginTop: 4, fontWeight: '500' },
+  // Reasoning / explanation boxes
+  reasoningBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#3B82F6',
+  },
+  reasoningTitle: { fontSize: 13, fontWeight: '700', color: '#1E3A8A', marginBottom: 6 },
+  reasoningText: { fontSize: 14, color: '#1E3A8A', lineHeight: 21 },
+  explanationLine: { fontSize: 13, color: '#3B82F6', marginTop: 6, fontStyle: 'italic' },
+  whyCorrectToggle: { marginTop: 8, alignSelf: 'flex-start' },
+  whyCorrectToggleText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
   theoryNote: {
     backgroundColor: '#FEF3C7',
     borderRadius: 10,

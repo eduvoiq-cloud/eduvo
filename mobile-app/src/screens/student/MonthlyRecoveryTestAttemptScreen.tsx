@@ -31,6 +31,7 @@ interface Question {
   question: string;
   options: string[];
   explanation?: string;
+  reasoning?: string;
   topic?: string;
   difficulty?: string;
 }
@@ -146,6 +147,139 @@ const pillStyles = StyleSheet.create({
   pillTextAnswered: { color: '#15803D' },
 });
 
+// ── Recovery MCQ Breakdown with reasoning ────────────────────────────────────
+
+function RecoveryMCQBreakdown({ questions }: { questions: QuestionWithResult[] }) {
+  const [expandedCorrect, setExpandedCorrect] = useState<Set<number>>(new Set());
+
+  const toggleCorrect = (idx: number) => {
+    setExpandedCorrect((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) { next.delete(idx); } else { next.add(idx); }
+      return next;
+    });
+  };
+
+  return (
+    <View style={recoveryBreakdownStyles.section}>
+      <Text style={recoveryBreakdownStyles.sectionTitle}>Question Review</Text>
+      {questions.map((q, idx) => {
+        const correct = q.is_correct;
+        const skipped = q.selected_index === null;
+        const hasReasoning = Boolean(q.reasoning);
+        const hasExplanation = Boolean(q.explanation);
+        const isExpanded = expandedCorrect.has(idx);
+        const selectedLabel = q.selected_index !== null ? OPTION_LABELS[q.selected_index] : null;
+        const correctLabel = OPTION_LABELS[q.correct_index];
+        const selectedText = q.selected_index !== null ? q.options[q.selected_index] : null;
+        const correctText = q.options[q.correct_index];
+
+        return (
+          <View
+            key={idx}
+            style={[
+              recoveryBreakdownStyles.qRow,
+              correct ? recoveryBreakdownStyles.qRowCorrect : recoveryBreakdownStyles.qRowWrong,
+            ]}
+          >
+            <View style={recoveryBreakdownStyles.qHeader}>
+              <Text style={recoveryBreakdownStyles.qNum}>Q{idx + 1}</Text>
+              <Text style={correct ? recoveryBreakdownStyles.tick : recoveryBreakdownStyles.cross}>
+                {skipped ? '—' : correct ? '✓ Correct' : '✗ Incorrect'}
+              </Text>
+            </View>
+            <Text style={recoveryBreakdownStyles.qText}>{q.question}</Text>
+
+            {!skipped && selectedLabel && (
+              <Text style={recoveryBreakdownStyles.yourAnswer}>
+                Your answer:{' '}
+                <Text style={correct ? recoveryBreakdownStyles.ansCorrect : recoveryBreakdownStyles.ansWrong}>
+                  {selectedLabel} — {selectedText}
+                </Text>
+              </Text>
+            )}
+            {skipped && <Text style={recoveryBreakdownStyles.yourAnswer}>Not answered</Text>}
+
+            {!correct && (
+              <Text style={recoveryBreakdownStyles.correctAnswer}>
+                ✓ Correct answer:{' '}
+                <Text style={recoveryBreakdownStyles.ansCorrect}>
+                  {correctLabel} — {correctText}
+                </Text>
+              </Text>
+            )}
+
+            {/* Incorrect — always expanded reasoning */}
+            {!correct && (hasReasoning || hasExplanation) && (
+              <View style={recoveryBreakdownStyles.reasoningBox}>
+                <Text style={recoveryBreakdownStyles.reasoningTitle}>Understanding this question</Text>
+                {hasReasoning && <Text style={recoveryBreakdownStyles.reasoningText}>{q.reasoning}</Text>}
+                {hasExplanation && <Text style={recoveryBreakdownStyles.explanationLine}>{q.explanation}</Text>}
+              </View>
+            )}
+
+            {/* Correct — collapsible reasoning */}
+            {correct && hasReasoning && (
+              <TouchableOpacity
+                style={recoveryBreakdownStyles.whyToggle}
+                onPress={() => toggleCorrect(idx)}
+                accessibilityRole="button"
+                accessibilityLabel={isExpanded ? 'Collapse explanation' : 'Why is this correct?'}
+              >
+                <Text style={recoveryBreakdownStyles.whyToggleText}>
+                  {isExpanded ? '▲ Hide explanation' : '▼ Why is this correct?'}
+                </Text>
+              </TouchableOpacity>
+            )}
+            {correct && hasReasoning && isExpanded && (
+              <View style={recoveryBreakdownStyles.reasoningBox}>
+                <Text style={recoveryBreakdownStyles.reasoningText}>{q.reasoning}</Text>
+              </View>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const recoveryBreakdownStyles = StyleSheet.create({
+  section: { marginBottom: 16 },
+  sectionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 10 },
+  qRow: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#E5E7EB',
+  },
+  qRowCorrect: { borderLeftColor: '#22C55E', backgroundColor: '#F0FDF4' },
+  qRowWrong: { borderLeftColor: '#EF4444', backgroundColor: '#FEF2F2' },
+  qHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  qNum: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  tick: { fontSize: 13, color: '#22C55E', fontWeight: '700' },
+  cross: { fontSize: 13, color: '#EF4444', fontWeight: '700' },
+  qText: { fontSize: 14, color: '#111827', lineHeight: 20, marginBottom: 8 },
+  yourAnswer: { fontSize: 13, color: '#6B7280' },
+  correctAnswer: { fontSize: 13, color: '#15803D', marginTop: 4, fontWeight: '500' },
+  ansCorrect: { color: '#15803D', fontWeight: '600' },
+  ansWrong: { color: '#DC2626', fontWeight: '600' },
+  reasoningBox: {
+    backgroundColor: '#EFF6FF',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#3B82F6',
+  },
+  reasoningTitle: { fontSize: 13, fontWeight: '700', color: '#1E3A8A', marginBottom: 6 },
+  reasoningText: { fontSize: 14, color: '#1E3A8A', lineHeight: 21 },
+  explanationLine: { fontSize: 13, color: '#3B82F6', marginTop: 6, fontStyle: 'italic' },
+  whyToggle: { marginTop: 8, alignSelf: 'flex-start' },
+  whyToggleText: { fontSize: 13, fontWeight: '600', color: '#1D4ED8' },
+});
+
 // ── Results screen ────────────────────────────────────────────────────────────
 
 function ResultsScreen({
@@ -259,6 +393,11 @@ function ResultsScreen({
             ))}
           </View>
         </View>
+      )}
+
+      {/* Per-question breakdown with reasoning */}
+      {result.questions && result.questions.length > 0 && (
+        <RecoveryMCQBreakdown questions={result.questions} />
       )}
 
       {/* Review pack button */}

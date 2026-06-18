@@ -24,6 +24,8 @@ const questionSchema = z.object({
   option_d: z.string().optional(),
   correct_option: z.enum(['a', 'b', 'c', 'd']).optional(),
   marks: z.number().min(1),
+  explanation: z.string().optional(),
+  reasoning: z.string().optional(),
 });
 
 const EXAM_TYPE_VALUES = ['quiz', 'midterm', 'final', 'assignment', 'project', 'unit_test', 'mid_term', 'class_test'] as const;
@@ -46,6 +48,9 @@ const createTestSchema = z.object({
   chapter: z.string().optional().nullable(),
   language: z.enum(['English','Gujarati','Hindi','Sanskrit','Marathi','Tamil','Telugu','Kannada','Bengali','Punjabi']).optional().nullable(),
   contributes_to_streak: z.boolean().default(false),
+  // Chapter library fields (nullable — manual mode leaves them null)
+  chapter_library_id: z.string().uuid().optional().nullable(),
+  selected_topics: z.string().optional().nullable(),
   questions: z.array(questionSchema).min(1),
 });
 
@@ -126,7 +131,7 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
   const schema = z.object({
     class: z.string().min(1),
     subject: z.string().min(1),
-    topic: z.string().min(1),
+    topic: z.string().min(1).optional().default(''),
     board: z.string().optional().default('GSEB'),
     chapter: z.string().optional().default(''),
     language: z.enum(['English','Gujarati','Hindi','Sanskrit','Marathi','Tamil','Telugu','Kannada','Bengali','Punjabi']).optional().default('English'),
@@ -137,6 +142,11 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
     hard_count: z.number().int().min(0).optional().default(0),
     file_data: z.string().optional(),
     file_mime: z.string().optional(),
+    // Chapter library fields (used when teacher picks from library)
+    chapter_library_id: z.string().uuid().optional(),
+    chapter_number: z.number().int().optional(),
+    chapter_name: z.string().optional(),
+    selected_topics: z.string().optional(),  // comma-separated final topic list
   });
 
   const parsed = schema.safeParse(req.body);
@@ -144,7 +154,15 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
 
   const { class: cls, subject, topic, board, chapter, language, count,
           difficulty_mode, easy_count, medium_count, hard_count,
-          file_data, file_mime } = parsed.data;
+          file_data, file_mime,
+          chapter_library_id, chapter_number, chapter_name, selected_topics } = parsed.data;
+
+  // Require either a topic (manual mode) or chapter_library_id (library mode)
+  const isLibraryMode = !!chapter_library_id;
+  if (!isLibraryMode && !topic.trim() && !file_data) {
+    sendError(res, 'Please enter a topic.', 400);
+    return;
+  }
 
   const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
   if (!apiKey) { sendError(res, 'AI generation is not configured', 503); return; }
@@ -188,15 +206,38 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
   const languageInstruction = LANG_INSTRUCTIONS[language] ?? LANG_INSTRUCTIONS.English;
   const fileContext = file_data ? ' Use the provided image/document as the primary source for generating questions.' : '';
 
-  const prompt = `You are an experienced ${subject} teacher for Class ${cls} following ${board} curriculum in India.${chapterLine}
+  let prompt: string;
+
+  if (isLibraryMode && chapter_number && chapter_name) {
+    // ── Library mode prompt ──────────────────────────────────────────────────
+    const topicsLine = selected_topics?.trim()
+      ? `Focus on these specific topics: ${selected_topics.trim()}.`
+      : '';
+    prompt = `You are an experienced ${subject} teacher for Class ${cls} following the ${board} curriculum in India.
+Generate exactly ${count} multiple choice questions for Chapter ${chapter_number}: ${chapter_name}.
+${topicsLine}
+Requirements:
+- ${difficultyLine}
+- Each question has exactly 4 options (A-D)
+- Mark correct answer index (0-3)
+- explanation: one factual sentence (max 20 words)
+- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong — appropriate for Class ${cls} level
+- Test conceptual understanding, not just recall
+IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
+  } else {
+    // ── Manual / topic mode prompt (unchanged) ───────────────────────────────
+    prompt = `You are an experienced ${subject} teacher for Class ${cls} following ${board} curriculum in India.${chapterLine}
 Generate exactly ${count} multiple choice questions based on the topic: '${topic}'.${fileContext}
 Requirements:
 - ${difficultyLine}
 - Each question has exactly 4 options
 - Mark correct answer index (0-3)
-- One-line explanation per question
 - Test understanding, not just recall
+For each question, provide:
+- explanation: one line stating which answer is correct and why (max 20 words, factual)
+- reasoning: a teaching explanation helping the student understand the concept behind this question (2-4 sentences, educational, appropriate for Class ${cls} level, explains WHY the answer is correct and why the wrong options are wrong if relevant)
 IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
+  }
 
   const responseSchema = {
     type: 'object' as const,
@@ -211,8 +252,10 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
             correct_index: { type: 'integer' as const, minimum: 0, maximum: 3 },
             explanation:   { type: 'string' as const },
             difficulty:    { type: 'string' as const, enum: ['easy', 'medium', 'hard'] },
+            reasoning:     { type: 'string' as const },
+            topic:         { type: 'string' as const },
           },
-          required: ['question', 'options', 'correct_index', 'explanation', 'difficulty'],
+          required: ['question', 'options', 'correct_index', 'explanation', 'difficulty', 'reasoning'],
         },
       },
     },
@@ -271,7 +314,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   }
 
   try {
-    let parsed2: { questions: Array<{ question: string; options: string[]; correct_index: number; explanation: string; difficulty: string }> };
+    let parsed2: { questions: Array<{ question: string; options: string[]; correct_index: number; explanation: string; difficulty: string; reasoning?: string }> };
     try { parsed2 = JSON.parse(raw); }
     catch { sendError(res, 'AI returned invalid format. Please try again.', 500); return; }
 
@@ -291,11 +334,12 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
       option_d: q.options[3] ?? '',
       correct_option: OPTION_LETTERS[q.correct_index] ?? 'a',
       explanation: q.explanation ?? '',
+      reasoning: q.reasoning ?? '',
       difficulty: q.difficulty ?? 'medium',
       marks: 1,
     }));
 
-    sendSuccess(res, { questions }, 'Questions generated');
+    sendSuccess(res, { questions, chapter_library_id: chapter_library_id ?? null, selected_topics: selected_topics ?? null }, 'Questions generated');
   } catch (err) {
     console.error('[tests/generate] post-parse error:', err);
     sendError(res, 'Failed to generate questions. Please try again.', 500);
@@ -361,6 +405,8 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       chapter: testFields.chapter ?? null,
       language: testFields.language ?? null,
       contributes_to_streak: testFields.contributes_to_streak ?? false,
+      chapter_library_id: testFields.chapter_library_id ?? null,
+      selected_topics: testFields.selected_topics ?? null,
       school_id:  req.user!.school_id,
       created_by: req.user!.id,
     })
@@ -381,6 +427,8 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     option_d: q.option_d ?? null,
     correct_option: q.question_type === 'mcq' ? (q.correct_option ?? null) : null,
     marks: q.marks,
+    explanation: q.explanation ?? null,
+    reasoning: q.reasoning ?? null,
   }));
 
   const { error: qErr } = await supabaseAdmin.from('questions').insert(questionRows);
@@ -464,7 +512,7 @@ router.get('/my-tests', authenticate, requireRole('teacher', 'schooladmin', 'sup
   let query = supabaseAdmin
     .from('tests')
     .select(`
-      id, title, subject_id, class_name, section, term, date,
+      id, title, subject_id, class, section, term, date,
       time_limit_minutes, shuffle_questions, shuffle_options,
       created_at,
       questions(count)
@@ -525,7 +573,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       id, title, subject_id, date, term, time_limit_minutes,
       available_from, available_until,
       subject:subjects(name),
-      questions:test_questions(count)
+      questions(count)
     `)
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
@@ -1356,6 +1404,8 @@ router.get('/results/by-test/:test_id', authenticateStudent, requireRole('studen
     option_d: string | null;
     correct_option: string | null;
     marks: number;
+    explanation: string | null;
+    reasoning: string | null;
   };
 
   const questionMap = new Map<string, QuestionDetail>();
@@ -1374,7 +1424,7 @@ router.get('/results/by-test/:test_id', authenticateStudent, requireRole('studen
     if (missing.length > 0) {
       const { data: qData } = await supabaseAdmin
         .from('questions')
-        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks, explanation, reasoning')
         .in('id', missing);
 
       for (const q of (qData ?? []) as QuestionDetail[]) {
@@ -1408,6 +1458,8 @@ router.get('/results/by-test/:test_id', authenticateStudent, requireRole('studen
         is_correct: ans.is_correct,
         marks: q.marks,
         marks_awarded: ans.marks_awarded,
+        explanation: q.explanation ?? null,
+        reasoning: q.reasoning ?? null,
       };
     }
     return {
@@ -1482,6 +1534,8 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
     option_d: string | null;
     correct_option: string | null;
     marks: number;
+    explanation: string | null;
+    reasoning: string | null;
   };
 
   const questionMap = new Map<string, QuestionDetail>();
@@ -1502,7 +1556,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
     if (missing.length > 0) {
       const { data: qData } = await supabaseAdmin
         .from('questions')
-        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks')
+        .select('id, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks, explanation, reasoning')
         .in('id', missing);
 
       for (const q of (qData ?? []) as QuestionDetail[]) {
@@ -1537,6 +1591,8 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
         is_correct: ans.is_correct,
         marks: q.marks,
         marks_awarded: ans.marks_awarded,
+        explanation: q.explanation ?? null,
+        reasoning: q.reasoning ?? null,
       };
     }
     return {
@@ -1625,6 +1681,9 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     time_limit_minutes: z.number().int().min(1).optional().nullable(),
     shuffle_questions:  z.boolean().optional(),
     shuffle_options:    z.boolean().optional(),
+    // Chapter library fields
+    chapter_library_id: z.string().uuid().optional().nullable(),
+    selected_topics:    z.string().optional().nullable(),
     questions:  z.array(z.object({
       type:           z.enum(['mcq', 'theory']),
       text:           z.string().min(1),
@@ -1671,6 +1730,8 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
       time_limit_minutes: rest.time_limit_minutes ?? null,
       shuffle_questions:  rest.shuffle_questions ?? false,
       shuffle_options:    rest.shuffle_options ?? false,
+      chapter_library_id: rest.chapter_library_id ?? null,
+      selected_topics:    rest.selected_topics ?? null,
       school_id:          req.user!.school_id,
       created_by:         req.user!.id,
     })

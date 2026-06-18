@@ -681,7 +681,7 @@ router.get('/check-batch-jobs', async (req: Request, res: Response) => {
   });
 });
 
-// ── POST /api/cron/recovery/activate-tests ───────────────────────────────────
+// ── GET|POST /api/cron/recovery/activate-tests ───────────────────────────────
 /**
  * Daily cron: set is_available=true on monthly_recovery_tests where:
  *   - generation_status = 'completed'
@@ -690,9 +690,12 @@ router.get('/check-batch-jobs', async (req: Request, res: Response) => {
  *
  * Also sends FCM push notifications to those students.
  *
+ * Accepts GET for cron-job.org free plan (?secret=...) and
+ * POST with x-cron-secret header for GitHub Actions / paid plans.
+ *
  * Railway cron schedule: 0 15 * * *  (9 PM IST = 15:00 UTC)
  */
-router.post('/activate-tests', async (req: Request, res: Response) => {
+async function runActivateTests(req: Request, res: Response): Promise<void> {
   if (!verifyCronSecret(req, res)) return;
 
   const today = new Date().toISOString().slice(0, 10);
@@ -790,6 +793,12 @@ router.post('/activate-tests', async (req: Request, res: Response) => {
       console.error('[cron/recovery] activate-tests crashed:', msg);
     }
   });
-});
+}
+
+// Accept both GET and POST:
+// - GET  → cron-job.org free plan uses GET + ?secret= query param
+// - POST → GitHub Actions / paid cron services use POST + x-cron-secret header
+router.get('/activate-tests',  runActivateTests);
+router.post('/activate-tests', runActivateTests);
 
 export default router;

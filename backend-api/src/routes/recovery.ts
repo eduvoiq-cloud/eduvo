@@ -276,12 +276,13 @@ Each question must have:
 - question text
 - 4 options
 - correct_index (0-3)
-- explanation of correct answer
+- explanation: one line stating which answer is correct and why (max 20 words, factual)
+- reasoning: a teaching explanation helping the student understand the concept behind this question (2-4 sentences, educational, appropriate for Class ${className} level, explains WHY the answer is correct and why the wrong options are wrong if relevant)
 - difficulty: 'easy', 'medium', or 'hard'
 - topic: which weak topic this tests
 
 Return ONLY valid JSON, no markdown:
-{"questions":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"string","difficulty":"easy","topic":"string"}]}`;
+{"questions":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"string","reasoning":"string","difficulty":"easy","topic":"string"}]}`;
 }
 
 // ── Shared: get premium students + school board for a schedule ────────────────

@@ -75,6 +75,7 @@ import subjectResourcesRoutes from './routes/subjectResources';
 import recoverySchedulesRoutes from './routes/recoverySchedules';
 import recoveryRoutes from './routes/recovery';
 import studentRecoveryRoutes from './routes/studentRecovery';
+import chapterLibraryRoutes from './routes/chapterLibrary';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -313,6 +314,7 @@ async function startServer() {
   app.use('/api/recovery-schedules', recoverySchedulesRoutes);
   app.use('/api/recovery', recoveryRoutes);
   app.use('/api/student-recovery', studentRecoveryRoutes);
+  app.use('/api/chapter-library', chapterLibraryRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

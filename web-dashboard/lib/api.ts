@@ -986,6 +986,9 @@ export const testsApi = {
     chapter?: string | null;
     language?: string | null;
     contributes_to_streak?: boolean;
+    // Chapter library fields
+    chapter_library_id?: string | null;
+    selected_topics?: string | null;
     questions: TestQuestion[];
   }) =>
     request<Test>('/api/tests', {
