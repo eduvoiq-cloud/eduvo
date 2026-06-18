@@ -389,6 +389,10 @@ ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS option_c        text;
 ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS option_d        text;
 ALTER TABLE public.test_questions ADD COLUMN IF NOT EXISTS correct_option  text CHECK (correct_option IN ('a', 'b', 'c', 'd'));
 
+-- Add explanation + reasoning columns to questions (used by AI generation)
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS explanation text;
+ALTER TABLE public.questions ADD COLUMN IF NOT EXISTS reasoning   text;
+
 -- Back-fill question_text / question_type from the existing jsonb columns
 UPDATE public.test_questions
 SET

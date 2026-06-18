@@ -367,6 +367,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
  * Only a teacher assigned to that class/section can create.
  */
 router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = createTestSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -435,7 +436,8 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     .from('tests')
     .insert({
       title: testFields.title,
-      subject_id: resolvedSubjectId,
+      subject: resolvedSubjectName,       // legacy text NOT NULL column
+      subject_id: resolvedSubjectId,      // nullable UUID FK column
       class:   testFields.class,       // DB column is "class"
       section: testFields.section,
       term:    normaliseTerm(testFields.term) ?? testFields.term,
@@ -460,10 +462,15 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     .select()
     .single();
 
-  if (testErr || !test) { sendError(res, testErr?.message ?? 'Failed to create test', 500); return; }
+  if (testErr || !test) {
+    console.error('[tests/create] insert test error:', testErr?.message);
+    sendError(res, testErr?.message ?? 'Failed to create test', 500);
+    return;
+  }
 
-  // Insert all questions
-  const questionRows = questions.map((q, idx) => ({
+  // Insert all questions — try with explanation/reasoning first, fall back
+  // without them if those columns don't exist in the DB yet.
+  const questionRowsFull = questions.map((q, idx) => ({
     test_id: test.id,
     order_index: idx,
     question_text: q.question_text,
@@ -478,12 +485,31 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     reasoning: q.reasoning ?? null,
   }));
 
-  const { error: qErr } = await supabaseAdmin.from('questions').insert(questionRows);
+  let qErr = (await supabaseAdmin.from('questions').insert(questionRowsFull)).error;
+
+  // If explanation/reasoning columns don't exist yet, retry without them
+  if (qErr && (qErr.message.includes('explanation') || qErr.message.includes('reasoning'))) {
+    console.warn('[tests/create] explanation/reasoning columns missing, retrying without them');
+    const questionRowsBase = questions.map((q, idx) => ({
+      test_id: test.id,
+      order_index: idx,
+      question_text: q.question_text,
+      question_type: q.question_type,
+      option_a: q.option_a ?? null,
+      option_b: q.option_b ?? null,
+      option_c: q.option_c ?? null,
+      option_d: q.option_d ?? null,
+      correct_option: q.question_type === 'mcq' ? (q.correct_option ?? null) : null,
+      marks: q.marks,
+    }));
+    qErr = (await supabaseAdmin.from('questions').insert(questionRowsBase)).error;
+  }
 
   if (qErr) {
+    console.error('[tests/create] insert questions error:', qErr.message);
     // Roll back the test header if questions fail
     await supabaseAdmin.from('tests').delete().eq('id', test.id);
-    sendError(res, 'Failed to save questions', 500);
+    sendError(res, `Failed to save questions: ${qErr.message}`, 500);
     return;
   }
 
@@ -546,6 +572,10 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
   });
 
   sendSuccess(res, { test_id: test.id, success: true }, 'Test created', 201);
+  } catch (err) {
+    console.error('[tests/create] unexpected error:', err);
+    sendError(res, err instanceof Error ? err.message : 'Failed to create test', 500);
+  }
 });
 
 // ── GET /api/tests/my-tests ───────────────────────────────────────────────────
