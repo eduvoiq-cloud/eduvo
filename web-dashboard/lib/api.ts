@@ -1368,50 +1368,6 @@ export const premiumApi = {
     }>('/api/premium/student-summary', { method: 'GET' }, token),
 };
 
-// ── Teacher Premium API ───────────────────────────────────────────────────────
-
-export interface TeacherPremiumStudent {
-  id: string;
-  full_name: string;
-  class_name: string;
-  section: string;
-  phone_number: string | null;
-  parent_id: string | null;
-  premium_status: 'active' | 'inactive' | 'none';
-  subscription_id: string | null;
-  activated_at: string | null;
-  expires_at: string | null;
-  days_left: number | null;
-  plan_type: string | null;
-  activated_by_admin_id: string | null;
-}
-
-export const teacherPremiumApi = {
-  /** List all students in teacher's assigned classes with premium status */
-  listStudents: (token: string) =>
-    request<TeacherPremiumStudent[]>('/api/teacher/premium/students', { method: 'GET' }, token),
-
-  /** Activate premium for a student in teacher's class */
-  activate: (token: string, studentId: string) =>
-    request<ParentSubscription>(`/api/teacher/premium/students/${studentId}/activate`, { method: 'POST' }, token),
-
-  /** Deactivate premium for a student in teacher's class */
-  deactivate: (token: string, studentId: string) =>
-    request<ParentSubscription>(`/api/teacher/premium/students/${studentId}/deactivate`, { method: 'POST' }, token),
-
-  /** Renew premium by 1 month for a student in teacher's class */
-  renew: (token: string, studentId: string) =>
-    request<ParentSubscription>(`/api/teacher/premium/students/${studentId}/renew`, { method: 'POST' }, token),
-
-  /** Send renewal reminder (SMS + push) for expiring subscriptions */
-  notifyRenewal: (token: string, payload: { student_ids?: string[]; days_threshold?: number }) =>
-    request<{ notified: number; sms_sent: number; push_sent: number }>(
-      '/api/teacher/premium/notify-renewal',
-      { method: 'POST', body: JSON.stringify(payload) },
-      token
-    ),
-};
-
 // ── Monthly Performance Snapshot types ───────────────────────────────────────
 
 export interface ClassRankingRow {

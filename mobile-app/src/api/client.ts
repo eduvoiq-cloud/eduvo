@@ -44,11 +44,6 @@ apiClient.interceptors.response.use(
       useAuthStore.getState().logout();
     }
 
-    if (error.response?.status === 402) {
-      // School subscription expired — flag it in auth store
-      useAuthStore.getState().setSubscriptionExpired(true);
-    }
-
     return Promise.reject(error);
   }
 );

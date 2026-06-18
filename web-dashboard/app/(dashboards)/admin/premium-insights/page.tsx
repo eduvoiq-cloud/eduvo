@@ -5,7 +5,6 @@
  *
  * Admin view: per-student weak topics + latest AI weekly report.
  * Accessible to schooladmin and superadmin.
- * Parents see premium insights exclusively via the mobile app.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -21,7 +20,6 @@ interface StudentSub {
   full_name: string;
   class_name: string;
   section: string;
-  subscription_id: string;
 }
 
 interface WeakTopic {
@@ -51,7 +49,6 @@ interface WeeklyReport {
 }
 
 interface InsightsData {
-  is_premium: boolean;
   latest_report: WeeklyReport | null;
   weak_topics: WeakTopic[];
   streak: Streak | null;
@@ -103,7 +100,7 @@ function InsightsSkeleton() {
 
 export default function PremiumInsightsPage() {
 
-  // Students with premium
+  // All students in the school
   const [students, setStudents] = useState<StudentSub[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(true);
 
@@ -118,7 +115,7 @@ export default function PremiumInsightsPage() {
   const [recalculating, setRecalculating] = useState(false);
   const [recalcMsg, setRecalcMsg] = useState<string | null>(null);
 
-  // ── Load premium students ─────────────────────────────────────────────────
+  // ── Load all students ────────────────────────────────────────────────────
 
   const loadStudents = useCallback(async () => {
     const token = getToken();
@@ -126,24 +123,20 @@ export default function PremiumInsightsPage() {
     setLoadingStudents(true);
     try {
       const res = await fetch(
-        `${BASE_URL}/api/premium/subscriptions?status=active&limit=200`,
+        `${BASE_URL}/api/admin/students?limit=500`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const json = await res.json();
-      const rows = (json.data?.data ?? []) as Array<Record<string, unknown>>;
-      const mapped: StudentSub[] = rows.map((r) => {
-        const s = r.students as Record<string, unknown> | null;
-        return {
-          id: r.student_id as string,
-          full_name: (s?.full_name as string) ?? 'Unknown',
-          class_name: (s?.class_name as string) ?? '',
-          section: (s?.section as string) ?? '',
-          subscription_id: r.id as string,
-        };
-      });
+      const rows = (json.data?.data ?? json.data ?? []) as Array<Record<string, unknown>>;
+      const mapped: StudentSub[] = rows.map((r) => ({
+        id: r.id as string,
+        full_name: (r.full_name as string) ?? 'Unknown',
+        class_name: (r.class_name as string) ?? '',
+        section: (r.section as string) ?? '',
+      }));
       setStudents(mapped);
     } catch (e) {
-      console.error('[PremiumInsights] loadStudents error:', e);
+      console.error('[AIInsights] loadStudents error:', e);
     } finally {
       setLoadingStudents(false);
     }
@@ -225,8 +218,8 @@ export default function PremiumInsightsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="✨ Premium Insights"
-        description="View AI-generated weekly reports and weak topic analysis for premium students."
+        title="✨ AI Insights"
+        description="View AI-generated weekly reports and weak topic analysis for students."
         action={
           selectedId ? (
             <button
@@ -257,8 +250,8 @@ export default function PremiumInsightsPage() {
         {/* ── Student list panel ─────────────────────────────────────────── */}
         <div className="lg:col-span-1 space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-700">Premium Students</h2>
-            <span className="text-xs text-gray-400">{students.length} active</span>
+            <h2 className="text-sm font-semibold text-gray-700">Students</h2>
+            <span className="text-xs text-gray-400">{students.length} total</span>
           </div>
 
           <input
@@ -277,7 +270,7 @@ export default function PremiumInsightsPage() {
             ) : filtered.length === 0 ? (
               <div className="text-center py-8 text-sm text-gray-400">
                 {students.length === 0
-                  ? 'No premium students yet. Activate premium in Premium Management.'
+                  ? 'No students found.'
                   : 'No students match your search.'}
               </div>
             ) : (
@@ -306,7 +299,7 @@ export default function PremiumInsightsPage() {
           {!selectedId ? (
             <div className="bg-white rounded-2xl border border-gray-200 p-12 text-center">
               <div className="text-4xl mb-4">👈</div>
-              <p className="text-sm text-gray-500">Select a student to view their premium insights.</p>
+              <p className="text-sm text-gray-500">Select a student to view their AI insights.</p>
             </div>
           ) : loadingInsights ? (
             <div className="bg-white rounded-2xl border border-gray-200 p-6">

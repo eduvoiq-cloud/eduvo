@@ -51,7 +51,6 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
         { label: 'Complaints', href: '/admin/complaints' },
         { label: 'AI Insights', href: '/admin/premium-insights' },
         { label: 'Streak Board', href: '/admin/streak-leaderboard' },
-        { label: 'Premium', href: '/admin/premium-management' },
         { label: 'Settings', href: '/admin/settings' },
       ],
     },
@@ -83,7 +82,6 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
       children: [
         { label: 'Streak Board', href: '/teacher/streak-leaderboard' },
         { label: 'Announcements', href: '/teacher/announcements' },
-        { label: 'Premium', href: '/teacher/premium' },
       ],
     },
   ],

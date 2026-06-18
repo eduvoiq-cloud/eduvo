@@ -18,7 +18,7 @@ import { sendPushMulticast } from './fcmService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface PremiumStudent {
+interface StudentRecord {
   id: string;
   full_name: string;
   class_name: string;
@@ -226,7 +226,7 @@ export async function calculateWeakTopics(studentId: string, classLevel: number)
 // ── Step 2: Generate AI weekly report ─────────────────────────────────────────
 
 export async function generateWeeklyReport(
-  student: PremiumStudent,
+  student: StudentRecord,
   weekStartDate: string
 ): Promise<string> {
   const classLevel = parseClassLevel(student.class_name || student.class || '1');
@@ -387,7 +387,7 @@ Return as JSON: {"report_text": "<your summary here>"}`;
 // ── Step 3: Store report and send FCM ─────────────────────────────────────────
 
 async function storeReportAndNotify(
-  student: PremiumStudent,
+  student: StudentRecord,
   weekStartDate: string,
   reportText: string
 ): Promise<void> {
@@ -448,40 +448,31 @@ export async function runWeeklyAnalysis(): Promise<WeeklyAnalysisResult> {
     errors: [],
   };
 
-  // Fetch all students with active, non-expired premium subscriptions
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: subscriptions, error: subsErr } = await supabaseAdmin
-    .from('parent_subscriptions')
-    .select(`
-      student_id,
-      students (
-        id, full_name, class_name, class, school_id, parent_id
-      )
-    `)
-    .eq('status', 'active')
-    .or(`expires_at.is.null,expires_at.gte.${today}`);
+  // Fetch all active (non-deleted) students
+  const { data: studentRows, error: studErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, class_name, class, school_id, parent_id')
+    .eq('is_deleted', false);
 
-  if (subsErr) {
-    console.error('[weeklyAnalysis] Failed to fetch subscriptions:', subsErr.message);
-    throw new Error('Failed to fetch premium subscriptions: ' + subsErr.message);
+  if (studErr) {
+    console.error('[weeklyAnalysis] Failed to fetch students:', studErr.message);
+    throw new Error('Failed to fetch students: ' + studErr.message);
   }
 
-  const students: PremiumStudent[] = [];
-  for (const sub of subscriptions ?? []) {
-    const s = (sub as Record<string, unknown>).students as Record<string, unknown> | null;
-    if (!s) continue;
-    students.push({
-      id: s.id as string,
-      full_name: s.full_name as string,
-      class_name: (s.class_name as string) ?? '',
-      class: (s.class as string) ?? '',
-      school_id: s.school_id as string,
-      parent_id: s.parent_id as string | null,
-    });
-  }
+  const students: StudentRecord[] = (studentRows ?? []).map((s) => {
+    const row = s as Record<string, unknown>;
+    return {
+      id: row.id as string,
+      full_name: row.full_name as string,
+      class_name: (row.class_name as string) ?? '',
+      class: (row.class as string) ?? '',
+      school_id: row.school_id as string,
+      parent_id: row.parent_id as string | null,
+    };
+  });
 
   result.total = students.length;
-  console.log(`[weeklyAnalysis] Processing ${result.total} premium students`);
+  console.log(`[weeklyAnalysis] Processing ${result.total} students`);
 
   // Process each student sequentially to avoid rate limiting Gemini
   for (const student of students) {

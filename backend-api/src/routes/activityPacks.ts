@@ -1,7 +1,7 @@
 /**
- * /api/activity-packs — Premium: teacher-created daily learning activities
+ * /api/activity-packs — teacher-created daily learning activities
  *
- * Teacher endpoints (require teacher_premium_access.can_create_activity_packs):
+ * Teacher endpoints:
  *   GET    /api/activity-packs/permission        — check if teacher has access
  *   POST   /api/activity-packs/generate          — Gemini: generate 5 home activities
  *   POST   /api/activity-packs                   — create a pack + send FCM to parents
@@ -9,7 +9,7 @@
  *   DELETE /api/activity-packs/:id               — delete own pack
  *   GET    /api/activity-packs/:id/completions   — view completion status
  *
- * Student / parent endpoints (student token + active premium_junior):
+ * Student / parent endpoints (student token):
  *   GET    /api/activity-packs/student/today     — today's packs for student's class
  *   POST   /api/activity-packs/:id/complete      — parent marks activities done
  *   GET    /api/activity-packs/student/history   — completion history
@@ -33,22 +33,8 @@ const router = Router();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function requirePremiumJunior(studentId: string, schoolId: string): Promise<boolean> {
-  const today = new Date().toISOString().slice(0, 10);
-  const { data } = await supabaseAdmin
-    .from('parent_subscriptions')
-    .select('id')
-    .eq('student_id', studentId)
-    .eq('school_id', schoolId)
-    .eq('status', 'active')
-    .eq('plan_type', 'premium_junior')
-    .or(`expires_at.is.null,expires_at.gte.${today}`)
-    .maybeSingle();
-  return data !== null;
-}
-
 /** Check teacher has activity pack creation permission.
- *  If no explicit row exists, access is granted by default.
+ *  All teachers can create activity packs by default.
  *  A row with can_create_activity_packs = false is the only way to block a teacher.
  */
 async function hasActivityPermission(teacherId: string, schoolId: string): Promise<boolean> {
@@ -64,10 +50,9 @@ async function hasActivityPermission(teacherId: string, schoolId: string): Promi
 }
 
 /**
- * Get all student IDs in a class/section that have an active, non-expired premium_junior subscription.
- * Classes 1–6 → plan_type = 'premium_junior'.
+ * Get all student IDs in a class/section.
  */
-async function getPremiumJuniorStudents(
+async function getAllStudentsInClass(
   schoolId: string,
   className: string,
   section: string
@@ -81,20 +66,7 @@ async function getPremiumJuniorStudents(
     .eq('is_deleted', false);
 
   if (!students || students.length === 0) return [];
-
-  const studentIds = students.map((s: { id: string }) => s.id);
-  const today = new Date().toISOString().slice(0, 10);
-
-  const { data: subs } = await supabaseAdmin
-    .from('parent_subscriptions')
-    .select('student_id')
-    .eq('school_id', schoolId)
-    .eq('status', 'active')
-    .eq('plan_type', 'premium_junior')
-    .or(`expires_at.is.null,expires_at.gte.${today}`)
-    .in('student_id', studentIds);
-
-  return (subs ?? []).map((s: { student_id: string }) => s.student_id);
+  return students.map((s: { id: string }) => s.id);
 }
 
 /** Age range for a class 1-6 student in India. */
@@ -369,15 +341,15 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
 
   const pack = data as Record<string, unknown>;
 
-  // Fire-and-forget: insert activity_completions for eligible students + FCM
+  // Fire-and-forget: insert activity_completions for all students in class + FCM
   setImmediate(() => {
     (async () => {
       try {
-        const premiumStudentIds = await getPremiumJuniorStudents(schoolId, cls, section);
+        const allStudentIds = await getAllStudentsInClass(schoolId, cls, section);
 
-        if (premiumStudentIds.length > 0) {
-          // Insert a pending completion row for each eligible student
-          const completionRows = premiumStudentIds.map((studentId: string) => ({
+        if (allStudentIds.length > 0) {
+          // Insert a pending completion row for each student
+          const completionRows = allStudentIds.map((studentId: string) => ({
             activity_pack_id: pack.id,
             student_id: studentId,
             parent_marked_complete: false,
@@ -391,7 +363,7 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
           const { data: parentRows } = await supabaseAdmin
             .from('students')
             .select('parent_id')
-            .in('id', premiumStudentIds)
+            .in('id', allStudentIds)
             .not('parent_id', 'is', null);
 
           const parentIds = (parentRows ?? [])
@@ -410,7 +382,7 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
             }
           }
 
-          console.log(`[activity-packs] Pack ${pack.id} sent to ${premiumStudentIds.length} students, notified ${parentIds.length} parents`);
+          console.log(`[activity-packs] Pack ${pack.id} sent to ${allStudentIds.length} students, notified ${parentIds.length} parents`);
         }
       } catch (err) {
         console.error('[activity-packs] Failed to create completions or send FCM:', err);
@@ -536,19 +508,20 @@ router.get(
       (activeTeachers ?? []).map((t: { teacher_id: string }) => t.teacher_id)
     );
 
-    const { data: permissionRows } = await supabaseAdmin
-      .from('teacher_premium_access')
-      .select('teacher_id, users ( id, name )')
+    // List all teachers in the school to find inactive ones
+    const { data: allTeacherRows } = await supabaseAdmin
+      .from('users')
+      .select('id, name')
       .eq('school_id', schoolId)
-      .eq('can_create_activity_packs', true);
+      .eq('role', 'teacher');
 
-    type PermRow = { teacher_id: string; users: { id: string; name: string } | null };
-    const rawPerms = (permissionRows ?? []) as unknown as PermRow[];
-    const inactiveTeachers = rawPerms
-      .filter((row) => !activeTeacherIds.has(row.teacher_id))
+    type TeacherRow = { id: string; name: string };
+    const rawTeachers = (allTeacherRows ?? []) as TeacherRow[];
+    const inactiveTeachers = rawTeachers
+      .filter((row) => !activeTeacherIds.has(row.id))
       .map((row) => ({
-        teacher_id: row.teacher_id,
-        teacher_name: row.users?.name ?? 'Unknown',
+        teacher_id: row.id,
+        teacher_name: row.name ?? 'Unknown',
       }));
 
     sendSuccess(res, {
@@ -633,12 +606,6 @@ router.get(
     const className = req.student!.class_name ?? '';
     const section = req.student!.section ?? '';
 
-    const isPremium = await requirePremiumJunior(studentId, schoolId);
-    if (!isPremium) {
-      sendError(res, 'Premium Junior subscription required', 403);
-      return;
-    }
-
     const today = new Date().toISOString().slice(0, 10);
 
     const { data: packs, error: packsErr } = await supabaseAdmin
@@ -695,12 +662,6 @@ router.post(
 
     const studentId = req.student!.id;
     const schoolId = req.student!.school_id;
-
-    const isPremium = await requirePremiumJunior(studentId, schoolId);
-    if (!isPremium) {
-      sendError(res, 'Premium Junior subscription required', 403);
-      return;
-    }
 
     // Verify pack exists for this student's school
     const { data: pack } = await supabaseAdmin
@@ -784,13 +745,6 @@ router.get(
   authenticateStudent,
   async (req: Request, res: Response) => {
     const studentId = req.student!.id;
-    const schoolId = req.student!.school_id;
-
-    const isPremium = await requirePremiumJunior(studentId, schoolId);
-    if (!isPremium) {
-      sendError(res, 'Premium Junior subscription required', 403);
-      return;
-    }
 
     const rawLimit = parseInt((req.query.limit as string) ?? '20', 10);
     const limit = isNaN(rawLimit) ? 20 : Math.min(rawLimit, 100);

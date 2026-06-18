@@ -238,7 +238,7 @@ export default function StreakWidget({ studentId, studentToken, style }: Props) 
     }, [fetchStreak])
   );
 
-  // Don't render if no data and not loading (student not premium / no streaks yet)
+  // Don't render if no data and not loading (no streaks yet)
   if (!loading && !streakData) return null;
 
   if (loading) {

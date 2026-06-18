@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { Text } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -113,81 +113,6 @@ function TabIcon({ label, focused }: { label: string; focused: boolean }) {
     <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>{label}</Text>
   );
 }
-
-// ── Subscription expired screen ───────────────────────────────────────────────
-
-function SubscriptionExpiredScreen() {
-  const logout = useAuthStore((s) => s.logout);
-  return (
-    <View style={styles.expiredContainer}>
-      <View style={styles.expiredCard}>
-        <Text style={styles.expiredIcon}>⚠️</Text>
-        <Text style={styles.expiredTitle}>Subscription Expired</Text>
-        <Text style={styles.expiredMessage}>
-          Your school&apos;s subscription has expired. Please ask your school
-          administrator to renew the subscription to continue using the service.
-        </Text>
-        <TouchableOpacity style={styles.expiredButton} onPress={logout}>
-          <Text style={styles.expiredButtonText}>Sign Out</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  expiredContainer: {
-    flex: 1,
-    backgroundColor: '#F9FAFB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-  },
-  expiredCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 32,
-    alignItems: 'center',
-    width: '100%',
-    maxWidth: 360,
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 3,
-  },
-  expiredIcon: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  expiredTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  expiredMessage: {
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 22,
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  expiredButton: {
-    backgroundColor: '#1D4ED8',
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    borderRadius: 10,
-    width: '100%',
-    alignItems: 'center',
-  },
-  expiredButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-});
 
 // ── Parent bottom tab navigator ───────────────────────────────────────────────
 
@@ -541,16 +466,14 @@ interface AppNavigatorProps {
 }
 
 export default function AppNavigator({ navigationRef }: AppNavigatorProps) {
-  const { isLoggedIn, subscriptionExpired } = useAuthStore();
+  const { isLoggedIn } = useAuthStore();
   const linkedChildren = useChildStore((s) => s.linkedChildren);
   const isParent = linkedChildren.length > 0;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <NavigationContainer ref={navigationRef}>
-        {isLoggedIn && subscriptionExpired
-          ? <SubscriptionExpiredScreen />
-          : isLoggedIn && isParent
+        {isLoggedIn && isParent
           ? <ParentNavigator />
           : isLoggedIn
           ? <MainNavigator />

@@ -66,7 +66,6 @@ export default function ActivityPacksScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notPremium, setNotPremium] = useState(false);
 
   // Per-pack state
   const [readingMinutes, setReadingMinutes] = useState<Record<string, string>>({});
@@ -76,24 +75,14 @@ export default function ActivityPacksScreen() {
 
   const fetchData = useCallback(async () => {
     setError(null);
-    setNotPremium(false);
     try {
-      const packsRes = await apiClient.get('/api/activity-packs/student/today').catch((err) => {
-        throw err;
-      });
+      const packsRes = await apiClient.get('/api/activity-packs/student/today');
       setPacks(packsRes.data.data ?? []);
     } catch (err: unknown) {
-      const status = (err as { response?: { status?: number } }).response?.status;
-      const msg = (err as { response?: { data?: { message?: string }; status?: number } }).response?.data?.message
+      const msg = (err as { response?: { data?: { message?: string } } }).response?.data?.message
         ?? (err instanceof Error ? err.message : 'Failed to load');
-      // 403 means not premium — show "Ask School Admin" gate, not an error banner
-      if (status === 403 || msg.toLowerCase().includes('premium')) {
-        setNotPremium(true);
-        setPacks([]);
-      } else {
-        setError(msg);
-        setPacks([]);
-      }
+      setError(msg);
+      setPacks([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -221,19 +210,8 @@ export default function ActivityPacksScreen() {
           </View>
         )}
 
-        {/* Premium gate — not subscribed */}
-        {!error && notPremium && (
-          <View style={styles.premiumGate}>
-            <Text style={styles.premiumGateIcon}>🔒</Text>
-            <Text style={styles.premiumGateTitle}>Premium Required</Text>
-            <Text style={styles.premiumGateText}>
-              Ask your school admin to activate the Premium Junior plan to unlock home activity packs.
-            </Text>
-          </View>
-        )}
-
         {/* Empty state */}
-        {!error && !notPremium && packs.length === 0 && (
+        {!error && packs.length === 0 && (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyIcon}>📭</Text>
             <Text style={styles.emptyTitle}>No activities today</Text>
@@ -607,31 +585,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#1E40AF',
     lineHeight: 18,
-  },
-  premiumGate: {
-    alignItems: 'center',
-    backgroundColor: '#F0F9FF',
-    borderRadius: 14,
-    padding: 28,
-    borderWidth: 1,
-    borderColor: '#BAE6FD',
-    marginTop: 8,
-  },
-  premiumGateIcon: {
-    fontSize: 44,
-    marginBottom: 12,
-  },
-  premiumGateTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#0C4A6E',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  premiumGateText: {
-    fontSize: 14,
-    color: '#0369A1',
-    textAlign: 'center',
-    lineHeight: 22,
   },
 });

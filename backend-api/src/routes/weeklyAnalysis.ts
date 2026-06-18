@@ -15,7 +15,7 @@
  *   — Returns last N weekly reports for a student (parent-accessible).
  *
  * GET  /api/weekly-analysis/insights/:studentId
- *   — Returns combined premium insights: latest report + weak topics + streak + marks summary
+ *   — Returns combined insights: latest report + weak topics + streak + marks summary
  *     Auth: parent JWT
  *
  * POST /api/weekly-analysis/recalculate/:studentId
@@ -59,17 +59,6 @@ async function isParentOfStudent(parentId: string, studentId: string): Promise<b
     .maybeSingle();
 
   return student !== null;
-}
-
-/** Check active premium subscription for a student. */
-async function hasPremium(studentId: string): Promise<boolean> {
-  const { data } = await supabaseAdmin
-    .from('parent_subscriptions')
-    .select('id')
-    .eq('student_id', studentId)
-    .eq('status', 'active')
-    .maybeSingle();
-  return data !== null;
 }
 
 function parseClassLevel(className: string): number {
@@ -133,13 +122,7 @@ router.get(
       if (req.student!.id !== studentId) { sendError(res, 'Access denied', 403); return; }
     }
 
-    // Premium check
-    const isPremium = await hasPremium(studentId);
-    if (!isPremium) {
-      sendSuccess(res, { premium_required: true, report: null });
-      return;
-    }
-
+    // Fetch the latest weekly report
     const { data, error } = await supabaseAdmin
       .from('weekly_reports')
       .select('id, student_id, week_start_date, report_text, generated_at, created_at')
@@ -150,7 +133,7 @@ router.get(
 
     if (error) { sendError(res, error.message, 500); return; }
 
-    sendSuccess(res, { premium_required: false, report: data ?? null });
+    sendSuccess(res, { report: data ?? null });
   }
 );
 
@@ -176,12 +159,6 @@ router.get(
       if (req.student!.id !== studentId) { sendError(res, 'Access denied', 403); return; }
     }
 
-    const isPremium = await hasPremium(studentId);
-    if (!isPremium) {
-      sendSuccess(res, { premium_required: true, reports: [] });
-      return;
-    }
-
     const rawLimit = parseInt((req.query.limit as string) ?? '4', 10);
     const limit = isNaN(rawLimit) ? 4 : Math.min(rawLimit, 12);
 
@@ -194,7 +171,7 @@ router.get(
 
     if (error) { sendError(res, error.message, 500); return; }
 
-    sendSuccess(res, { premium_required: false, reports: data ?? [] });
+    sendSuccess(res, { reports: data ?? [] });
   }
 );
 
@@ -229,29 +206,7 @@ router.get(
       if (req.student!.id !== studentId) { sendError(res, 'Access denied', 403); return; }
     }
 
-    // Check premium status
-    const isPremium = await hasPremium(studentId);
-
-    if (!isPremium) {
-      // Return blurred preview data — just marks summary (no AI content)
-      const { data: marks } = await supabaseAdmin
-        .from('marks')
-        .select('subject, score, max_score')
-        .eq('student_id', studentId)
-        .limit(5);
-
-      sendSuccess(res, {
-        is_premium: false,
-        latest_report: null,
-        weak_topics: [],
-        streak: null,
-        marks_summary: marks ?? [],
-        message: 'Ask your school to activate Premium to unlock full insights.',
-      });
-      return;
-    }
-
-    // Fetch all premium data in parallel
+    // Fetch all data in parallel
     const [reportRes, weakTopicsRes, streakRes, marksRes] = await Promise.all([
       // Latest weekly report
       supabaseAdmin
@@ -305,7 +260,6 @@ router.get(
     }));
 
     sendSuccess(res, {
-      is_premium: true,
       latest_report: reportRes.data ?? null,
       weak_topics: weakTopicsRes.data ?? [],
       streak: streakRes.data ?? {
@@ -348,12 +302,6 @@ router.post(
       school_id: string; parent_id: string | null;
     };
     const classLevel = parseClassLevel(s.class_name || s.class || '1');
-
-    const isPremium = await hasPremium(studentId);
-    if (!isPremium) {
-      sendError(res, 'Student does not have an active premium subscription', 400);
-      return;
-    }
 
     // Recalculate weak topics
     const weakTopics = await calculateWeakTopics(studentId, classLevel);

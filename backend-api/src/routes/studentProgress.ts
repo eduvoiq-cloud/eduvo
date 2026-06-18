@@ -1,7 +1,7 @@
 /**
- * /api/student-progress — Premium: weak topics, streaks
+ * /api/student-progress — weak topics, streaks
  *
- * All routes require a student token + active premium subscription.
+ * All routes require a student token.
  *
  * Weak Topics:
  *   GET    /api/student-progress/weak-topics          — student's weak topics
@@ -26,17 +26,6 @@ const router = Router();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function requirePremium(studentId: string, schoolId: string): Promise<boolean> {
-  const { data } = await supabaseAdmin
-    .from('parent_subscriptions')
-    .select('id')
-    .eq('student_id', studentId)
-    .eq('school_id', schoolId)
-    .eq('status', 'active')
-    .maybeSingle();
-  return data !== null;
-}
-
 // ── Weak Topics ───────────────────────────────────────────────────────────────
 
 // GET /api/student-progress/weak-topics
@@ -45,13 +34,6 @@ router.get(
   authenticateStudent,
   async (req: Request, res: Response) => {
     const studentId = req.student!.id;
-    const schoolId = req.student!.school_id;
-
-    const isPremium = await requirePremium(studentId, schoolId);
-    if (!isPremium) {
-      sendError(res, 'Premium subscription required', 403);
-      return;
-    }
 
     const { data, error } = await supabaseAdmin
       .from('weak_topics')
@@ -71,13 +53,6 @@ router.get(
   authenticateStudent,
   async (req: Request, res: Response) => {
     const studentId = req.student!.id;
-    const schoolId = req.student!.school_id;
-
-    const isPremium = await requirePremium(studentId, schoolId);
-    if (!isPremium) {
-      sendError(res, 'Premium subscription required', 403);
-      return;
-    }
 
     const { data, error } = await supabaseAdmin
       .from('weak_topics')
@@ -100,13 +75,6 @@ router.get(
   authenticateStudent,
   async (req: Request, res: Response) => {
     const studentId = req.student!.id;
-    const schoolId = req.student!.school_id;
-
-    const isPremium = await requirePremium(studentId, schoolId);
-    if (!isPremium) {
-      sendError(res, 'Premium subscription required', 403);
-      return;
-    }
 
     const { data, error } = await supabaseAdmin
       .from('student_streaks')
@@ -138,13 +106,6 @@ router.get(
   authenticateStudent,
   async (req: Request, res: Response) => {
     const studentId = req.student!.id;
-    const schoolId = req.student!.school_id;
-
-    const isPremium = await requirePremium(studentId, schoolId);
-    if (!isPremium) {
-      sendError(res, 'Premium subscription required', 403);
-      return;
-    }
 
     const rawDays = parseInt((req.query.days as string) ?? '30', 10);
     const days = isNaN(rawDays) || rawDays < 1 ? 30 : Math.min(rawDays, 90);

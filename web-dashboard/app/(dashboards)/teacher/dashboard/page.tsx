@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { complaintsApi, testsApi, teacherPremiumApi, recoverySchedulesApi, type TeacherAssignment, type Student, type SuspiciousActivityRow } from '@/lib/api';
+import { complaintsApi, testsApi, recoverySchedulesApi, type TeacherAssignment, type Student, type SuspiciousActivityRow } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
@@ -16,7 +16,6 @@ export default function TeacherDashboard() {
   const [students, setStudents] = useState<Student[]>([]);
   const [pendingComplaints, setPendingComplaints] = useState(0);
   const [testsThisMonth, setTestsThisMonth] = useState(0);
-  const [expiringSoonCount, setExpiringSoonCount] = useState(0);
   const [suspiciousActivity, setSuspiciousActivity] = useState<SuspiciousActivityRow[]>([]);
   const [pendingRecoveryCount, setPendingRecoveryCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -47,27 +46,18 @@ export default function TeacherDashboard() {
           return;
         }
 
-        const [classesRes, complaintsRes, testsRes, premiumRes, suspiciousRes, recoveryCountRes] = await Promise.all([
+        const [classesRes, complaintsRes, testsRes, suspiciousRes, recoveryCountRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
           complaintsApi.list(token!, { status: 'pending', role: user!.role }).catch(() => ({ data: [] })),
           testsApi.list(token!).catch(() => ({ data: [] })),
-          teacherPremiumApi.listStudents(token!).catch(() => ({ data: [] })),
           testsApi.getSuspiciousActivity(token!).catch(() => ({ data: [] })),
           recoverySchedulesApi.pendingCount(token!).catch(() => ({ data: { count: 0 } })),
         ]);
 
         const myAssignments: TeacherAssignment[] = classesRes?.data ?? [];
         setAssignments(myAssignments);
-
-        // Count students expiring within 5 days
-        const premiumStudents = Array.isArray(premiumRes.data) ? premiumRes.data : [];
-        const expiring = premiumStudents.filter(
-          (s: { premium_status: string; days_left: number | null }) =>
-            s.premium_status === 'active' && s.days_left !== null && s.days_left <= 5
-        ).length;
-        setExpiringSoonCount(expiring);
 
         let uniqueStudents: Student[] = [];
 
@@ -161,31 +151,6 @@ export default function TeacherDashboard() {
           sub="Created by you" icon={<TestIcon />} />
       </div>
 
-      {/* Premium expiry alert */}
-      {!loading && expiringSoonCount > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-6 py-4 mb-6 flex items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 text-red-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            <div>
-              <p className="text-sm font-semibold text-red-800">
-                {expiringSoonCount} student{expiringSoonCount !== 1 ? 's' : ''} have premium expiring within 5 days
-              </p>
-              <p className="text-xs text-red-600 mt-0.5">
-                Go to Premium Management to renew or send a reminder to parents.
-              </p>
-            </div>
-          </div>
-          <Link
-            href="/teacher/premium"
-            className="shrink-0 px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-          >
-            Manage Premium →
-          </Link>
-        </div>
-      )}
-
       {/* No assignments notice */}
       {!loading && assignments.length === 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-6 py-5 mb-6 flex items-start gap-3">
@@ -237,7 +202,6 @@ export default function TeacherDashboard() {
             { href: '/teacher/fees', label: 'Fee Status' },
             { href: '/teacher/tests', label: 'Create Test' },
             { href: '/teacher/complaints', label: 'View Complaints' },
-            { href: '/teacher/premium', label: 'Premium' },
           ].map((a) => (
             <Link key={a.href} href={a.href}
               className="flex items-center justify-between px-4 py-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50 text-sm font-medium text-gray-700 hover:text-blue-700 transition-colors">

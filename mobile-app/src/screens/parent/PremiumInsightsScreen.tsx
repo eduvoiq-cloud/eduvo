@@ -1,13 +1,12 @@
 /**
  * PremiumInsightsScreen.tsx
  *
- * Parent Premium Insights dashboard.
+ * Parent Insights dashboard.
  * Shows:
  *   - AI weekly summary (latest)
  *   - Weak topics list, colour-coded (red/yellow/green)
  *   - Subject-wise score bar chart (pure RN bars)
  *   - Current streak (big number + flame icon)
- *   - If not premium: blurred preview + upgrade message
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -61,7 +60,6 @@ interface WeeklyReport {
 }
 
 interface InsightsData {
-  is_premium: boolean;
   latest_report: WeeklyReport | null;
   weak_topics: WeakTopic[];
   streak: Streak | null;
@@ -341,129 +339,6 @@ const topicStyles = StyleSheet.create({
   },
 });
 
-/** Premium gate overlay */
-function PremiumGate({ previewData }: { previewData: InsightsData }) {
-  return (
-    <View style={gateStyles.container}>
-      {/* Blurred/faded preview of marks */}
-      <View style={gateStyles.blurContainer} pointerEvents="none">
-        <View style={gateStyles.blurOverlay} />
-        {previewData.marks_summary.slice(0, 3).map((item) => (
-          <View key={item.subject} style={gateStyles.previewRow}>
-            <Text style={gateStyles.previewLabel}>{item.subject}</Text>
-            <View style={gateStyles.previewBar}>
-              <View style={[gateStyles.previewBarFill, { width: '60%' as unknown as number }]} />
-            </View>
-          </View>
-        ))}
-      </View>
-
-      {/* Upgrade card */}
-      <View style={gateStyles.card}>
-        <Text style={gateStyles.lockIcon}>🔒</Text>
-        <Text style={gateStyles.title}>Premium Insights</Text>
-        <Text style={gateStyles.subtitle}>
-          AI weekly reports, weak topic detection, and study streak tracking are
-          part of the{' '}
-          <Text style={gateStyles.highlight}>Premium plan</Text>.
-        </Text>
-        <View style={gateStyles.infoBox}>
-          <Text style={gateStyles.infoText}>
-            📞 Ask your school to activate Premium for your child.
-          </Text>
-        </View>
-      </View>
-    </View>
-  );
-}
-
-const gateStyles = StyleSheet.create({
-  container: {
-    flex: 1,
-    position: 'relative',
-  },
-  blurContainer: {
-    padding: 20,
-    opacity: 0.2,
-  },
-  blurOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#FFFFFF',
-    zIndex: 1,
-  },
-  previewRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 10,
-  },
-  previewLabel: {
-    width: 80,
-    fontSize: 13,
-    color: '#374151',
-  },
-  previewBar: {
-    flex: 1,
-    height: 10,
-    backgroundColor: '#E5E7EB',
-    borderRadius: 5,
-    overflow: 'hidden',
-  },
-  previewBarFill: {
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#9CA3AF',
-  },
-  card: {
-    margin: 20,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 28,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  lockIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 16,
-  },
-  highlight: {
-    color: '#1D4ED8',
-    fontWeight: '600',
-  },
-  infoBox: {
-    backgroundColor: '#EFF6FF',
-    borderRadius: 12,
-    padding: 14,
-    width: '100%',
-  },
-  infoText: {
-    fontSize: 13,
-    color: '#1E3A8A',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-});
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function PremiumInsightsScreen() {
@@ -546,7 +421,7 @@ export default function PremiumInsightsScreen() {
       <View style={styles.header}>
         <View style={styles.headerCenter}>
           <Text style={styles.headerTitle} numberOfLines={1}>
-            ✨ Premium Insights
+            ✨ Insights
           </Text>
           {selectedChild && (
             <Text style={styles.headerSub}>
@@ -611,11 +486,6 @@ export default function PremiumInsightsScreen() {
           <Text style={styles.emptyIcon}>📊</Text>
           <Text style={styles.emptyText}>No data available yet.</Text>
         </View>
-      ) : !insights.is_premium ? (
-        /* Not premium — show gate */
-        <ScrollView style={styles.container}>
-          <PremiumGate previewData={insights} />
-        </ScrollView>
       ) : (
         <ScrollView
           style={styles.container}

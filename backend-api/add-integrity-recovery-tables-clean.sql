@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS public.test_integrity_logs (
   id                          uuid        PRIMARY KEY DEFAULT uuid_generate_v4(),
-  daily_test_attempt_id       uuid        NOT NULL REFERENCES public.daily_test_attempts(id) ON DELETE CASCADE,
+  test_attempt_id             uuid        NOT NULL REFERENCES public.test_attempts(id) ON DELETE CASCADE,
   student_id                  uuid        NOT NULL REFERENCES public.students(id),
   school_id                   uuid        NOT NULL REFERENCES public.schools(id),
   exit_count                  integer     NOT NULL DEFAULT 0,

@@ -285,7 +285,7 @@ Return ONLY valid JSON, no markdown:
 {"questions":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"string","reasoning":"string","difficulty":"easy","topic":"string"}]}`;
 }
 
-// ── Shared: get premium students + school board for a schedule ────────────────
+// ── Shared: get all students + school board for a schedule ────────────────────
 
 interface ScheduleContext {
   scheduleRow: {
@@ -297,7 +297,7 @@ interface ScheduleContext {
     school_id: string;
   };
   board: string;
-  premiumStudents: Array<{ id: string; full_name: string; class_name: string }>;
+  enrolledStudents: Array<{ id: string; full_name: string; class_name: string }>;
 }
 
 async function getScheduleContext(scheduleId: string): Promise<ScheduleContext | null> {
@@ -323,47 +323,22 @@ async function getScheduleContext(scheduleId: string): Promise<ScheduleContext |
 
   const board = (school as { board?: string } | null)?.board ?? 'CBSE';
 
-  // Fetch all premium students in this class+section
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: subs } = await supabaseAdmin
-    .from('parent_subscriptions')
-    .select(`
-      student_id,
-      students!inner (
-        id, full_name, class_name, school_id, section, is_deleted
-      )
-    `)
-    .eq('status', 'active')
-    .gte('expires_at', today);
+  // Fetch all enrolled students in this class+section
+  const { data: students } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, class_name')
+    .eq('school_id', row.school_id)
+    .eq('is_deleted', false)
+    .ilike('class_name', row.class)
+    .ilike('section', row.section);
 
-  const premiumStudents = ((subs ?? []) as unknown as Array<{
-    student_id: string;
-    students: {
-      id: string;
-      full_name: string;
-      class_name: string;
-      school_id: string;
-      section: string;
-      is_deleted: boolean;
-    } | null;
-  }>)
-    .filter((s) => {
-      const st = s.students;
-      return (
-        st &&
-        st.school_id === row.school_id &&
-        !st.is_deleted &&
-        st.class_name?.toLowerCase() === row.class.toLowerCase() &&
-        st.section?.toLowerCase() === row.section.toLowerCase()
-      );
-    })
-    .map((s) => ({
-      id: s.students!.id,
-      full_name: s.students!.full_name,
-      class_name: s.students!.class_name,
-    }));
+  const enrolledStudents = ((students ?? []) as Array<{
+    id: string;
+    full_name: string;
+    class_name: string;
+  }>);
 
-  return { scheduleRow: row, board, premiumStudents };
+  return { scheduleRow: row, board, enrolledStudents };
 }
 
 // ── Validation schemas ────────────────────────────────────────────────────────
@@ -427,18 +402,18 @@ router.post('/generate-pack', async (req: Request, res: Response) => {
         return;
       }
 
-      const { scheduleRow, board, premiumStudents } = ctx;
+      const { scheduleRow, board, enrolledStudents } = ctx;
 
-      if (premiumStudents.length === 0) {
-        console.log(`[recovery/generate-pack] No premium students for schedule ${schedule_id}`);
+      if (enrolledStudents.length === 0) {
+        console.log(`[recovery/generate-pack] No students found for schedule ${schedule_id}`);
         return;
       }
 
-      console.log(`[recovery/generate-pack] Processing ${premiumStudents.length} students for schedule ${schedule_id}`);
+      console.log(`[recovery/generate-pack] Processing ${enrolledStudents.length} students for schedule ${schedule_id}`);
 
       const batchRequests: Array<{ studentId: string; prompt: string; rowId: string }> = [];
 
-      for (const student of premiumStudents) {
+      for (const student of enrolledStudents) {
         try {
           // Analyse student weakness
           const weaknessResult = await analyzeStudentWeakness(
@@ -584,18 +559,18 @@ router.post('/generate-test', async (req: Request, res: Response) => {
         return;
       }
 
-      const { scheduleRow, board, premiumStudents } = ctx;
+      const { scheduleRow, board, enrolledStudents } = ctx;
 
-      if (premiumStudents.length === 0) {
-        console.log(`[recovery/generate-test] No premium students for schedule ${schedule_id}`);
+      if (enrolledStudents.length === 0) {
+        console.log(`[recovery/generate-test] No students found for schedule ${schedule_id}`);
         return;
       }
 
-      console.log(`[recovery/generate-test] Processing ${premiumStudents.length} students for schedule ${schedule_id}`);
+      console.log(`[recovery/generate-test] Processing ${enrolledStudents.length} students for schedule ${schedule_id}`);
 
       const batchRequests: Array<{ studentId: string; prompt: string; rowId: string }> = [];
 
-      for (const student of premiumStudents) {
+      for (const student of enrolledStudents) {
         try {
           const weaknessResult = await analyzeStudentWeakness(
             student.id,

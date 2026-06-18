@@ -19,14 +19,12 @@ interface AuthState {
   token: string | null;
   isLoggedIn: boolean;
   isFirstLogin: boolean;
-  subscriptionExpired: boolean;
 }
 
 interface AuthActions {
   login: (student: StudentUser, token: string, isFirstLogin?: boolean) => void;
   logout: () => void;
   markPasswordChanged: () => void;
-  setSubscriptionExpired: (expired: boolean) => void;
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -39,26 +37,20 @@ export const useAuthStore = create<AuthState & AuthActions>()(
       token: null,
       isLoggedIn: false,
       isFirstLogin: false,
-      subscriptionExpired: false,
 
       // Save student + token, mark as logged in
       login: (student: StudentUser, token: string, isFirstLogin = false) => {
-        set({ student, token, isLoggedIn: true, isFirstLogin, subscriptionExpired: false });
+        set({ student, token, isLoggedIn: true, isFirstLogin });
       },
 
       // Clear all auth state
       logout: () => {
-        set({ student: null, token: null, isLoggedIn: false, isFirstLogin: false, subscriptionExpired: false });
+        set({ student: null, token: null, isLoggedIn: false, isFirstLogin: false });
       },
 
       // Called after successful password change on first login
       markPasswordChanged: () => {
         set({ isFirstLogin: false });
-      },
-
-      // Flag subscription as expired — blocks all app features
-      setSubscriptionExpired: (expired: boolean) => {
-        set({ subscriptionExpired: expired });
       },
     }),
     {

@@ -758,8 +758,8 @@ export default function ActivityPacksPage() {
           </FormField>
 
           <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-xs text-blue-700">
-            <strong>Note:</strong> Activities will be sent to parents of students in Class{' '}
-            {className || '—'} {section || '—'} with an active <strong>Premium Junior</strong> subscription.
+            <strong>Note:</strong> Activities will be sent to parents of all students in Class{' '}
+            {className || '—'} {section || '—'}.
             Parents will receive a push notification.
           </div>
         </div>

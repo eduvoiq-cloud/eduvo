@@ -690,7 +690,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .map((a) => a.id);
 
   type IntegrityRow = {
-    daily_test_attempt_id: string;
+    test_attempt_id: string;
     integrity_score: number | null;
     exit_count: number;
     total_exit_duration_seconds: number;
@@ -700,12 +700,12 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   if (submittedAttemptIds.length > 0) {
     const { data: integrityRows } = await supabaseAdmin
       .from('test_integrity_logs')
-      .select('daily_test_attempt_id, integrity_score, exit_count, total_exit_duration_seconds')
+      .select('test_attempt_id, integrity_score, exit_count, total_exit_duration_seconds')
       .eq('student_id', studentId)
-      .in('daily_test_attempt_id', submittedAttemptIds);
+      .in('test_attempt_id', submittedAttemptIds);
 
     for (const row of ((integrityRows ?? []) as IntegrityRow[])) {
-      integrityByAttemptId.set(row.daily_test_attempt_id, row);
+      integrityByAttemptId.set(row.test_attempt_id, row);
     }
   }
 
@@ -1907,7 +1907,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     .from('test_integrity_logs')
     .select(`
       id,
-      daily_test_attempt_id,
+      test_attempt_id,
       student_id,
       exit_count,
       total_exit_duration_seconds,
@@ -1929,7 +1929,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
   }
 
   // Fetch attempt → test info for each log
-  const attemptIds = logs.map((l: Record<string, unknown>) => l.daily_test_attempt_id as string);
+  const attemptIds = logs.map((l: Record<string, unknown>) => l.test_attempt_id as string);
   const { data: attempts } = await supabaseAdmin
     .from('test_attempts')
     .select('id, test_id, tests!test_attempts_test_id_fkey(title, subject, date)')
@@ -1959,10 +1959,10 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
   }
 
   const result = (logs as Array<Record<string, unknown>>).map((log) => {
-    const attemptInfo = attemptTestMap.get(log['daily_test_attempt_id'] as string);
+    const attemptInfo = attemptTestMap.get(log['test_attempt_id'] as string);
     return {
       id: log['id'],
-      attempt_id: log['daily_test_attempt_id'],
+      attempt_id: log['test_attempt_id'],
       student_id: log['student_id'],
       student_name: studentNameMap.get(log['student_id'] as string) ?? 'Unknown',
       test_id: attemptInfo?.test_id ?? null,
@@ -2529,7 +2529,7 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
   // Fetch integrity logs for all submitted attempts
   const submittedAttemptIds = (attempts ?? []).map((a) => a.id);
   type IntegrityRow = {
-    daily_test_attempt_id: string;
+    test_attempt_id: string;
     integrity_score: number | null;
     exit_count: number;
     total_exit_duration_seconds: number;
@@ -2540,10 +2540,10 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
   if (submittedAttemptIds.length > 0) {
     const { data: integrityRows } = await supabaseAdmin
       .from('test_integrity_logs')
-      .select('daily_test_attempt_id, integrity_score, exit_count, total_exit_duration_seconds, is_suspicious, suspicious_reasons')
-      .in('daily_test_attempt_id', submittedAttemptIds);
+      .select('test_attempt_id, integrity_score, exit_count, total_exit_duration_seconds, is_suspicious, suspicious_reasons')
+      .in('test_attempt_id', submittedAttemptIds);
     for (const row of ((integrityRows ?? []) as IntegrityRow[])) {
-      integrityByAttemptId.set(row.daily_test_attempt_id, row);
+      integrityByAttemptId.set(row.test_attempt_id, row);
     }
   }
 
@@ -2887,10 +2887,11 @@ router.post('/student/test-integrity', authenticateStudent, requireRole('student
   const { integrity_score, is_suspicious, suspicious_reasons } = calculateIntegrityScore(integrityData, config, undefined);
 
   // 4. Upsert into test_integrity_logs (idempotent — one row per attempt)
+  // NOTE: column is `test_attempt_id` after fix-integrity-logs-fk.sql migration.
   const { data: existing } = await supabaseAdmin
     .from('test_integrity_logs')
     .select('id')
-    .eq('daily_test_attempt_id', daily_test_attempt_id)
+    .eq('test_attempt_id', daily_test_attempt_id)
     .maybeSingle();
 
   if (existing) {
@@ -2912,9 +2913,9 @@ router.post('/student/test-integrity', authenticateStudent, requireRole('student
     const { error: insertErr } = await supabaseAdmin
       .from('test_integrity_logs')
       .insert({
-        daily_test_attempt_id,
-        student_id: studentId,
-        school_id:  schoolId,
+        test_attempt_id:             daily_test_attempt_id,
+        student_id:                  studentId,
+        school_id:                   schoolId,
         exit_count,
         return_count,
         total_exit_duration_seconds,

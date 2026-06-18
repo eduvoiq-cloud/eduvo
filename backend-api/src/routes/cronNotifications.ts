@@ -55,7 +55,7 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
   // Run async after response is sent
   setImmediate(async () => {
     try {
-      // ── Senior students (premium_senior): incomplete streak-eligible test today ──
+      // ── Students with incomplete streak-eligible tests today ─────────────────
       // Find all students who have an unsubmitted attempt on a streak-eligible test today
       const { data: streakTests } = await supabaseAdmin
         .from('tests')
@@ -88,20 +88,9 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
         }
       }
 
-      // Filter: only those with an active premium_senior subscription
+      // Notify all students with incomplete streak tests today
       if (seniorMap.size > 0) {
-        const { data: seniorSubs } = await supabaseAdmin
-          .from('parent_subscriptions')
-          .select('student_id')
-          .in('student_id', Array.from(seniorMap.keys()))
-          .eq('status', 'active')
-          .eq('plan_type', 'premium_senior');
-
-        for (const sub of seniorSubs ?? []) {
-          const s = sub as Record<string, unknown>;
-          const studentId = s.student_id as string;
-          const subject = seniorMap.get(studentId) ?? 'today\'s';
-
+        for (const [studentId, subject] of seniorMap.entries()) {
           const { data: student } = await supabaseAdmin
             .from('students')
             .select('full_name, parent_id')
@@ -134,8 +123,8 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
         }
       }
 
-      // ── Junior students (premium_junior): pending activity pack ──────────────
-      // Find all premium_junior students with a pending (not completed) activity today
+      // ── Students with pending activity packs ─────────────────────────────────
+      // Find all students with a pending (not completed) activity pack today
       const { data: juniorPending } = await supabaseAdmin
         .from('activity_completions')
         .select(`
@@ -156,18 +145,7 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
       }
 
       if (juniorMap.size > 0) {
-        const { data: juniorSubs } = await supabaseAdmin
-          .from('parent_subscriptions')
-          .select('student_id')
-          .in('student_id', Array.from(juniorMap.keys()))
-          .eq('status', 'active')
-          .eq('plan_type', 'premium_junior');
-
-        for (const sub of juniorSubs ?? []) {
-          const s = sub as Record<string, unknown>;
-          const studentId = s.student_id as string;
-          const subject = juniorMap.get(studentId) ?? 'today\'s';
-
+        for (const [studentId, subject] of juniorMap.entries()) {
           const { data: student } = await supabaseAdmin
             .from('students')
             .select('full_name, parent_id')
@@ -178,7 +156,7 @@ router.post('/daily-reminder', async (req: Request, res: Response) => {
           const sr = student as Record<string, unknown>;
           const parentId = sr.parent_id as string | null;
 
-          // Notify parent (junior: parent does the activity with child)
+          // Notify parent
           if (parentId) {
             await sendPushNotification(
               parentId,
