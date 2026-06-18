@@ -1587,8 +1587,8 @@ export default function CreateTestPage() {
             </div>
           )}
 
-          {/* Add question buttons — only show when no form is open and not using AI */}
-          {activeForm === null && !details.use_ai && (
+          {/* Add question buttons — show when no form is open */}
+          {activeForm === null && (
             <div className="flex gap-3">
               <button
                 type="button"
