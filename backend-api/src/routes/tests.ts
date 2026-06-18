@@ -527,8 +527,7 @@ router.get('/my-tests', authenticate, requireRole('teacher', 'schooladmin', 'sup
     .select(`
       id, title, subject_id, class, section, term, date,
       time_limit_minutes, shuffle_questions, shuffle_options,
-      created_at,
-      questions(count)
+      created_at
     `)
     .order('created_at', { ascending: false });
 
@@ -546,13 +545,24 @@ router.get('/my-tests', authenticate, requireRole('teacher', 'schooladmin', 'sup
   const { data, error } = await query;
   if (error) { sendError(res, error.message, 500); return; }
 
-  // Flatten question count from the nested aggregate
-  const result = (data ?? []).map((t: Record<string, unknown>) => ({
+  const testList = data ?? [];
+
+  // Fetch question counts in a single query instead of using PostgREST relationship aggregate
+  const questionCountMap = new Map<string, number>();
+  if (testList.length > 0) {
+    const testIds = testList.map((t: Record<string, unknown>) => t.id as string);
+    const { data: qRows } = await supabaseAdmin
+      .from('questions')
+      .select('test_id')
+      .in('test_id', testIds);
+    for (const row of ((qRows ?? []) as Array<{ test_id: string }>)) {
+      questionCountMap.set(row.test_id, (questionCountMap.get(row.test_id) ?? 0) + 1);
+    }
+  }
+
+  const result = testList.map((t: Record<string, unknown>) => ({
     ...t,
-    question_count: Array.isArray(t.questions)
-      ? (t.questions as Array<{ count: number }>)[0]?.count ?? 0
-      : 0,
-    questions: undefined,
+    question_count: questionCountMap.get(t.id as string) ?? 0,
   }));
 
   sendSuccess(res, result);
@@ -585,8 +595,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     .select(`
       id, title, subject_id, date, term, time_limit_minutes,
       available_from, available_until, require_camera,
-      subject:subjects(name),
-      questions(count)
+      subject:subjects(name)
     `)
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
@@ -611,9 +620,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       available_from: t.available_from ?? null,
       available_until: t.available_until ?? null,
       require_camera: (t.require_camera as boolean | null) ?? false,
-      question_count: Array.isArray(t.questions)
-        ? (t.questions as Array<{ count: number }>)[0]?.count ?? 0
-        : 0,
+      question_count: 0, // populated below via direct count query
     };
   });
 
@@ -625,8 +632,8 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   const studentId = studentRecord.id;
   const testIds = result.map((t) => t.id);
 
-  // Fetch attempt status, scores, restrictions, and integrity logs in parallel
-  const [attemptsResult, restrictionsResult, marksResult] = await Promise.all([
+  // Fetch attempt status, scores, restrictions, integrity logs, and question counts in parallel
+  const [attemptsResult, restrictionsResult, marksResult, questionCountsResult] = await Promise.all([
     supabaseAdmin
       .from('test_attempts')
       .select('id, test_id, is_submitted, mcq_score, total_score')
@@ -642,7 +649,22 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       .select('notes, max_score')
       .eq('student_id', studentId)
       .like('notes', 'auto:attempt:%'),
+    // Direct count query — more reliable than the PostgREST relationship aggregate
+    supabaseAdmin
+      .from('questions')
+      .select('test_id')
+      .in('test_id', testIds),
   ]);
+
+  // Build map: test_id -> question count
+  const questionCountMap = new Map<string, number>();
+  for (const row of ((questionCountsResult.data ?? []) as Array<{ test_id: string }>)) {
+    questionCountMap.set(row.test_id, (questionCountMap.get(row.test_id) ?? 0) + 1);
+  }
+  // Apply real question counts
+  for (const t of result) {
+    t.question_count = questionCountMap.get(t.id) ?? 0;
+  }
 
   type AttemptRow = { id: string; test_id: string; is_submitted: boolean; mcq_score: number | null; total_score: number | null };
 

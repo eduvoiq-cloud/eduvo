@@ -39,9 +39,22 @@ interface TestsResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatDate(iso: string): string {
-  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
-    ? new Date(iso + 'Z') : new Date(iso);
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  // Handle plain YYYY-MM-DD (treat as local date to avoid timezone shift to wrong day)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    if (isNaN(date.getTime())) return '—';
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',

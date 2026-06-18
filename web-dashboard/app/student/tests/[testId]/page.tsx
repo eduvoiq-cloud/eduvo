@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { studentTestsApi, type Question, type AttemptResultResponse, type ResultAnswer } from '@/lib/studentApi';
+import { studentTestsApi, type Question, type AttemptResultResponse, type ResultAnswer, type TestRecord } from '@/lib/studentApi';
 import { getStudentToken, clearStudentSession } from '@/lib/studentSession';
 import { useWebIntegrity } from '@/hooks/useWebIntegrity';
 
