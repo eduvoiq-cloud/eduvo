@@ -375,38 +375,66 @@ interface QuestionRowProps {
 }
 
 function QuestionRow({ q, index, onEdit, onDelete }: QuestionRowProps) {
+  const [showReasoning, setShowReasoning] = useState(false);
+  const mcq = q.type === 'mcq' ? (q as MCQDraft) : null;
+  const hasReasoning = mcq && (mcq.reasoning || mcq.explanation);
+
   return (
-    <div className="flex items-start gap-3 px-4 py-3 bg-white border border-gray-200 rounded-xl hover:border-gray-300 transition-colors">
-      <span className="text-xs font-bold text-gray-400 mt-0.5 w-5 shrink-0">Q{index + 1}</span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <QTypeBadge type={q.type} />
-          <span className="text-xs text-gray-500">{q.marks} mark{parseFloat(q.marks) !== 1 ? 's' : ''}</span>
-          {q.type === 'mcq' && (
-            <span className="text-xs text-green-600 font-medium">
-              Correct: {String.fromCharCode(65 + (q as MCQDraft).correct_option)}
-            </span>
+    <div className="bg-white border border-gray-200 rounded-xl hover:border-gray-300 transition-colors">
+      <div className="flex items-start gap-3 px-4 py-3">
+        <span className="text-xs font-bold text-gray-400 mt-0.5 w-5 shrink-0">Q{index + 1}</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 mb-1">
+            <QTypeBadge type={q.type} />
+            <span className="text-xs text-gray-500">{q.marks} mark{parseFloat(q.marks) !== 1 ? 's' : ''}</span>
+            {mcq && (
+              <span className="text-xs text-green-600 font-medium">
+                Correct: {String.fromCharCode(65 + mcq.correct_option)}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-gray-800 line-clamp-2">{q.text}</p>
+          {hasReasoning && (
+            <button
+              type="button"
+              onClick={() => setShowReasoning((v) => !v)}
+              className="mt-1.5 flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 transition-colors"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+              </svg>
+              {showReasoning ? 'Hide reasoning' : 'View reasoning'}
+            </button>
           )}
         </div>
-        <p className="text-sm text-gray-800 line-clamp-2">{q.text}</p>
+        <div className="flex items-center gap-1 shrink-0">
+          <button type="button" onClick={onEdit}
+            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            aria-label="Edit question">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+          </button>
+          <button type="button" onClick={onDelete}
+            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            aria-label="Delete question">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <button type="button" onClick={onEdit}
-          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-          aria-label="Edit question">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-          </svg>
-        </button>
-        <button type="button" onClick={onDelete}
-          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-          aria-label="Delete question">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-          </svg>
-        </button>
-      </div>
+      {hasReasoning && showReasoning && (
+        <div className="mx-4 mb-3 p-3 bg-blue-50 border border-blue-100 rounded-lg space-y-1.5">
+          {mcq?.reasoning && (
+            <p className="text-xs text-blue-800 leading-relaxed">{mcq.reasoning}</p>
+          )}
+          {mcq?.explanation && (
+            <p className="text-xs text-blue-600 italic">{mcq.explanation}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
