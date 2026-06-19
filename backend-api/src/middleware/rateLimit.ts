@@ -34,8 +34,8 @@ import redis from '../config/redis';
 function makeStore(prefix: string): RedisStore | undefined {
   if (!redis) return undefined;
   return new RedisStore({
-    // rate-limit-redis v4 requires a sendCommand function
-    sendCommand: (...args: string[]) => redis!.call(...args) as Promise<unknown>,
+    // ioredis v5: cast to any to satisfy rate-limit-redis v4's SendCommandFn signature
+    sendCommand: (...args: string[]) => (redis as any).call(...args),
     prefix: `rl:${prefix}:`,
   });
 }

@@ -9,7 +9,7 @@
  */
 
 import * as path from 'path';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import * as dotenv from 'dotenv';
@@ -49,69 +49,65 @@ interface ChapterRow {
   topics: string;
 }
 
-interface ExcelRow {
-  Board?: string | number;
-  Class?: string | number;
-  Subject?: string | number;
-  'Chapter No.'?: string | number;
-  'Chapter Name'?: string | number;
-  Topics?: string | number;
-  [key: string]: string | number | undefined;
-}
-
 // ── Read one Excel file ───────────────────────────────────────────────────────
 
-function readExcelFile(filePath: string): ChapterRow[] {
+async function readExcelFile(filePath: string): Promise<ChapterRow[]> {
   console.log(`[seed] Reading: ${filePath}`);
 
-  const workbook = XLSX.readFile(filePath, { type: 'file' });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
 
   // Try sheet named "All Chapters" first, fall back to first sheet
-  const sheetName = workbook.SheetNames.includes('All Chapters')
-    ? 'All Chapters'
-    : workbook.SheetNames[0];
+  const sheet =
+    workbook.getWorksheet('All Chapters') ?? workbook.worksheets[0];
 
-  if (!sheetName) {
+  if (!sheet) {
     console.error(`[seed] ERROR: No sheets found in ${filePath}`);
     return [];
   }
 
-  console.log(`[seed]   Sheet: "${sheetName}"`);
-  const sheet = workbook.Sheets[sheetName];
-  const rawRows: ExcelRow[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  console.log(`[seed]   Sheet: "${sheet.name}"`);
 
-  console.log(`[seed]   Raw rows: ${rawRows.length}`);
+  // Build a header → column-index map from row 1
+  const headerRow = sheet.getRow(1);
+  const headerMap: Record<string, number> = {};
+  headerRow.eachCell((cell, colNumber) => {
+    const header = String(cell.value ?? '').trim();
+    if (header) headerMap[header] = colNumber;
+  });
+
+  const getCell = (row: ExcelJS.Row, header: string): string => {
+    const colIdx = headerMap[header];
+    if (!colIdx) return '';
+    const val = row.getCell(colIdx).value;
+    return String(val ?? '').trim();
+  };
 
   const rows: ChapterRow[] = [];
   let skipped = 0;
 
-  for (const row of rawRows) {
-    const board = String(row['Board'] ?? '').trim();
-    const classRaw = row['Class'];
-    const subject = String(row['Subject'] ?? '').trim();
-    const chapterNoRaw = row['Chapter No.'];
-    const chapterName = String(row['Chapter Name'] ?? '').trim();
-    const topics = String(row['Topics'] ?? '').trim();
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header
 
-    const classNum = parseInt(String(classRaw), 10);
-    const chapterNum = parseInt(String(chapterNoRaw), 10);
+    const board       = getCell(row, 'Board');
+    const classRaw    = getCell(row, 'Class');
+    const subject     = getCell(row, 'Subject');
+    const chapterNoRaw = getCell(row, 'Chapter No.');
+    const chapterName = getCell(row, 'Chapter Name');
+    const topics      = getCell(row, 'Topics');
 
-    // Skip rows with missing required fields
+    const classNum   = parseInt(classRaw, 10);
+    const chapterNum = parseInt(chapterNoRaw, 10);
+
     if (!board || !subject || !chapterName || isNaN(classNum) || isNaN(chapterNum)) {
       skipped++;
-      continue;
+      return;
     }
 
-    rows.push({
-      board,
-      class: classNum,
-      subject,
-      chapter_number: chapterNum,
-      chapter_name: chapterName,
-      topics,
-    });
-  }
+    rows.push({ board, class: classNum, subject, chapter_number: chapterNum, chapter_name: chapterName, topics });
+  });
 
+  console.log(`[seed]   Raw rows: ${rows.length + skipped}`);
   if (skipped > 0) {
     console.log(`[seed]   Skipped ${skipped} rows with missing required fields`);
   }
@@ -130,8 +126,8 @@ async function main() {
   const gsebPath = path.resolve(scriptsDir, 'Data', 'GSEB_Chapter_Library_CORRECTED (1).xlsx');
 
   // Read both files
-  const cbseRows = readExcelFile(cbsePath);
-  const gsebRows = readExcelFile(gsebPath);
+  const cbseRows = await readExcelFile(cbsePath);
+  const gsebRows = await readExcelFile(gsebPath);
 
   const allRows = [...cbseRows, ...gsebRows];
   console.log(`\n[seed] Total rows to process: ${allRows.length}`);
