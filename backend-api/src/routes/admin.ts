@@ -2210,4 +2210,330 @@ router.get('/performance/monthly-snapshot', async (req: Request, res: Response) 
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// TEACHER ACTIVITY REPORT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/admin/teacher-activity?days=30
+ *
+ * Returns an activity summary for every teacher in this school over the last N
+ * days (default 30, max 90).  Metrics per teacher:
+ *   - tests_created     — tests created in the window
+ *   - marks_entered     — mark rows recorded in the window
+ *   - homework_assigned — homework assignments in the window
+ *   - last_active_at    — most recent audit log timestamp for this teacher
+ *
+ * Response is sorted by last_active_at descending (most-active first).
+ */
+router.get('/teacher-activity', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id!;
+
+  const rawDays = parseInt((req.query.days as string) ?? '30', 10);
+  const days = isNaN(rawDays) || rawDays < 1 ? 30 : Math.min(rawDays, 90);
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+  // Fetch all teachers for this school
+  const { data: teachers, error: tErr } = await supabaseAdmin
+    .from('users')
+    .select('id, name, email')
+    .eq('school_id', schoolId)
+    .eq('role', 'teacher')
+    .or('is_deleted.is.null,is_deleted.eq.false');
+
+  if (tErr) { sendError(res, tErr.message, 500); return; }
+  if (!teachers || teachers.length === 0) { sendSuccess(res, []); return; }
+
+  const teacherIds = teachers.map((t: { id: string }) => t.id);
+
+  // Fetch tests created by teachers in this school within the window
+  const { data: tests } = await supabaseAdmin
+    .from('tests')
+    .select('created_by, created_at')
+    .eq('school_id', schoolId)
+    .in('created_by', teacherIds)
+    .gte('created_at', since);
+
+  // Fetch marks recorded by teachers in the window
+  const { data: marks } = await supabaseAdmin
+    .from('marks')
+    .select('recorded_by, created_at')
+    .eq('school_id', schoolId)
+    .in('recorded_by', teacherIds)
+    .gte('created_at', since);
+
+  // Fetch homework created by teachers in the window
+  const { data: homework } = await supabaseAdmin
+    .from('homework')
+    .select('created_by, created_at')
+    .eq('school_id', schoolId)
+    .in('created_by', teacherIds)
+    .gte('created_at', since);
+
+  // Fetch most-recent audit log per teacher
+  const { data: auditLogs } = await supabaseAdmin
+    .from('audit_logs')
+    .select('user_id, created_at')
+    .in('user_id', teacherIds)
+    .order('created_at', { ascending: false });
+
+  // Build lookup maps
+  const testsMap = new Map<string, number>();
+  const marksMap = new Map<string, number>();
+  const hwMap = new Map<string, number>();
+  const lastActiveMap = new Map<string, string>();
+
+  for (const t of (tests ?? []) as Array<{ created_by: string }>) {
+    testsMap.set(t.created_by, (testsMap.get(t.created_by) ?? 0) + 1);
+  }
+  for (const m of (marks ?? []) as Array<{ recorded_by: string }>) {
+    marksMap.set(m.recorded_by, (marksMap.get(m.recorded_by) ?? 0) + 1);
+  }
+  for (const h of (homework ?? []) as Array<{ created_by: string }>) {
+    hwMap.set(h.created_by, (hwMap.get(h.created_by) ?? 0) + 1);
+  }
+  // Only keep first occurrence per teacher (already sorted desc)
+  for (const log of (auditLogs ?? []) as Array<{ user_id: string; created_at: string }>) {
+    if (!lastActiveMap.has(log.user_id)) lastActiveMap.set(log.user_id, log.created_at);
+  }
+
+  type TeacherActivityRow = {
+    teacher_id:       string;
+    name:             string;
+    email:            string;
+    tests_created:    number;
+    marks_entered:    number;
+    homework_assigned: number;
+    last_active_at:   string | null;
+  };
+
+  const rows: TeacherActivityRow[] = (teachers as Array<{ id: string; name: string; email: string }>)
+    .map((t) => ({
+      teacher_id:        t.id,
+      name:              t.name,
+      email:             t.email,
+      tests_created:     testsMap.get(t.id) ?? 0,
+      marks_entered:     marksMap.get(t.id) ?? 0,
+      homework_assigned: hwMap.get(t.id) ?? 0,
+      last_active_at:    lastActiveMap.get(t.id) ?? null,
+    }))
+    .sort((a, b) => {
+      if (!a.last_active_at && !b.last_active_at) return 0;
+      if (!a.last_active_at) return 1;
+      if (!b.last_active_at) return -1;
+      return new Date(b.last_active_at).getTime() - new Date(a.last_active_at).getTime();
+    });
+
+  sendSuccess(res, { days, teachers: rows });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLASS-WISE COMPARATIVE REPORT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/admin/class-comparison?year=2026&month=6
+ *
+ * Returns a side-by-side summary for every class/section with:
+ *   - avg_marks_pct        — average marks % for the month
+ *   - attendance_pct       — attendance % for the month
+ *   - homework_completion  — % of students who submitted at least one homework
+ *   - tests_conducted      — number of tests scheduled for that class
+ *   - student_count        — total students enrolled
+ *
+ * Sorted by avg_marks_pct descending.
+ */
+router.get('/class-comparison', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id!;
+
+  const now = new Date();
+  const rawYear  = parseInt((req.query.year  as string) ?? String(now.getFullYear()),  10);
+  const rawMonth = parseInt((req.query.month as string) ?? String(now.getMonth() + 1), 10);
+
+  if (
+    isNaN(rawYear) || rawYear < 2000 || rawYear > 2100 ||
+    isNaN(rawMonth) || rawMonth < 1 || rawMonth > 12
+  ) {
+    sendError(res, 'Invalid year or month', 400);
+    return;
+  }
+
+  const monthStart = new Date(rawYear, rawMonth - 1, 1).toISOString();
+  const monthEnd   = new Date(rawYear, rawMonth, 1).toISOString();
+
+  // Fetch students grouped by class/section
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, class_name, section')
+    .eq('school_id', schoolId)
+    .eq('is_deleted', false);
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (!students || students.length === 0) {
+    sendSuccess(res, { year: rawYear, month: rawMonth, classes: [] });
+    return;
+  }
+
+  const studentIds = students.map((s: { id: string }) => s.id);
+  const CHUNK = 900;
+
+  // Parallel fetch: marks, attendance, homework submissions, tests
+  const [marksRes, attendanceRes, hwRes, testsRes] = await Promise.all([
+    // marks for the month
+    (async () => {
+      let all: Array<{ student_id: string; score: number; max_score: number }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('marks')
+          .select('student_id, score, max_score')
+          .in('student_id', studentIds.slice(i, i + CHUNK))
+          .gte('created_at', monthStart)
+          .lt('created_at', monthEnd);
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // attendance for the month
+    (async () => {
+      let all: Array<{ student_id: string; status: string }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('attendance')
+          .select('student_id, status')
+          .in('student_id', studentIds.slice(i, i + CHUNK))
+          .gte('date', monthStart.slice(0, 10))
+          .lt('date', monthEnd.slice(0, 10));
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // homework submissions (student submitted at least one in the month)
+    (async () => {
+      let all: Array<{ student_id: string }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('homework_submissions')
+          .select('student_id')
+          .in('student_id', studentIds.slice(i, i + CHUNK))
+          .gte('submitted_at', monthStart)
+          .lt('submitted_at', monthEnd);
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // tests conducted
+    supabaseAdmin
+      .from('tests')
+      .select('class_name, section')
+      .eq('school_id', schoolId)
+      .gte('date', monthStart.slice(0, 10))
+      .lt('date', monthEnd.slice(0, 10)),
+  ]);
+
+  // Build student lookup map
+  const studentMap = new Map(
+    (students as Array<{ id: string; class_name: string; section: string }>)
+      .map((s) => [s.id, s])
+  );
+
+  // Aggregate by class key
+  type ClassAgg = {
+    class_name:     string;
+    section:        string;
+    studentSet:     Set<string>;
+    markScores:     number[];
+    attTotal:       number;
+    attPresent:     number;
+    hwStudents:     Set<string>;
+    testsCount:     number;
+  };
+
+  const classMap = new Map<string, ClassAgg>();
+
+  // Initialise from students
+  for (const s of students as Array<{ id: string; class_name: string; section: string }>) {
+    const key = `${s.class_name}||${s.section}`;
+    if (!classMap.has(key)) {
+      classMap.set(key, {
+        class_name: s.class_name,
+        section: s.section,
+        studentSet: new Set(),
+        markScores: [],
+        attTotal: 0,
+        attPresent: 0,
+        hwStudents: new Set(),
+        testsCount: 0,
+      });
+    }
+    classMap.get(key)!.studentSet.add(s.id);
+  }
+
+  // Marks
+  for (const m of (marksRes ?? []) as Array<{ student_id: string; score: number; max_score: number }>) {
+    const s = studentMap.get(m.student_id);
+    if (!s || m.max_score <= 0) continue;
+    const key = `${s.class_name}||${s.section}`;
+    classMap.get(key)?.markScores.push((Number(m.score) / Number(m.max_score)) * 100);
+  }
+
+  // Attendance
+  for (const a of (attendanceRes ?? []) as Array<{ student_id: string; status: string }>) {
+    const s = studentMap.get(a.student_id);
+    if (!s) continue;
+    const key = `${s.class_name}||${s.section}`;
+    const agg = classMap.get(key);
+    if (!agg) continue;
+    agg.attTotal++;
+    if (a.status === 'present' || a.status === 'late') agg.attPresent++;
+  }
+
+  // Homework submissions
+  for (const h of (hwRes ?? []) as Array<{ student_id: string }>) {
+    const s = studentMap.get(h.student_id);
+    if (!s) continue;
+    const key = `${s.class_name}||${s.section}`;
+    classMap.get(key)?.hwStudents.add(h.student_id);
+  }
+
+  // Tests
+  for (const t of ((testsRes.data ?? []) as Array<{ class_name: string; section: string }>)) {
+    const key = `${t.class_name}||${t.section}`;
+    const agg = classMap.get(key);
+    if (agg) agg.testsCount++;
+  }
+
+  // Build result
+  const classes = [...classMap.values()]
+    .map((agg) => {
+      const avgMarksPct = agg.markScores.length
+        ? Math.round((agg.markScores.reduce((a, b) => a + b, 0) / agg.markScores.length) * 10) / 10
+        : null;
+      const attendancePct = agg.attTotal > 0
+        ? Math.round((agg.attPresent / agg.attTotal) * 1000) / 10
+        : null;
+      const hwCompletion = agg.studentSet.size > 0
+        ? Math.round((agg.hwStudents.size / agg.studentSet.size) * 1000) / 10
+        : null;
+      return {
+        class_name:          agg.class_name,
+        section:             agg.section,
+        student_count:       agg.studentSet.size,
+        avg_marks_pct:       avgMarksPct,
+        attendance_pct:      attendancePct,
+        homework_completion: hwCompletion,
+        tests_conducted:     agg.testsCount,
+      };
+    })
+    .sort((a, b) => {
+      // Sort by avg marks desc; null values go to bottom
+      if (a.avg_marks_pct === null && b.avg_marks_pct === null) return 0;
+      if (a.avg_marks_pct === null) return 1;
+      if (b.avg_marks_pct === null) return -1;
+      return b.avg_marks_pct - a.avg_marks_pct;
+    });
+
+  sendSuccess(res, { year: rawYear, month: rawMonth, classes });
+});
+
 export default router;

@@ -1429,6 +1429,61 @@ export const premiumApi = {
     }>('/api/premium/student-summary', { method: 'GET' }, token),
 };
 
+// ── Teacher Activity Report types ────────────────────────────────────────────
+
+export interface TeacherActivityRow {
+  teacher_id:        string;
+  name:              string;
+  email:             string;
+  tests_created:     number;
+  marks_entered:     number;
+  homework_assigned: number;
+  last_active_at:    string | null;
+}
+
+export interface TeacherActivityReport {
+  days:     number;
+  teachers: TeacherActivityRow[];
+}
+
+export const teacherActivityApi = {
+  get: (token: string, days = 30) =>
+    request<TeacherActivityReport>(
+      `/api/admin/teacher-activity?days=${days}`,
+      { method: 'GET' },
+      token
+    ),
+};
+
+// ── Class Comparison Report types ─────────────────────────────────────────────
+
+export interface ClassComparisonRow {
+  class_name:          string;
+  section:             string;
+  student_count:       number;
+  avg_marks_pct:       number | null;
+  attendance_pct:      number | null;
+  homework_completion: number | null;
+  tests_conducted:     number;
+}
+
+export interface ClassComparisonReport {
+  year:    number;
+  month:   number;
+  classes: ClassComparisonRow[];
+}
+
+export const classComparisonApi = {
+  get: (token: string, params: { year: number; month: number }) => {
+    const qs = new URLSearchParams({ year: String(params.year), month: String(params.month) });
+    return request<ClassComparisonReport>(
+      `/api/admin/class-comparison?${qs.toString()}`,
+      { method: 'GET' },
+      token
+    );
+  },
+};
+
 // ── Monthly Performance Snapshot types ───────────────────────────────────────
 
 export interface ClassRankingRow {

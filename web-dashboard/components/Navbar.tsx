@@ -42,11 +42,19 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
         { label: 'Marks', href: '/admin/marks' },
         { label: 'Attendance', href: '/admin/attendance' },
         { label: 'Performance', href: '/admin/performance' },
+        { label: 'Class Comparison', href: '/admin/class-comparison' },
+      ],
+    },
+    {
+      label: 'Finance',
+      children: [
+        { label: 'Fees', href: '/admin/fees' },
       ],
     },
     {
       label: 'School',
       children: [
+        { label: 'Teacher Activity', href: '/admin/teacher-activity' },
         { label: 'Announcements', href: '/admin/announcements' },
         { label: 'Complaints', href: '/admin/complaints' },
         { label: 'AI Insights', href: '/admin/premium-insights' },
