@@ -695,7 +695,7 @@ function SchoolHealthScoreWidget({ score }: { score: SchoolHealthScore }) {
   const components = [
     score.components.attendance,
     score.components.marks,
-    score.components.fees,
+    score.components.tests,
     score.components.engagement,
   ];
 

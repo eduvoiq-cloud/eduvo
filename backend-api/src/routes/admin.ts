@@ -2722,10 +2722,11 @@ router.get('/at-risk', async (req: Request, res: Response) => {
  * GET /api/admin/health-score
  *
  * Computes a composite 0–100 school health score from 4 components (25 pts each):
- *   1. Attendance  — avg attendance % across all students this calendar month
- *   2. Marks       — avg marks % across all marks entered this calendar month
- *   3. Fees        — % of students with fee_paid=true or payment_status='paid'
- *   4. Engagement  — % of teachers who have ≥1 audit log entry in the last 14 days
+ *   1. Attendance       — avg attendance % across all students this calendar month
+ *   2. Marks            — avg marks % across all marks entered this calendar month
+ *   3. Test Participation — % of eligible students who attempted tests assigned this month
+ *                          (if no tests assigned → full 25 pts)
+ *   4. Engagement       — % of teachers who have ≥1 audit log entry in the last 14 days
  *
  * Grade: 90–100=A+, 80–89=A, 70–79=B, 60–69=C, below 60=D
  */
@@ -2743,13 +2744,13 @@ router.get('/health-score', async (req: Request, res: Response) => {
   // 1. All active students
   const { data: students, error: sErr } = await supabaseAdmin
     .from('students')
-    .select('id')
+    .select('id, class_name, section')
     .eq('school_id', schoolId)
     .eq('is_deleted', false);
 
   if (sErr) { sendError(res, sErr.message, 500); return; }
 
-  const studentIds = (students ?? []).map((s: { id: string }) => s.id);
+  const studentIds = (students ?? []).map((s: { id: string; class_name?: string; section?: string }) => s.id);
   const totalStudents = studentIds.length;
 
   // 2. All teachers
@@ -2766,7 +2767,7 @@ router.get('/health-score', async (req: Request, res: Response) => {
   const totalTeachers = teacherIds.length;
 
   // 3. Parallel fetch: attendance this month, marks this month, fees, teacher audit logs
-  const [attendanceRows, marksRows, feeRows, auditRows] = await Promise.all([
+  const [attendanceRows, marksRows, testRows, auditRows] = await Promise.all([
     // Attendance this month
     (async () => {
       let all: Array<{ student_id: string; status: string }> = [];
@@ -2795,18 +2796,15 @@ router.get('/health-score', async (req: Request, res: Response) => {
       }
       return all;
     })(),
-    // Fees (all-time, not month-scoped)
+    // Tests this month for this school (for participation rate)
     (async () => {
-      if (studentIds.length === 0) return [];
-      let all: Array<{ fee_paid: boolean; payment_status: string | null }> = [];
-      for (let i = 0; i < studentIds.length; i += CHUNK) {
-        const { data } = await supabaseAdmin
-          .from('student_fees')
-          .select('fee_paid, payment_status')
-          .in('student_id', studentIds.slice(i, i + CHUNK));
-        if (data) all = all.concat(data);
-      }
-      return all;
+      const { data } = await supabaseAdmin
+        .from('tests')
+        .select('id, class, section')
+        .eq('school_id', schoolId)
+        .gte('date', monthStart.slice(0, 10))
+        .lt('date', monthEnd.slice(0, 10));
+      return (data ?? []) as Array<{ id: string; class: string; section: string }>;
     })(),
     // Teacher audit logs in last 14 days
     (async () => {
@@ -2853,23 +2851,41 @@ router.get('/health-score', async (req: Request, res: Response) => {
   }
   const marksScore = Math.round((marksPct / 100) * 25);
 
-  // Fees: % students with fee paid
-  let feePct = 0;
-  if (totalStudents > 0) {
-    // Students with a fee record that is paid
-    const paidSet = new Set<string>();
-    for (let i = 0; i < studentIds.length; i += CHUNK) {
-      const { data } = await supabaseAdmin
-        .from('student_fees')
-        .select('student_id, fee_paid, payment_status')
-        .in('student_id', studentIds.slice(i, i + CHUNK));
-      for (const f of (data ?? []) as Array<{ student_id: string; fee_paid: boolean; payment_status: string | null }>) {
-        if (f.fee_paid || f.payment_status === 'paid') paidSet.add(f.student_id);
+  // Test participation: % of eligible students who attempted tests this month
+  // If no tests were assigned this month → full score (not penalized)
+  let testPct = 100;
+  const monthTests = testRows as Array<{ id: string; class: string; section: string }>;
+  if (monthTests.length > 0) {
+    let totalEligible = 0;
+    let totalAttempted = 0;
+
+    for (const test of monthTests) {
+      // Count students in this test's class+section
+      const eligible = (students ?? []).filter(
+        (s: { id: string; class_name?: string; section?: string }) =>
+          s.class_name === test.class && s.section === test.section
+      );
+      const eligibleIds = eligible.map((s: { id: string }) => s.id);
+      if (eligibleIds.length === 0) continue;
+
+      // Count how many of those students have a test_attempt row for this test
+      let attempted = 0;
+      for (let i = 0; i < eligibleIds.length; i += CHUNK) {
+        const { count } = await supabaseAdmin
+          .from('test_attempts')
+          .select('id', { count: 'exact', head: true })
+          .eq('test_id', test.id)
+          .in('student_id', eligibleIds.slice(i, i + CHUNK));
+        attempted += count ?? 0;
       }
+
+      totalEligible += eligibleIds.length;
+      totalAttempted += attempted;
     }
-    feePct = (paidSet.size / totalStudents) * 100;
+
+    testPct = totalEligible > 0 ? (totalAttempted / totalEligible) * 100 : 100;
   }
-  const feesScore = Math.round((feePct / 100) * 25);
+  const testScore = Math.round((testPct / 100) * 25);
 
   // Engagement: % of teachers with ≥1 audit log in last 14 days
   let engPct = 0;
@@ -2879,7 +2895,7 @@ router.get('/health-score', async (req: Request, res: Response) => {
   }
   const engScore = Math.round((engPct / 100) * 25);
 
-  const healthScore = attScore + marksScore + feesScore + engScore;
+  const healthScore = attScore + marksScore + testScore + engScore;
 
   // Grade
   let grade: string;
@@ -2905,11 +2921,11 @@ router.get('/health-score', async (req: Request, res: Response) => {
         pct: Math.round(marksPct * 10) / 10,
         label: 'Academic Performance',
       },
-      fees: {
-        score: feesScore,
+      tests: {
+        score: testScore,
         max: 25,
-        pct: Math.round(feePct * 10) / 10,
-        label: 'Fee Collection',
+        pct: Math.round(testPct * 10) / 10,
+        label: 'Test Participation',
       },
       engagement: {
         score: engScore,

@@ -1703,7 +1703,7 @@ export interface SchoolHealthScore {
   components: {
     attendance: HealthScoreComponent;
     marks:      HealthScoreComponent;
-    fees:       HealthScoreComponent;
+    tests:      HealthScoreComponent;
     engagement: HealthScoreComponent;
   };
   month: number;
