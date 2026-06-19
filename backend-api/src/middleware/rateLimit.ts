@@ -1,6 +1,7 @@
 import rateLimit from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import type { Request } from 'express';
+import type { SendCommandFn } from 'rate-limit-redis';
 import redis from '../config/redis';
 
 /**
@@ -33,9 +34,10 @@ import redis from '../config/redis';
  */
 function makeStore(prefix: string): RedisStore | undefined {
   if (!redis) return undefined;
+  const client = redis;
   return new RedisStore({
-    // ioredis v5: cast to any to satisfy rate-limit-redis v4's SendCommandFn signature
-    sendCommand: (...args: string[]) => (redis as any).call(...args),
+    // ioredis v5 uses .call() — cast via SendCommandFn to satisfy rate-limit-redis v4 typings
+    sendCommand: ((...args: [string, ...string[]]) => client.call(...args)) as unknown as SendCommandFn,
     prefix: `rl:${prefix}:`,
   });
 }
