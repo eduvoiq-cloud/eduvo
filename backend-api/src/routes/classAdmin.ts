@@ -134,7 +134,7 @@ router.get(
       return;
     }
 
-    const teacherName = (data.users as { name: string } | null)?.name ?? null;
+    const teacherName = ((data as unknown as { users: { name: string } | null }).users)?.name ?? null;
 
     sendSuccess(res, {
       is_class_admin: true,
@@ -172,20 +172,14 @@ router.get(
       return;
     }
 
-    const result = (data ?? []).map((row: {
-      id: string;
-      teacher_id: string;
-      class_name: string;
-      section: string;
-      appointed_at: string | null;
-      users: { name: string } | null;
-    }) => ({
-      id: row.id,
-      teacher_id: row.teacher_id,
-      teacher_name: row.users?.name ?? null,
-      class_name: row.class_name,
-      section: row.section,
-      appointed_at: row.appointed_at,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = (data ?? []).map((row: any) => ({
+      id: row.id as string,
+      teacher_id: row.teacher_id as string,
+      teacher_name: (row.users as { name: string } | null)?.name ?? null,
+      class_name: row.class_name as string,
+      section: row.section as string,
+      appointed_at: (row.appointed_at as string | null) ?? null,
     }));
 
     sendSuccess(res, result);
