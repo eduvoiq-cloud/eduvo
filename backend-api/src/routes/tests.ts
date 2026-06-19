@@ -1792,11 +1792,42 @@ router.get('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'
   const { data, error } = await query;
   if (error) { sendError(res, error.message, 500); return; }
 
-  // Normalise: expose class_name so the frontend doesn't need to know the DB column name
-  const normalised = (data ?? []).map((t: Record<string, unknown>) => ({
-    ...t,
-    class_name: t['class'] ?? t['class_name'],
-  }));
+  // For tests whose questions were saved via POST /create (into the `questions` table
+  // instead of `test_questions`), the test_questions join returns an empty array.
+  // Fall back to the `questions` table for those tests so the View modal works.
+  const testsWithEmptyQuestions = (data ?? [])
+    .filter((t: Record<string, unknown>) => {
+      const tq = t['test_questions'];
+      return !tq || (Array.isArray(tq) && tq.length === 0);
+    })
+    .map((t: Record<string, unknown>) => t['id'] as string);
+
+  let fallbackQuestionsMap = new Map<string, Record<string, unknown>[]>();
+  if (testsWithEmptyQuestions.length > 0) {
+    const { data: fallbackQs } = await supabaseAdmin
+      .from('questions')
+      .select('id, test_id, order_index, question_text, question_type, option_a, option_b, option_c, option_d, correct_option, marks, explanation, reasoning')
+      .in('test_id', testsWithEmptyQuestions);
+    for (const q of (fallbackQs ?? []) as Record<string, unknown>[]) {
+      const tid = q['test_id'] as string;
+      if (!fallbackQuestionsMap.has(tid)) fallbackQuestionsMap.set(tid, []);
+      fallbackQuestionsMap.get(tid)!.push(q);
+    }
+  }
+
+  // Normalise: expose class_name + merge fallback questions where needed
+  const normalised = (data ?? []).map((t: Record<string, unknown>) => {
+    const tq = t['test_questions'];
+    const hasQuestions = Array.isArray(tq) && tq.length > 0;
+    const mergedQuestions = hasQuestions
+      ? tq
+      : (fallbackQuestionsMap.get(t['id'] as string) ?? []);
+    return {
+      ...t,
+      class_name: t['class'] ?? t['class_name'],
+      test_questions: mergedQuestions,
+    };
+  });
 
   sendSuccess(res, normalised);
 });
@@ -1835,6 +1866,8 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
       marks:          z.number().min(0.5),
       options:        z.array(z.object({ text: z.string() })).optional(),
       correct_option: z.number().int().min(0).max(3).optional(),
+      reasoning:      z.string().optional(),
+      explanation:    z.string().optional(),
     })).min(1),
   });
 
@@ -1906,6 +1939,8 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
       option_d:       opts[3]?.text ?? null,
       correct_option: q.correct_option !== undefined ? optionLetters[q.correct_option] : null,
       marks:          q.marks,
+      reasoning:      q.reasoning ?? null,
+      explanation:    q.explanation ?? null,
     };
   });
 
