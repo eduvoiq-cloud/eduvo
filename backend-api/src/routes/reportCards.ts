@@ -7,6 +7,7 @@ import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { isClassAdmin } from './classAdmin';
 import { sendSuccess, sendError, sendValidationError, sendDbError } from '../utils/response';
+import { termFilterValues, normaliseTerm } from '../utils/term';
 
 const router = Router();
 
@@ -113,14 +114,23 @@ router.get(
 
     // ── Subjects with marks entered for this class+term+exam_type ────────────
     // We join marks → students to filter by school and class/section.
-    const { data: marksData, error: marksErr } = await supabaseAdmin
+    // Use termFilterValues to handle "Term 1" / "term_1" / "term1" variants.
+    const termValues = termFilterValues(term.trim());
+    const normalisedExamType = exam_type.trim().toLowerCase();
+
+    let marksQuery = supabaseAdmin
       .from('marks')
       .select('subject, students!inner(school_id, class_name, section)')
       .eq('students.school_id', schoolId)
       .ilike('students.class_name', class_name.trim())
       .ilike('students.section', section.trim())
-      .eq('term', term.trim())
-      .eq('exam_type', exam_type.trim());
+      .ilike('exam_type', normalisedExamType);
+
+    marksQuery = termValues.length === 1
+      ? marksQuery.eq('term', termValues[0])
+      : marksQuery.in('term', termValues);
+
+    const { data: marksData, error: marksErr } = await marksQuery;
 
     if (marksErr) {
       sendDbError(res, marksErr, 'reportCards GET /readiness marks');
@@ -229,13 +239,20 @@ router.post(
 
     // ── Fetch all marks for this class+section+term+exam_type in one query ────
     const studentIds = students.map((s) => s.id);
+    const genTermValues = termFilterValues(term.trim());
+    const genNormalisedExamType = exam_type.trim().toLowerCase();
 
-    const { data: allMarks, error: marksErr } = await supabaseAdmin
+    let marksQueryGen = supabaseAdmin
       .from('marks')
       .select('student_id, subject, score, max_score')
       .in('student_id', studentIds)
-      .eq('term', term.trim())
-      .eq('exam_type', exam_type.trim());
+      .ilike('exam_type', genNormalisedExamType);
+
+    marksQueryGen = genTermValues.length === 1
+      ? marksQueryGen.eq('term', genTermValues[0])
+      : marksQueryGen.in('term', genTermValues);
+
+    const { data: allMarks, error: marksErr } = await marksQueryGen;
 
     if (marksErr) {
       sendDbError(res, marksErr, 'reportCards POST /generate marks');
