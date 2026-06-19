@@ -1,2 +1,11 @@
 {
+  "typescript.preferences.includePackageJsonAutoImports": "off",
+  "typescript.tsserver.watchOptions": {},
+  "files.exclude": {
+    "**/node_modules": true
+  },
+  "search.exclude": {
+    "**/node_modules": true
+  },
+  "typescript.disableAutomaticTypeAcquisition": false
 }

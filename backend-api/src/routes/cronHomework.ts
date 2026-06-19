@@ -24,8 +24,44 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import * as Sentry from '@sentry/node';
 import { supabaseAdmin } from '../config/supabase';
+import redis from '../config/redis';
 import { sendSuccess, sendError } from '../utils/response';
 import { runHomeworkBatchEval } from '../services/homeworkEvalService';
+
+// ── Distributed job lock ──────────────────────────────────────────────────────
+// Prevents duplicate batch runs when cron fires while a previous run is still
+// in progress (e.g. a 15-min schedule but the job takes 15+ minutes).
+//
+// Strategy:
+//   • Redis available  → SET NX PX <ttl>  (atomic, works across instances)
+//   • Redis absent     → in-process boolean flag (single-instance fallback)
+//
+// TTL is set to 25 minutes — slightly longer than the cron interval (15 min)
+// so a stuck/crashed job eventually releases the lock automatically.
+
+const LOCK_KEY = 'cron:homework:evaluate-batch:lock';
+const LOCK_TTL_MS = 25 * 60 * 1000; // 25 minutes
+
+let _inProcessLock = false;
+
+async function acquireLock(): Promise<boolean> {
+  if (redis) {
+    // SET key value PX ttl NX — returns 'OK' if acquired, null if already held
+    const result = await redis.set(LOCK_KEY, '1', 'PX', LOCK_TTL_MS, 'NX');
+    return result === 'OK';
+  }
+  if (_inProcessLock) return false;
+  _inProcessLock = true;
+  return true;
+}
+
+async function releaseLock(): Promise<void> {
+  if (redis) {
+    await redis.del(LOCK_KEY);
+  } else {
+    _inProcessLock = false;
+  }
+}
 
 const router = Router();
 
@@ -101,6 +137,19 @@ function verifyCronSecret(req: Request, res: Response): boolean {
 router.get('/evaluate-batch', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  const locked = await acquireLock();
+  if (!locked) {
+    // A previous run is still in progress — skip gracefully so the server
+    // doesn't get hammered with overlapping heavy jobs.
+    console.warn('[cron/homework] evaluate-batch (GET) skipped — previous run still in progress');
+    sendSuccess(
+      res,
+      { message: 'Skipped — previous batch still running', skipped: true },
+      'Job skipped'
+    );
+    return;
+  }
+
   const startedAt = new Date().toISOString();
   sendSuccess(res, { message: 'Homework batch evaluation started', started_at: startedAt }, 'Job started');
 
@@ -112,12 +161,26 @@ router.get('/evaluate-batch', async (req: Request, res: Response) => {
     } catch (err) {
       console.error('[cron/homework] evaluate-batch crashed:', err instanceof Error ? err.message : err);
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
+    } finally {
+      await releaseLock();
     }
   });
 });
 
 router.post('/evaluate-batch', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
+
+  const locked = await acquireLock();
+  if (!locked) {
+    // A previous run is still in progress — skip gracefully.
+    console.warn('[cron/homework] evaluate-batch skipped — previous run still in progress');
+    sendSuccess(
+      res,
+      { message: 'Skipped — previous batch still running', skipped: true },
+      'Job skipped'
+    );
+    return;
+  }
 
   const startedAt = new Date().toISOString();
 
@@ -140,6 +203,8 @@ router.post('/evaluate-batch', async (req: Request, res: Response) => {
         err instanceof Error ? err.message : err
       );
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
+    } finally {
+      await releaseLock();
     }
   });
 });
