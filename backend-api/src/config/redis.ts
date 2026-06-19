@@ -18,22 +18,15 @@ if (process.env.REDIS_URL) {
   redis = new Redis(process.env.REDIS_URL, {
     // Reconnect with exponential back-off, capped at 30s
     retryStrategy: (times: number) => Math.min(times * 100, 30_000),
-    // Don't block app startup if Redis is temporarily unreachable
-    lazyConnect: true,
     // Short connect timeout so a broken Redis URL fails fast
     connectTimeout: 5_000,
-    // Emit errors to console rather than crashing the process
-    enableOfflineQueue: false,
+    // Keep offline queue so commands issued before connection don't throw
+    enableOfflineQueue: true,
   });
 
   redis.on('connect', () => console.log('[redis] Connected'));
   redis.on('error', (err: Error) => {
     console.error('[redis] Connection error (rate limits will use in-memory fallback):', err.message);
-  });
-
-  // Connect eagerly so the first request doesn't pay the connection cost
-  redis.connect().catch((err: Error) => {
-    console.error('[redis] Failed to connect at startup:', err.message);
   });
 } else {
   console.warn(
