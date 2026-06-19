@@ -11,6 +11,11 @@ import PageHeader from '@/components/PageHeader';
 
 type StudentStatus = 'present' | 'absent';
 
+interface ClassAdminCheckResult {
+  is_class_admin: boolean;
+  class_admin: { teacher_id: string; teacher_name: string | null } | null;
+}
+
 interface StudentCard {
   student_id: string;
   name: string;
@@ -57,6 +62,10 @@ export default function AttendancePage() {
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
 
+  // ── Class admin check ─────────────────────────────────────────────────────
+  const [classAdminCheck, setClassAdminCheck] = useState<ClassAdminCheckResult | null>(null);
+  const [loadingClassAdmin, setLoadingClassAdmin] = useState(false);
+
   // ── Filter state ──────────────────────────────────────────────────────────
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedSection, setSelectedSection] = useState('');
@@ -94,6 +103,27 @@ export default function AttendancePage() {
   const mySections = [
     ...new Set(assignments.filter((a) => a.class_name === selectedClass).map((a) => a.section)),
   ].sort();
+
+  // ── Check class admin when class+section are selected ────────────────────
+  useEffect(() => {
+    if (!selectedClass || !selectedSection) {
+      setClassAdminCheck(null);
+      return;
+    }
+    const token = getToken();
+    if (!token) return;
+
+    setLoadingClassAdmin(true);
+    setClassAdminCheck(null);
+    fetch(
+      `${BASE_URL}/api/class-admin/check?class_name=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    )
+      .then((r) => r.json())
+      .then((res) => setClassAdminCheck(res?.data ?? null))
+      .catch(() => setClassAdminCheck(null))
+      .finally(() => setLoadingClassAdmin(false));
+  }, [selectedClass, selectedSection]);
 
   // ── Load students for selected class/section/date ─────────────────────────
   const loadStudents = useCallback(async () => {
@@ -287,6 +317,17 @@ export default function AttendancePage() {
     ? students.filter((s) => s.status !== s.originalStatus).length
     : 0;
 
+  // ── Class admin gating ────────────────────────────────────────────────────
+  // class_admin !== null means a class admin is appointed for this class.
+  // is_class_admin on the response is always true when a row exists — we compare
+  // teacher_id to user.id to know if the CURRENT teacher is that admin.
+  const classAdminTeacherId = classAdminCheck?.class_admin?.teacher_id ?? null;
+  const classAdminTeacherName = classAdminCheck?.class_admin?.teacher_name ?? null;
+  const classHasAdmin = classAdminTeacherId !== null;
+  const iAmClassAdmin = classHasAdmin && classAdminTeacherId === user?.id;
+  // Gate: hide attendance if a different teacher is class admin
+  const attendanceManagedByOther = classHasAdmin && !iAmClassAdmin;
+
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
@@ -365,236 +406,265 @@ export default function AttendancePage() {
         </button>
       </div>
 
-      {/* ── Banner ─────────────────────────────────────────────────────────── */}
-      {banner && (
-        <div
-          className={`mb-5 px-4 py-3 rounded-lg text-sm flex items-center gap-2 ${
-            banner.type === 'success'
-              ? 'bg-green-50 border border-green-200 text-green-700'
-              : banner.type === 'warning'
-              ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
-              : 'bg-red-50 border border-red-200 text-red-700'
-          }`}
-        >
-          {banner.type === 'success' && (
-            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          )}
-          {banner.msg}
+      {/* ── Class admin check loading ────────────────────────────────────── */}
+      {loadingClassAdmin && selectedClass && selectedSection && (
+        <div className="flex items-center gap-2 py-4 text-sm text-gray-500">
+          <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          Checking class admin…
         </div>
       )}
 
-      {/* ── Empty state ─────────────────────────────────────────────────────── */}
-      {students.length === 0 && !loadingStudents && (
-        <div className="bg-white rounded-xl border border-gray-200 text-center py-16 text-sm text-gray-400">
-          {!selectedClass || !selectedSection
-            ? 'Select a class and section, then click "Load Students".'
-            : 'No students found for this class and section.'}
+      {/* ── Attendance managed by another teacher ────────────────────────── */}
+      {!loadingClassAdmin && attendanceManagedByOther && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl px-6 py-5 flex items-start gap-3">
+          <svg className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <div>
+            <p className="text-sm font-semibold text-blue-800">Attendance managed by class admin</p>
+            <p className="text-sm text-blue-700 mt-0.5">
+              Attendance for this class is managed by{' '}
+              <span className="font-medium">{classAdminTeacherName ?? 'another teacher'}</span>.
+            </p>
+          </div>
         </div>
       )}
 
-      {/* ── Loading spinner ──────────────────────────────────────────────────── */}
-      {loadingStudents && (
-        <div className="flex items-center justify-center py-16">
-          <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-        </div>
-      )}
-
-      {/* ── Student grid ─────────────────────────────────────────────────────── */}
-      {students.length > 0 && !loadingStudents && (
+      {/* ── The rest of the attendance UI — only shown when allowed ─────── */}
+      {!loadingClassAdmin && !attendanceManagedByOther && (
         <>
-          {/* Summary bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <div>
-              <p className="text-sm font-semibold text-gray-800">
-                {selectedClass} {selectedSection} — {date} — {students.length} Students
-              </p>
-              <p className="text-xs text-gray-500 mt-0.5">
-                <span className="text-green-600 font-medium">{presentCount} Present</span>
-                {' · '}
-                <span className="text-red-600 font-medium">{absentCount} Absent</span>
-              </p>
+          {/* ── Banner ───────────────────────────────────────────────────── */}
+          {banner && (
+            <div
+              className={`mb-5 px-4 py-3 rounded-lg text-sm flex items-center gap-2 ${
+                banner.type === 'success'
+                  ? 'bg-green-50 border border-green-200 text-green-700'
+                  : banner.type === 'warning'
+                  ? 'bg-yellow-50 border border-yellow-200 text-yellow-700'
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}
+            >
+              {banner.type === 'success' && (
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+              {banner.msg}
             </div>
+          )}
 
-            {/* Readonly badge + Correct button */}
-            {mode === 'readonly' && (
-              <div className="flex items-center gap-3">
-                {submittedAt && (
-                  <span className="text-xs text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
-                    Submitted at {submittedAt}
+          {/* ── Empty state ───────────────────────────────────────────────── */}
+          {students.length === 0 && !loadingStudents && (
+            <div className="bg-white rounded-xl border border-gray-200 text-center py-16 text-sm text-gray-400">
+              {!selectedClass || !selectedSection
+                ? 'Select a class and section, then click "Load Students".'
+                : 'No students found for this class and section.'}
+            </div>
+          )}
+
+          {/* ── Loading spinner ───────────────────────────────────────────── */}
+          {loadingStudents && (
+            <div className="flex items-center justify-center py-16">
+              <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+
+          {/* ── Student grid ──────────────────────────────────────────────── */}
+          {students.length > 0 && !loadingStudents && (
+            <>
+              {/* Summary bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">
+                    {selectedClass} {selectedSection} — {date} — {students.length} Students
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    <span className="text-green-600 font-medium">{presentCount} Present</span>
+                    {' · '}
+                    <span className="text-red-600 font-medium">{absentCount} Absent</span>
+                  </p>
+                </div>
+
+                {/* Readonly badge + Correct button */}
+                {mode === 'readonly' && (
+                  <div className="flex items-center gap-3">
+                    {submittedAt && (
+                      <span className="text-xs text-gray-500 bg-gray-100 px-3 py-1.5 rounded-full">
+                        Submitted at {submittedAt}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={enterCorrectionMode}
+                      className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                    >
+                      Correct Attendance
+                    </button>
+                  </div>
+                )}
+
+                {/* Correction mode hint */}
+                {mode === 'correction' && (
+                  <span className="text-xs font-medium text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full">
+                    Correction mode — {changedCount} change{changedCount !== 1 ? 's' : ''}
                   </span>
                 )}
-                <button
-                  type="button"
-                  onClick={enterCorrectionMode}
-                  className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                >
-                  Correct Attendance
-                </button>
               </div>
-            )}
 
-            {/* Correction mode hint */}
-            {mode === 'correction' && (
-              <span className="text-xs font-medium text-orange-600 bg-orange-50 px-3 py-1.5 rounded-full">
-                Correction mode — {changedCount} change{changedCount !== 1 ? 's' : ''}
-              </span>
-            )}
-          </div>
+              {/* Instruction hint for marking mode */}
+              {mode === 'marking' && (
+                <p className="text-xs text-gray-400 mb-3">
+                  All students are <span className="text-green-600 font-medium">present</span> by default. Click a card to mark as <span className="text-red-600 font-medium">absent</span>.
+                </p>
+              )}
 
-          {/* Instruction hint for marking mode */}
-          {mode === 'marking' && (
-            <p className="text-xs text-gray-400 mb-3">
-              All students are <span className="text-green-600 font-medium">present</span> by default. Click a card to mark as <span className="text-red-600 font-medium">absent</span>.
-            </p>
+              {/* Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-6">
+                {students.map((s) => {
+                  const isAbsent = s.status === 'absent';
+                  const isChanged = mode === 'correction' && s.status !== s.originalStatus;
+                  const isClickable = mode === 'marking' || mode === 'correction';
+
+                  return (
+                    <button
+                      key={s.student_id}
+                      type="button"
+                      onClick={() => isClickable && toggleStudent(s.student_id)}
+                      disabled={!isClickable}
+                      className={`relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 text-left transition-colors ${
+                        isChanged
+                          ? 'border-yellow-400 bg-yellow-50'
+                          : isAbsent
+                          ? 'border-red-300 bg-red-50'
+                          : 'border-green-300 bg-green-50'
+                      } ${isClickable ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
+                    >
+                      {/* Changed indicator */}
+                      {isChanged && (
+                        <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-yellow-500" />
+                      )}
+
+                      {/* Avatar */}
+                      {s.photo_url ? (
+                        <Image
+                          src={s.photo_url}
+                          alt={s.name}
+                          width={48}
+                          height={48}
+                          className="w-12 h-12 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div
+                          className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold ${
+                            isAbsent ? 'bg-red-200 text-red-700' : 'bg-green-200 text-green-700'
+                          }`}
+                        >
+                          {s.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+
+                      {/* Name */}
+                      <p className="text-xs font-semibold text-gray-900 text-center leading-tight line-clamp-2">
+                        {s.name}
+                      </p>
+
+                      {/* Roll number */}
+                      {s.roll_number && (
+                        <p className="text-xs text-gray-400">#{s.roll_number}</p>
+                      )}
+
+                      {/* Status badge */}
+                      <span
+                        className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                          isAbsent
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-green-100 text-green-700'
+                        }`}
+                      >
+                        {isAbsent ? 'Absent' : 'Present'}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* ── Correction reason input ─────────────────────────────── */}
+              {mode === 'correction' && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Reason for correction <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none ${
+                      correctionReasonError ? 'border-red-400' : 'border-gray-300'
+                    }`}
+                    placeholder="Explain why you are correcting this attendance…"
+                    value={correctionReason}
+                    onChange={(e) => {
+                      setCorrectionReason(e.target.value);
+                      if (e.target.value.trim()) setCorrectionReasonError(false);
+                    }}
+                  />
+                  {correctionReasonError && (
+                    <p className="text-xs text-red-600 mt-1">Reason is required before submitting corrections.</p>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
-          {/* Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mb-6">
-            {students.map((s) => {
-              const isAbsent = s.status === 'absent';
-              const isChanged = mode === 'correction' && s.status !== s.originalStatus;
-              const isClickable = mode === 'marking' || mode === 'correction';
+          {/* ── Sticky bottom bar ────────────────────────────────────────── */}
+          {students.length > 0 && !loadingStudents && mode !== 'readonly' && (
+            <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3 z-10">
+              <p className="text-sm text-gray-700">
+                <span className="font-semibold text-green-600">{presentCount} Present</span>
+                {', '}
+                <span className="font-semibold text-red-600">{absentCount} Absent</span>
+                {mode === 'correction' && changedCount > 0 && (
+                  <span className="ml-2 text-yellow-600 font-medium">· {changedCount} changed</span>
+                )}
+              </p>
 
-              return (
-                <button
-                  key={s.student_id}
-                  type="button"
-                  onClick={() => isClickable && toggleStudent(s.student_id)}
-                  disabled={!isClickable}
-                  className={`relative flex flex-col items-center gap-2 p-4 rounded-xl border-2 text-left transition-colors ${
-                    isChanged
-                      ? 'border-yellow-400 bg-yellow-50'
-                      : isAbsent
-                      ? 'border-red-300 bg-red-50'
-                      : 'border-green-300 bg-green-50'
-                  } ${isClickable ? 'cursor-pointer hover:opacity-90' : 'cursor-default'}`}
-                >
-                  {/* Changed indicator */}
-                  {isChanged && (
-                    <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-yellow-500" />
-                  )}
-
-                  {/* Avatar */}
-                  {s.photo_url ? (
-                    <Image
-                      src={s.photo_url}
-                      alt={s.name}
-                      width={48}
-                      height={48}
-                      className="w-12 h-12 rounded-full object-cover"
-                    />
-                  ) : (
-                    <div
-                      className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold ${
-                        isAbsent ? 'bg-red-200 text-red-700' : 'bg-green-200 text-green-700'
-                      }`}
-                    >
-                      {s.name.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-
-                  {/* Name */}
-                  <p className="text-xs font-semibold text-gray-900 text-center leading-tight line-clamp-2">
-                    {s.name}
-                  </p>
-
-                  {/* Roll number */}
-                  {s.roll_number && (
-                    <p className="text-xs text-gray-400">#{s.roll_number}</p>
-                  )}
-
-                  {/* Status badge */}
-                  <span
-                    className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                      isAbsent
-                        ? 'bg-red-100 text-red-700'
-                        : 'bg-green-100 text-green-700'
-                    }`}
+              <div className="flex items-center gap-3">
+                {mode === 'correction' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('readonly');
+                      setStudents((prev) => prev.map((s) => ({ ...s, status: s.originalStatus ?? s.status })));
+                      setCorrectionReason('');
+                      setCorrectionReasonError(false);
+                      setBanner(null);
+                    }}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
                   >
-                    {isAbsent ? 'Absent' : 'Present'}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+                    Cancel
+                  </button>
+                )}
 
-          {/* ── Correction reason input ─────────────────────────────────────── */}
-          {mode === 'correction' && (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Reason for correction <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                rows={2}
-                className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none ${
-                  correctionReasonError ? 'border-red-400' : 'border-gray-300'
-                }`}
-                placeholder="Explain why you are correcting this attendance…"
-                value={correctionReason}
-                onChange={(e) => {
-                  setCorrectionReason(e.target.value);
-                  if (e.target.value.trim()) setCorrectionReasonError(false);
-                }}
-              />
-              {correctionReasonError && (
-                <p className="text-xs text-red-600 mt-1">Reason is required before submitting corrections.</p>
-              )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (mode === 'correction') {
+                      submitCorrections();
+                    } else {
+                      setShowConfirm(true);
+                    }
+                  }}
+                  disabled={submitting || students.length === 0}
+                  className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 rounded-lg transition-colors"
+                >
+                  {submitting
+                    ? 'Submitting…'
+                    : mode === 'correction'
+                    ? 'Submit Correction'
+                    : 'Submit Attendance'}
+                </button>
+              </div>
             </div>
           )}
         </>
-      )}
-
-      {/* ── Sticky bottom bar ─────────────────────────────────────────────────── */}
-      {students.length > 0 && !loadingStudents && mode !== 'readonly' && (
-        <div className="sticky bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3 z-10">
-          <p className="text-sm text-gray-700">
-            <span className="font-semibold text-green-600">{presentCount} Present</span>
-            {', '}
-            <span className="font-semibold text-red-600">{absentCount} Absent</span>
-            {mode === 'correction' && changedCount > 0 && (
-              <span className="ml-2 text-yellow-600 font-medium">· {changedCount} changed</span>
-            )}
-          </p>
-
-          <div className="flex items-center gap-3">
-            {mode === 'correction' && (
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('readonly');
-                  setStudents((prev) => prev.map((s) => ({ ...s, status: s.originalStatus ?? s.status })));
-                  setCorrectionReason('');
-                  setCorrectionReasonError(false);
-                  setBanner(null);
-                }}
-                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => {
-                if (mode === 'correction') {
-                  submitCorrections();
-                } else {
-                  setShowConfirm(true);
-                }
-              }}
-              disabled={submitting || students.length === 0}
-              className="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 rounded-lg transition-colors"
-            >
-              {submitting
-                ? 'Submitting…'
-                : mode === 'correction'
-                ? 'Submit Correction'
-                : 'Submit Attendance'}
-            </button>
-          </div>
-        </div>
       )}
 
       {/* ── Confirm modal ─────────────────────────────────────────────────────── */}

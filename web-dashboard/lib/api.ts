@@ -673,6 +673,45 @@ export const assignmentsApi = {
     request<null>(`/api/assignments/${id}`, { method: 'DELETE' }, token),
 };
 
+// ── Class Admin API ───────────────────────────────────────────────────────────
+
+export interface ClassAdminRow {
+  id: string;
+  teacher_id: string;
+  teacher_name: string | null;
+  class_name: string;
+  section: string;
+  appointed_at: string | null;
+}
+
+export const classAdminApi = {
+  list: (token: string) =>
+    request<ClassAdminRow[]>('/api/class-admin/list', { method: 'GET' }, token),
+
+  appoint: (token: string, payload: { teacher_id: string; class_name: string; section: string }) =>
+    request<{ success: boolean }>('/api/class-admin/appoint', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token),
+
+  remove: (token: string, payload: { class_name: string; section: string }) =>
+    request<{ success: boolean }>('/api/class-admin/remove', {
+      method: 'DELETE',
+      body: JSON.stringify(payload),
+    }, token),
+};
+
+// ── Class combos (marks-view) ─────────────────────────────────────────────────
+
+export interface ClassCombo {
+  class_name: string;
+  section: string;
+}
+
+export function listClassCombos(token: string) {
+  return request<ClassCombo[]>('/api/marks-view/classes', { method: 'GET' }, token);
+}
+
 // ── Notifications API ──────────────────────────────────────────────────────
 
 export interface PaginatedNotifications {
