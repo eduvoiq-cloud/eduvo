@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { feesApi, adminApi, type FeeRecord } from '@/lib/api';
+import { feesApi, adminApi, type FeeRecord, type PaginatedFees, type AdminStudent } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
@@ -96,12 +96,12 @@ function FeesPageInner() {
     const token = getToken();
     if (!token) return;
     adminApi.listStudents(token, { limit: 0 }).then((res) => {
-      const students = Array.isArray(res.data) ? res.data : (res.data as { data: typeof res.data[] }).data ?? [];
+      const students = res.data as AdminStudent[];
       const seen = new Set<string>();
       const list: ClassInfo[] = [];
-      for (const s of students as Array<{ class_name: string; section: string }>) {
+      for (const s of students) {
         const key = `${s.class_name}||${s.section}`;
-        if (!seen.has(key)) { seen.add(key); list.push({ class_name: s.class_name, section: s.section }); }
+        if (!seen.has(key)) { seen.add(key); list.push({ class_name: s.class_name, section: s.section ?? '' }); }
       }
       list.sort((a, b) => a.class_name.localeCompare(b.class_name) || a.section.localeCompare(b.section));
       setClasses(list);
@@ -119,8 +119,8 @@ function FeesPageInner() {
         section: filterSection || undefined,
         limit: 200,
       });
-      const data = (res.data as { data?: FeeRecord[] }).data ?? res.data as FeeRecord[] ?? [];
-      const arr: FeeRecord[] = Array.isArray(data) ? data : [];
+      const paged = res.data as PaginatedFees;
+      const arr: FeeRecord[] = Array.isArray(paged) ? (paged as unknown as FeeRecord[]) : (paged.data ?? []);
       const filtered = filterStatus
         ? arr.filter((r) => r.payment_status === filterStatus)
         : arr;
