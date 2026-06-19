@@ -109,8 +109,8 @@ export default function ClassAdminPage() {
         usersApi.list(token, { role: 'teacher', school_id: user.school_id, limit: 500 }),
         listClassCombos(token),
       ]);
-      const rawTeachers = (tRes.data as { data?: Teacher[] } & Teacher[]).data ?? (tRes.data as unknown as Teacher[]);
-      setTeachers(Array.isArray(rawTeachers) ? rawTeachers : []);
+      const rawTeachers: Teacher[] = tRes.data?.data ?? [];
+      setTeachers(rawTeachers);
       const rawClasses: ClassCombo[] = (cRes.data as unknown as ClassCombo[]) ?? [];
       setClasses([...rawClasses].sort((a, b) => sortKey(a).localeCompare(sortKey(b))));
     } catch (e: unknown) {
