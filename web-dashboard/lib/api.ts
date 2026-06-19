@@ -1661,3 +1661,95 @@ export const recoveryApi = {
       token
     ),
 };
+
+// ── At-Risk Students ──────────────────────────────────────────────────────────
+
+export interface AtRiskStudent {
+  student_id:     string;
+  full_name:      string;
+  class_name:     string;
+  section:        string;
+  risk_score:     number;
+  low_attendance: boolean;
+  low_marks:      boolean;
+  fee_unpaid:     boolean;
+  attendance_pct: number;
+  avg_marks_pct:  number;
+  fee_status:     string;
+}
+
+export interface AtRiskResponse {
+  total_at_risk: number;
+  students:      AtRiskStudent[];
+}
+
+export const atRiskApi = {
+  get: (token: string) =>
+    request<AtRiskResponse>('/api/admin/at-risk', { method: 'GET' }, token),
+};
+
+// ── School Health Score ───────────────────────────────────────────────────────
+
+export interface HealthScoreComponent {
+  score: number;
+  max:   number;
+  pct:   number;
+  label: string;
+}
+
+export interface SchoolHealthScore {
+  health_score: number;
+  grade:        string;
+  components: {
+    attendance: HealthScoreComponent;
+    marks:      HealthScoreComponent;
+    fees:       HealthScoreComponent;
+    engagement: HealthScoreComponent;
+  };
+  month: number;
+  year:  number;
+}
+
+export const healthScoreApi = {
+  get: (token: string) =>
+    request<SchoolHealthScore>('/api/admin/health-score', { method: 'GET' }, token),
+};
+
+// ── Teacher Test Analytics ────────────────────────────────────────────────────
+
+export interface TestScoreDistributionBucket {
+  range: string;
+  count: number;
+}
+
+export interface TestQuestionAnalytic {
+  question_id:   string;
+  question_text: string;
+  order_index:   number;
+  correct_count: number;
+  wrong_count:   number;
+  skip_count:    number;
+  correct_pct:   number;
+}
+
+export interface TestAnalyticsResult {
+  test_id:             string;
+  test_title:          string;
+  subject:             string;
+  class_name:          string;
+  section:             string;
+  max_score:           number;
+  total_students:      number;
+  attempted_count:     number;
+  not_attempted_count: number;
+  avg_score:           number;
+  highest_score:       number;
+  lowest_score:        number;
+  score_distribution:  TestScoreDistributionBucket[];
+  question_analytics:  TestQuestionAnalytic[];
+}
+
+export const teacherTestAnalyticsApi = {
+  get: (token: string, testId: string) =>
+    request<TestAnalyticsResult>(`/api/teacher/test-analytics/${testId}`, { method: 'GET' }, token),
+};

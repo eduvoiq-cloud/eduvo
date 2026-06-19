@@ -59,6 +59,7 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
         { label: 'Complaints', href: '/admin/complaints' },
         { label: 'AI Insights', href: '/admin/premium-insights' },
         { label: 'Streak Board', href: '/admin/streak-leaderboard' },
+        { label: 'At-Risk Students', href: '/admin/at-risk' },
         { label: 'Settings', href: '/admin/settings' },
       ],
     },

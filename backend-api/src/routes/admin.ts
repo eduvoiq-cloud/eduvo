@@ -2536,4 +2536,391 @@ router.get('/class-comparison', async (req: Request, res: Response) => {
   sendSuccess(res, { year: rawYear, month: rawMonth, classes });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// AT-RISK STUDENTS DASHBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/admin/at-risk
+ *
+ * Returns students flagged as "at-risk" — those with at least 2 of 3 risk flags:
+ *   - low_attendance  : attendance % < 75%
+ *   - low_marks       : average marks % < 40%
+ *   - fee_unpaid      : no fee record OR fee_paid=false AND payment_status != 'paid'
+ *
+ * Sorted by risk_score desc, then avg_marks_pct asc (worst first).
+ */
+router.get('/at-risk', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id!;
+  const CHUNK = 900;
+
+  // 1. Fetch all non-deleted students for this school
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name, class_name, section')
+    .eq('school_id', schoolId)
+    .eq('is_deleted', false);
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (!students || students.length === 0) {
+    sendSuccess(res, { total_at_risk: 0, students: [] });
+    return;
+  }
+
+  const studentIds = students.map((s: { id: string }) => s.id);
+
+  // 2. Fetch attendance, marks, fees in parallel (chunked for large schools)
+  const [attendanceRows, marksRows, feeRows] = await Promise.all([
+    // Attendance
+    (async () => {
+      let all: Array<{ student_id: string; status: string }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('attendance')
+          .select('student_id, status')
+          .in('student_id', studentIds.slice(i, i + CHUNK));
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // Marks
+    (async () => {
+      let all: Array<{ student_id: string; score: number; max_score: number }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('marks')
+          .select('student_id, score, max_score')
+          .in('student_id', studentIds.slice(i, i + CHUNK));
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // Fees
+    (async () => {
+      let all: Array<{ student_id: string; fee_paid: boolean; payment_status: string | null }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('student_fees')
+          .select('student_id, fee_paid, payment_status')
+          .in('student_id', studentIds.slice(i, i + CHUNK));
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+  ]);
+
+  // 3. Build per-student aggregates
+  type AttAgg = { total: number; present: number };
+  type MarksAgg = { totalScore: number; totalMax: number };
+
+  const attMap = new Map<string, AttAgg>();
+  const marksMap = new Map<string, MarksAgg>();
+  const feeMap = new Map<string, { fee_paid: boolean; payment_status: string | null }>();
+
+  for (const a of attendanceRows) {
+    const existing = attMap.get(a.student_id) ?? { total: 0, present: 0 };
+    existing.total++;
+    if (a.status === 'present' || a.status === 'late') existing.present++;
+    attMap.set(a.student_id, existing);
+  }
+
+  for (const m of marksRows) {
+    if (Number(m.max_score) <= 0) continue;
+    const existing = marksMap.get(m.student_id) ?? { totalScore: 0, totalMax: 0 };
+    existing.totalScore += Number(m.score);
+    existing.totalMax   += Number(m.max_score);
+    marksMap.set(m.student_id, existing);
+  }
+
+  // Last fee record per student wins
+  for (const f of feeRows) {
+    feeMap.set(f.student_id, { fee_paid: f.fee_paid, payment_status: f.payment_status });
+  }
+
+  // 4. Compute risk flags per student
+  type AtRiskRow = {
+    student_id:     string;
+    full_name:      string;
+    class_name:     string;
+    section:        string;
+    risk_score:     number;
+    low_attendance: boolean;
+    low_marks:      boolean;
+    fee_unpaid:     boolean;
+    attendance_pct: number;
+    avg_marks_pct:  number;
+    fee_status:     string;
+  };
+
+  const atRiskList: AtRiskRow[] = [];
+
+  for (const s of students as Array<{ id: string; full_name: string; class_name: string; section: string }>) {
+    // Attendance flag
+    const att = attMap.get(s.id);
+    let attendancePct = 100; // no records = assume fine
+    let low_attendance = false;
+    if (att && att.total > 0) {
+      attendancePct = Math.round((att.present / att.total) * 1000) / 10;
+      low_attendance = attendancePct < 75;
+    }
+
+    // Marks flag
+    const marks = marksMap.get(s.id);
+    let avgMarksPct = 100; // no records = assume fine
+    let low_marks = false;
+    if (marks && marks.totalMax > 0) {
+      avgMarksPct = Math.round((marks.totalScore / marks.totalMax) * 1000) / 10;
+      low_marks = avgMarksPct < 40;
+    }
+
+    // Fee flag
+    const fee = feeMap.get(s.id);
+    let fee_unpaid = false;
+    let feeStatus = 'unknown';
+    if (!fee) {
+      fee_unpaid = true;
+      feeStatus = 'unpaid';
+    } else {
+      const isPaid = fee.fee_paid || fee.payment_status === 'paid';
+      fee_unpaid = !isPaid;
+      feeStatus = fee.payment_status ?? (fee.fee_paid ? 'paid' : 'unpaid');
+    }
+
+    const riskScore = (low_attendance ? 1 : 0) + (low_marks ? 1 : 0) + (fee_unpaid ? 1 : 0);
+
+    if (riskScore >= 2) {
+      atRiskList.push({
+        student_id:     s.id,
+        full_name:      s.full_name,
+        class_name:     s.class_name,
+        section:        s.section,
+        risk_score:     riskScore,
+        low_attendance,
+        low_marks,
+        fee_unpaid,
+        attendance_pct: attendancePct,
+        avg_marks_pct:  avgMarksPct,
+        fee_status:     feeStatus,
+      });
+    }
+  }
+
+  // Sort: risk_score desc, then avg_marks_pct asc
+  atRiskList.sort((a, b) => {
+    if (b.risk_score !== a.risk_score) return b.risk_score - a.risk_score;
+    return a.avg_marks_pct - b.avg_marks_pct;
+  });
+
+  sendSuccess(res, { total_at_risk: atRiskList.length, students: atRiskList });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SCHOOL HEALTH SCORE
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * GET /api/admin/health-score
+ *
+ * Computes a composite 0–100 school health score from 4 components (25 pts each):
+ *   1. Attendance  — avg attendance % across all students this calendar month
+ *   2. Marks       — avg marks % across all marks entered this calendar month
+ *   3. Fees        — % of students with fee_paid=true or payment_status='paid'
+ *   4. Engagement  — % of teachers who have ≥1 audit log entry in the last 14 days
+ *
+ * Grade: 90–100=A+, 80–89=A, 70–79=B, 60–69=C, below 60=D
+ */
+router.get('/health-score', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id!;
+  const CHUNK = 900;
+  const now = new Date();
+  const month = now.getMonth() + 1;
+  const year = now.getFullYear();
+
+  const monthStart = new Date(year, month - 1, 1).toISOString();
+  const monthEnd   = new Date(year, month, 1).toISOString();
+  const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+
+  // 1. All active students
+  const { data: students, error: sErr } = await supabaseAdmin
+    .from('students')
+    .select('id')
+    .eq('school_id', schoolId)
+    .eq('is_deleted', false);
+
+  if (sErr) { sendError(res, sErr.message, 500); return; }
+
+  const studentIds = (students ?? []).map((s: { id: string }) => s.id);
+  const totalStudents = studentIds.length;
+
+  // 2. All teachers
+  const { data: teachers, error: tErr } = await supabaseAdmin
+    .from('users')
+    .select('id')
+    .eq('school_id', schoolId)
+    .eq('role', 'teacher')
+    .or('is_deleted.is.null,is_deleted.eq.false');
+
+  if (tErr) { sendError(res, tErr.message, 500); return; }
+
+  const teacherIds = (teachers ?? []).map((t: { id: string }) => t.id);
+  const totalTeachers = teacherIds.length;
+
+  // 3. Parallel fetch: attendance this month, marks this month, fees, teacher audit logs
+  const [attendanceRows, marksRows, feeRows, auditRows] = await Promise.all([
+    // Attendance this month
+    (async () => {
+      let all: Array<{ student_id: string; status: string }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('attendance')
+          .select('student_id, status')
+          .in('student_id', studentIds.slice(i, i + CHUNK))
+          .gte('date', monthStart.slice(0, 10))
+          .lt('date', monthEnd.slice(0, 10));
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // Marks this month
+    (async () => {
+      let all: Array<{ score: number; max_score: number }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('marks')
+          .select('score, max_score')
+          .in('student_id', studentIds.slice(i, i + CHUNK))
+          .gte('created_at', monthStart)
+          .lt('created_at', monthEnd);
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // Fees (all-time, not month-scoped)
+    (async () => {
+      if (studentIds.length === 0) return [];
+      let all: Array<{ fee_paid: boolean; payment_status: string | null }> = [];
+      for (let i = 0; i < studentIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('student_fees')
+          .select('fee_paid, payment_status')
+          .in('student_id', studentIds.slice(i, i + CHUNK));
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+    // Teacher audit logs in last 14 days
+    (async () => {
+      if (teacherIds.length === 0) return [];
+      let all: Array<{ user_id: string }> = [];
+      for (let i = 0; i < teacherIds.length; i += CHUNK) {
+        const { data } = await supabaseAdmin
+          .from('audit_logs')
+          .select('user_id')
+          .in('user_id', teacherIds.slice(i, i + CHUNK))
+          .gte('created_at', twoWeeksAgo);
+        if (data) all = all.concat(data);
+      }
+      return all;
+    })(),
+  ]);
+
+  // ── Compute each component ────────────────────────────────────────────────
+
+  // Attendance: per-student average then school average
+  const attByStudent = new Map<string, { total: number; present: number }>();
+  for (const a of attendanceRows) {
+    const existing = attByStudent.get(a.student_id) ?? { total: 0, present: 0 };
+    existing.total++;
+    if (a.status === 'present' || a.status === 'late') existing.present++;
+    attByStudent.set(a.student_id, existing);
+  }
+  let attPct = 0;
+  if (attByStudent.size > 0) {
+    const perStudentPcts = [...attByStudent.values()].map((a) =>
+      a.total > 0 ? (a.present / a.total) * 100 : 0
+    );
+    attPct = perStudentPcts.reduce((s, p) => s + p, 0) / perStudentPcts.length;
+  }
+  const attScore = Math.round((attPct / 100) * 25);
+
+  // Marks: average across all entries
+  let marksPct = 0;
+  const validMarks = marksRows.filter((m) => Number(m.max_score) > 0);
+  if (validMarks.length > 0) {
+    const totalObtained = validMarks.reduce((s, m) => s + Number(m.score), 0);
+    const totalMax = validMarks.reduce((s, m) => s + Number(m.max_score), 0);
+    marksPct = totalMax > 0 ? (totalObtained / totalMax) * 100 : 0;
+  }
+  const marksScore = Math.round((marksPct / 100) * 25);
+
+  // Fees: % students with fee paid
+  let feePct = 0;
+  if (totalStudents > 0) {
+    // Students with a fee record that is paid
+    const paidSet = new Set<string>();
+    for (let i = 0; i < studentIds.length; i += CHUNK) {
+      const { data } = await supabaseAdmin
+        .from('student_fees')
+        .select('student_id, fee_paid, payment_status')
+        .in('student_id', studentIds.slice(i, i + CHUNK));
+      for (const f of (data ?? []) as Array<{ student_id: string; fee_paid: boolean; payment_status: string | null }>) {
+        if (f.fee_paid || f.payment_status === 'paid') paidSet.add(f.student_id);
+      }
+    }
+    feePct = (paidSet.size / totalStudents) * 100;
+  }
+  const feesScore = Math.round((feePct / 100) * 25);
+
+  // Engagement: % of teachers with ≥1 audit log in last 14 days
+  let engPct = 0;
+  if (totalTeachers > 0) {
+    const activeTeachers = new Set((auditRows as Array<{ user_id: string }>).map((r) => r.user_id));
+    engPct = (activeTeachers.size / totalTeachers) * 100;
+  }
+  const engScore = Math.round((engPct / 100) * 25);
+
+  const healthScore = attScore + marksScore + feesScore + engScore;
+
+  // Grade
+  let grade: string;
+  if (healthScore >= 90) grade = 'A+';
+  else if (healthScore >= 80) grade = 'A';
+  else if (healthScore >= 70) grade = 'B';
+  else if (healthScore >= 60) grade = 'C';
+  else grade = 'D';
+
+  sendSuccess(res, {
+    health_score: healthScore,
+    grade,
+    components: {
+      attendance: {
+        score: attScore,
+        max: 25,
+        pct: Math.round(attPct * 10) / 10,
+        label: 'Attendance',
+      },
+      marks: {
+        score: marksScore,
+        max: 25,
+        pct: Math.round(marksPct * 10) / 10,
+        label: 'Academic Performance',
+      },
+      fees: {
+        score: feesScore,
+        max: 25,
+        pct: Math.round(feePct * 10) / 10,
+        label: 'Fee Collection',
+      },
+      engagement: {
+        score: engScore,
+        max: 25,
+        pct: Math.round(engPct * 10) / 10,
+        label: 'Teacher Engagement',
+      },
+    },
+    month,
+    year,
+  });
+});
+
 export default router;

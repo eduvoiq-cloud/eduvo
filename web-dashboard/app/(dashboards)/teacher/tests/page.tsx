@@ -5,8 +5,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import {
   assignmentsApi, testsApi,
+  teacherTestAnalyticsApi,
   type TeacherAssignment, type Test, type TestQuestion, type MCQQuestion, type TheoryQuestion,
   type TestResultsSummary, type TestResultsSummaryRow, type TestAttemptDetail, type TestAnswerDetail,
+  type TestAnalyticsResult,
 } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -149,6 +151,12 @@ export default function TestsPage() {
   const [theoryMarks, setTheoryMarks] = useState<Record<string, string>>({});
   const [markingSubmitting, setMarkingSubmitting] = useState(false);
   const [markingError, setMarkingError] = useState('');
+
+  // Analytics modal
+  const [analyticsTest, setAnalyticsTest] = useState<Test | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<TestAnalyticsResult | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState('');
 
   // Restrictions management
   const [restrictionsTest, setRestrictionsTest] = useState<Test | null>(null);
@@ -346,6 +354,23 @@ export default function TestsPage() {
       setAttemptsError(e instanceof Error ? e.message : 'Failed to load results');
     } finally {
       setAttemptsLoading(false);
+    }
+  }
+
+  async function openAnalytics(test: Test) {
+    setAnalyticsTest(test);
+    setAnalyticsData(null);
+    setAnalyticsError('');
+    setAnalyticsLoading(true);
+    try {
+      const token = getToken();
+      if (!token) return;
+      const res = await teacherTestAnalyticsApi.get(token, test.id);
+      setAnalyticsData(res.data);
+    } catch (e: unknown) {
+      setAnalyticsError(e instanceof Error ? e.message : 'Failed to load analytics');
+    } finally {
+      setAnalyticsLoading(false);
     }
   }
 
@@ -557,6 +582,10 @@ export default function TestsPage() {
                           <button onClick={() => openSubmissions(t)}
                             className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors">
                             Submissions
+                          </button>
+                          <button onClick={() => openAnalytics(t)}
+                            className="px-3 py-1.5 text-xs font-medium text-violet-700 bg-violet-50 hover:bg-violet-100 rounded-md transition-colors">
+                            Analytics
                           </button>
                           <button onClick={() => openRestrictions(t)}
                             className="px-3 py-1.5 text-xs font-medium text-orange-700 bg-orange-50 hover:bg-orange-100 rounded-md transition-colors"
@@ -1326,6 +1355,126 @@ export default function TestsPage() {
               </div>
             </>
           )}
+        </div>
+      </Modal>
+
+      {/* ── Test Analytics Modal ──────────────────────────────────────────── */}
+      <Modal
+        open={!!analyticsTest}
+        onClose={() => { setAnalyticsTest(null); setAnalyticsData(null); setAnalyticsError(''); }}
+        title={`Analytics — ${analyticsTest?.title ?? ''}`}
+        size="lg"
+      >
+        <div className="space-y-5 max-h-[80vh] overflow-y-auto pr-1">
+          {analyticsError && (
+            <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              {analyticsError}
+            </div>
+          )}
+          {analyticsLoading ? (
+            <div className="flex justify-center py-10">
+              <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : analyticsData ? (
+            <>
+              {/* Summary stat row */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  { label: 'Attempted', value: `${analyticsData.attempted_count} / ${analyticsData.total_students}`, color: 'text-blue-700', bg: 'bg-blue-50' },
+                  { label: 'Avg Score', value: `${analyticsData.avg_score} / ${analyticsData.max_score}`, color: 'text-gray-700', bg: 'bg-gray-50' },
+                  { label: 'Highest', value: `${analyticsData.highest_score} / ${analyticsData.max_score}`, color: 'text-green-700', bg: 'bg-green-50' },
+                  { label: 'Lowest', value: `${analyticsData.lowest_score} / ${analyticsData.max_score}`, color: 'text-amber-700', bg: 'bg-amber-50' },
+                ].map((stat) => (
+                  <div key={stat.label} className={`${stat.bg} rounded-xl p-4 text-center`}>
+                    <p className={`text-xl font-bold ${stat.color}`}>{stat.value}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{stat.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Score distribution — pure CSS bar chart */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Score Distribution</p>
+                <div className="space-y-2.5">
+                  {(() => {
+                    const maxCount = Math.max(...analyticsData.score_distribution.map((b) => b.count), 1);
+                    return analyticsData.score_distribution.map((bucket) => (
+                      <div key={bucket.range} className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500 w-14 shrink-0 text-right">{bucket.range}%</span>
+                        <div className="flex-1 h-6 bg-gray-100 rounded-lg overflow-hidden">
+                          <div
+                            className="h-full bg-blue-500 rounded-lg flex items-center justify-end pr-2 transition-all duration-500"
+                            style={{ width: `${(bucket.count / maxCount) * 100}%`, minWidth: bucket.count > 0 ? '2rem' : '0' }}
+                          >
+                            {bucket.count > 0 && (
+                              <span className="text-xs font-semibold text-white">{bucket.count}</span>
+                            )}
+                          </div>
+                        </div>
+                        {bucket.count === 0 && (
+                          <span className="text-xs text-gray-400 w-4">0</span>
+                        )}
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              {/* Question analytics — MCQ only */}
+              {analyticsData.question_analytics.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                    Question Analytics — Hardest First
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-100 bg-gray-50">
+                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">#</th>
+                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Question</th>
+                          <th className="text-right px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase">Correct %</th>
+                          <th className="text-left px-3 py-2.5 text-xs font-semibold text-gray-500 uppercase w-28">Bar</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50">
+                        {analyticsData.question_analytics.map((q, idx) => {
+                          const pctColor =
+                            q.correct_pct >= 70 ? 'text-green-700' :
+                            q.correct_pct >= 40 ? 'text-yellow-700' :
+                            'text-red-600';
+                          const barColor =
+                            q.correct_pct >= 70 ? 'bg-green-500' :
+                            q.correct_pct >= 40 ? 'bg-yellow-400' :
+                            'bg-red-400';
+                          return (
+                            <tr key={q.question_id} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-3 py-2.5 text-gray-400 text-xs">{idx + 1}</td>
+                              <td className="px-3 py-2.5 text-gray-700 max-w-[260px] truncate">
+                                {q.question_text.length > 60 ? q.question_text.slice(0, 60) + '…' : q.question_text}
+                              </td>
+                              <td className={`px-3 py-2.5 text-right font-semibold ${pctColor}`}>
+                                {q.correct_pct.toFixed(1)}%
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <div className="w-24 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${barColor}`}
+                                    style={{ width: `${q.correct_pct}%` }}
+                                  />
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : !analyticsLoading && !analyticsError ? (
+            <p className="text-sm text-gray-400 text-center py-10">No analytics data available.</p>
+          ) : null}
         </div>
       </Modal>
     </>

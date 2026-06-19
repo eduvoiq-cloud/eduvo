@@ -14,6 +14,7 @@ import {
   attendanceApi,
   onboardingApi,
   homeworkAIStatsApi,
+  healthScoreApi,
   type Student,
   type Teacher,
   type Complaint,
@@ -22,6 +23,7 @@ import {
   type AuditLog,
   type OnboardingProgress,
   type HomeworkAIStats,
+  type SchoolHealthScore,
 } from '@/lib/api';
 import { getToken, saveSession } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -164,6 +166,7 @@ export default function SchoolAdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [onboarding, setOnboarding] = useState<OnboardingProgress | null>(null);
   const [homeworkAIStats, setHomeworkAIStats] = useState<HomeworkAIStats | null>(null);
+  const [healthScore, setHealthScore] = useState<SchoolHealthScore | null>(null);
   const [loading, setLoading] = useState(true);
   const [auditLoading, setAuditLoading] = useState(true);
   useEffect(() => {
@@ -277,6 +280,12 @@ export default function SchoolAdminDashboard() {
         .get(token!)
         .then((res) => setHomeworkAIStats(res.data))
         .catch(() => {});
+
+      // Fetch school health score (non-blocking)
+      healthScoreApi
+        .get(token!)
+        .then((res) => setHealthScore(res.data))
+        .catch(() => {});
     }
 
     loadDashboard();
@@ -351,9 +360,13 @@ export default function SchoolAdminDashboard() {
         )}
       </div>
 
+      {/* ── School Health Score Widget ──────────────────────────────────────── */}
+      {healthScore !== null && (
+        <SchoolHealthScoreWidget score={healthScore} />
+      )}
+
       {/* ── Quick actions ───────────────────────────────────────────────────── */}
-      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Actions</h2>
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">        <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Actions</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <QuickAction href="/admin/students?action=new" label="Add Student" icon={<StudentsIcon />} />
           <QuickAction href="/admin/teachers?action=new" label="Add Teacher" icon={<TeacherIcon />} />
@@ -401,7 +414,6 @@ export default function SchoolAdminDashboard() {
 }
 
 // ── Homework AI Stats Widget ──────────────────────────────────────────────────
-
 function HomeworkAIStatsWidget({ stats }: { stats: HomeworkAIStats }) {
   const totalChecked = stats.total_checked;
   const autoCheckedPct = stats.auto_checked_pct;
@@ -660,5 +672,92 @@ function ActivityDotIcon() {
     <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 8 8">
       <circle cx="4" cy="4" r="3" />
     </svg>
+  );
+}
+
+// ── School Health Score Widget ────────────────────────────────────────────────
+
+function SchoolHealthScoreWidget({ score }: { score: SchoolHealthScore }) {
+  const gradeColor =
+    score.health_score >= 90 ? 'text-green-700' :
+    score.health_score >= 80 ? 'text-green-600' :
+    score.health_score >= 70 ? 'text-blue-600'  :
+    score.health_score >= 60 ? 'text-yellow-600' :
+    'text-red-600';
+
+  const gradeRingColor =
+    score.health_score >= 90 ? 'bg-green-50 border-green-200' :
+    score.health_score >= 80 ? 'bg-green-50 border-green-200' :
+    score.health_score >= 70 ? 'bg-blue-50 border-blue-200'   :
+    score.health_score >= 60 ? 'bg-yellow-50 border-yellow-200' :
+    'bg-red-50 border-red-200';
+
+  const components = [
+    score.components.attendance,
+    score.components.marks,
+    score.components.fees,
+    score.components.engagement,
+  ];
+
+  function barColor(pct: number): string {
+    if (pct >= 75) return 'bg-green-500';
+    if (pct >= 50) return 'bg-yellow-400';
+    return 'bg-red-400';
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 mb-6">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <span className="flex items-center justify-center w-7 h-7 bg-blue-100 rounded-lg">
+            <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+            </svg>
+          </span>
+          <h2 className="text-sm font-semibold text-gray-900">School Health Score</h2>
+          <span className="text-xs text-gray-400">— {new Date().toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
+        </div>
+      </div>
+
+      <div className="px-6 py-5">
+        <div className="flex items-start gap-8">
+          {/* Left — big score + grade */}
+          <div className={`flex flex-col items-center justify-center w-28 h-28 rounded-2xl border-2 shrink-0 ${gradeRingColor}`}>
+            <span className={`text-4xl font-bold ${gradeColor}`}>{score.health_score}</span>
+            <span className={`text-sm font-semibold mt-0.5 ${gradeColor}`}>Grade {score.grade}</span>
+            <span className="text-xs text-gray-400 mt-0.5">/ 100</span>
+          </div>
+
+          {/* Right — component bars */}
+          <div className="flex-1 space-y-3">
+            {components.map((comp) => (
+              <div key={comp.label} className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-gray-600">{comp.label}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">{comp.pct.toFixed(1)}%</span>
+                    <span className="text-xs font-semibold text-gray-700">{comp.score}/{comp.max} pts</span>
+                  </div>
+                </div>
+                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${barColor(comp.pct)}`}
+                    style={{ width: `${comp.pct}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="flex flex-wrap gap-4 mt-4 text-xs text-gray-500">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" />≥ 75% — Good</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400" />50–74% — Moderate</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" />{'<'} 50% — Needs Attention</span>
+        </div>
+      </div>
+    </div>
   );
 }
