@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest --runInBand",
-    "seed:chapters": "ts-node scripts/seed-chapter-library.ts"
+    "seed:chapters": "ts-node scripts/seed-chapter-library.ts",
+    "postinstall": "node -e \"const fs=require('fs'),path=require('path'),targets=['exceljs','google-gax','gaxios','teeny-request'];targets.forEach(pkg=>{const p=path.join('node_modules',pkg,'node_modules','uuid');if(fs.existsSync(p)){fs.rmSync(p,{recursive:true,force:true});console.log('Removed nested uuid from '+pkg);}});\""
   },
   "keywords": [],
   "author": "",
@@ -28,26 +29,39 @@
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
-    "firebase-admin": "13.10.0",
+    "firebase-admin": "^13.10.0",
     "helmet": "^8.2.0",
     "ioredis": "^5.6.1",
     "jsonwebtoken": "9.0.2",
     "mammoth": "^1.12.0",
     "multer": "^2.1.1",
     "pdf-parse": "1.1.1",
-    "pdfjs-dist": "4.4.168",
+    "pdfjs-dist": "^4.10.38",
     "rate-limit-redis": "^4.2.0",
     "resend": "^6.12.4",
     "uuid": "^14.0.0",
-    "ws": "8.18.3",
-    "xlsx": "0.18.5",
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": ">=11.1.1"
+    },
+    "gaxios": {
+      "uuid": ">=11.1.1"
+    },
+    "google-gax": {
+      "uuid": ">=11.1.1"
+    },
+    "teeny-request": {
+      "uuid": ">=11.1.1"
+    },
+    "js-yaml": ">=4.2.0"
   },
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
-    "@types/ioredis": "^4.28.10",
     "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "9.0.9",
     "@types/multer": "^2.1.0",
