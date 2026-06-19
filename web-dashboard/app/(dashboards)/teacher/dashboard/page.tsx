@@ -10,6 +10,12 @@ import StatCard from '@/components/StatCard';
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
+interface ClassAdminEntry {
+  class_name: string;
+  section: string;
+  appointed_at: string | null;
+}
+
 export default function TeacherDashboard() {
   const { user, loading: authLoading } = useAuth();
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
@@ -18,6 +24,7 @@ export default function TeacherDashboard() {
   const [testsThisMonth, setTestsThisMonth] = useState(0);
   const [suspiciousActivity, setSuspiciousActivity] = useState<SuspiciousActivityRow[]>([]);
   const [pendingRecoveryCount, setPendingRecoveryCount] = useState(0);
+  const [myAdminClasses, setMyAdminClasses] = useState<ClassAdminEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -46,7 +53,7 @@ export default function TeacherDashboard() {
           return;
         }
 
-        const [classesRes, complaintsRes, testsRes, suspiciousRes, recoveryCountRes] = await Promise.all([
+        const [classesRes, complaintsRes, testsRes, suspiciousRes, recoveryCountRes, adminClassesRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
@@ -54,6 +61,9 @@ export default function TeacherDashboard() {
           testsApi.list(token!).catch(() => ({ data: [] })),
           testsApi.getSuspiciousActivity(token!).catch(() => ({ data: [] })),
           recoverySchedulesApi.pendingCount(token!).catch(() => ({ data: { count: 0 } })),
+          fetch(`${BASE_URL}/api/class-admin/my-classes`, {
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          }).then((r) => r.json()).catch(() => ({ data: [] })),
         ]);
 
         const myAssignments: TeacherAssignment[] = classesRes?.data ?? [];
@@ -89,6 +99,7 @@ export default function TeacherDashboard() {
         setTestsThisMonth((testsRes.data ?? []).length);
         setSuspiciousActivity(Array.isArray(suspiciousRes.data) ? suspiciousRes.data : []);
         setPendingRecoveryCount((recoveryCountRes.data as { count?: number })?.count ?? 0);
+        setMyAdminClasses(Array.isArray(adminClassesRes.data) ? adminClassesRes.data : []);
       } catch (err) {
         console.error('[TeacherDashboard] fetch error:', err);
       } finally {
@@ -104,6 +115,13 @@ export default function TeacherDashboard() {
     return `${cn} ${a.section}`;
   }))];
 
+  // Build a Set of "class_name||section" for O(1) lookup
+  const adminClassKeys = new Set(myAdminClasses.map((c) => `${c.class_name}||${c.section}`));
+  const isAdminOf = (className: string, section: string) =>
+    adminClassKeys.has(`${className}||${section}`);
+
+  // Classes where THIS teacher is the admin (deduplicated from assignments)
+  const adminAssignments = myAdminClasses; // already scoped to current teacher by the API
   function formatDuration(seconds: number): string {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -192,10 +210,55 @@ export default function TeacherDashboard() {
         </div>
       )}
 
+      {/* ── Class Admin Tools ───────────────────────────────────────────────── */}
+      {!loading && adminAssignments.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 mb-6">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
+            <span>🎓</span>
+            <h2 className="text-sm font-semibold text-gray-900">Class Admin Tools</h2>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {adminAssignments.map((ac) => (
+              <div key={`${ac.class_name}||${ac.section}`} className="px-6 py-4">
+                <p className="text-sm font-medium text-gray-800 mb-3">
+                  {ac.class_name} · {ac.section}
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {/* Streak Board — only visible because teacher IS class admin */}
+                  <Link
+                    href="/teacher/streak-leaderboard"
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 text-sm font-medium text-orange-700 transition-colors"
+                  >
+                    🔥 Streak Board
+                  </Link>
+
+                  {/* Generate Report Cards */}
+                  <Link
+                    href="/teacher/report-cards"
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-sm font-medium text-blue-700 transition-colors"
+                  >
+                    📄 Generate Report Cards
+                  </Link>
+
+                  {/* Class Recovery — placeholder */}
+                  <button
+                    type="button"
+                    onClick={() => alert('Class Recovery — coming soon!')}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-sm font-medium text-gray-600 transition-colors"
+                  >
+                    🔄 Class Recovery
+                    <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded-full">Soon</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Quick actions */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Actions</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <h2 className="text-sm font-semibold text-gray-900 mb-4">Quick Actions</h2>        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           {[
             { href: '/teacher/marks', label: 'Enter Marks' },
             { href: '/teacher/attendance', label: 'Mark Attendance' },

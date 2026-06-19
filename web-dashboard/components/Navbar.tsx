@@ -33,6 +33,7 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
       label: 'People',
       children: [
         { label: 'Teachers', href: '/admin/teachers' },
+        { label: 'Class Admin', href: '/admin/teachers/class-admin' },
         { label: 'Students', href: '/admin/students' },
       ],
     },

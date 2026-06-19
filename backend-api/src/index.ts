@@ -76,6 +76,8 @@ import recoverySchedulesRoutes from './routes/recoverySchedules';
 import recoveryRoutes from './routes/recovery';
 import studentRecoveryRoutes from './routes/studentRecovery';
 import chapterLibraryRoutes from './routes/chapterLibrary';
+import classAdminRoutes from './routes/classAdmin';
+import reportCardsRoutes from './routes/reportCards';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -324,6 +326,8 @@ async function startServer() {
   app.use('/api/recovery', recoveryRoutes);
   app.use('/api/student-recovery', studentRecoveryRoutes);
   app.use('/api/chapter-library', chapterLibraryRoutes);
+  app.use('/api/class-admin', classAdminRoutes);
+  app.use('/api/report-cards', reportCardsRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

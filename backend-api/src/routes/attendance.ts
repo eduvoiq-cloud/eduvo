@@ -7,6 +7,7 @@ import { sendSuccess, sendError, sendValidationError, sendDbError } from '../uti
 import { logAudit } from '../utils/audit';
 import rateLimit from 'express-rate-limit';
 import { sendAttendanceNotifications } from '../services/attendanceNotifications';
+import { getClassAdmin } from './classAdmin';
 
 const router = Router();
 
@@ -426,6 +427,13 @@ router.post(
         sendError(res, 'You are not assigned to this class', 403);
         return;
       }
+
+      // If a class admin is appointed, only they may mark attendance
+      const classAdmin = await getClassAdmin(school_id, className, section);
+      if (classAdmin && classAdmin.teacher_id !== userId) {
+        sendError(res, 'Only the class admin can mark attendance for this class', 403);
+        return;
+      }
     }
 
     // Check if attendance already submitted for this class+section+date
@@ -582,6 +590,16 @@ router.put(
           sendError(res, 'You are not assigned to this student\'s class', 403);
           return;
         }
+
+        // If a class admin is appointed, only they may mark attendance
+        const schoolId = req.user!.school_id;
+        if (schoolId) {
+          const classAdmin = await getClassAdmin(schoolId, student.class_name, student.section);
+          if (classAdmin && classAdmin.teacher_id !== userId) {
+            sendError(res, 'Only the class admin can mark attendance for this class', 403);
+            return;
+          }
+        }
       }
 
       // Insert the new attendance record
@@ -631,6 +649,16 @@ router.put(
       if (!assigned) {
         sendError(res, 'You are not assigned to this student\'s class', 403);
         return;
+      }
+
+      // If a class admin is appointed, only they may correct attendance
+      const schoolId = req.user!.school_id;
+      if (schoolId) {
+        const classAdmin = await getClassAdmin(schoolId, student.class_name, student.section);
+        if (classAdmin && classAdmin.teacher_id !== userId) {
+          sendError(res, 'Only the class admin can mark attendance for this class', 403);
+          return;
+        }
       }
     }
 
