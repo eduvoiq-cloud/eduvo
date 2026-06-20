@@ -28,6 +28,7 @@ type MoreStackParamList = {
   Settings: undefined;
   RecoveryPacks: undefined;
   MonthlyRecoveryTests: undefined;
+  ReportCards: undefined;
 };
 
 type MoreNavProp = StackNavigationProp<MoreStackParamList>;
@@ -128,6 +129,13 @@ export default function MoreHomeScreen() {
             description="Monthly tests based on your weak topics"
             color="#7C3AED"
             onPress={() => navigation.navigate('MonthlyRecoveryTests')}
+          />
+          <MenuItem
+            icon="📄"
+            label="Report Cards"
+            description="View your exam report cards and grades"
+            color="#1D4ED8"
+            onPress={() => navigation.navigate('ReportCards')}
           />
         </View>
 
