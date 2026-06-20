@@ -24,8 +24,8 @@
  * POST /api/student-recovery/tests/:id/integrity
  *   Lightweight integrity log for monthly recovery tests.
  *   Reuses the same calculateIntegrityScore() logic as daily tests.
- *   Stores the result in test_integrity_logs with the monthly_recovery_attempt_id
- *   in the daily_test_attempt_id column (same table, repurposed column).
+ *   Stores the result in test_integrity_logs.test_attempt_id
+ *   (column was renamed from daily_test_attempt_id via fix-integrity-logs-fk.sql).
  */
 
 import { Router, Request, Response } from 'express';
@@ -674,7 +674,8 @@ router.post('/tests/:id/submit', async (req: Request, res: Response) => {
 /**
  * Logs integrity data for a monthly recovery test attempt.
  * Reuses the same calculateIntegrityScore() logic as daily tests.
- * Stores the row in test_integrity_logs.daily_test_attempt_id = monthly_recovery_attempt_id.
+ * Stores the row in test_integrity_logs.test_attempt_id = monthly_recovery_attempt_id.
+ * (Column was renamed from daily_test_attempt_id by fix-integrity-logs-fk.sql)
  */
 const integritySchema = z.object({
   monthly_recovery_attempt_id: z.string().uuid(),
@@ -757,7 +758,7 @@ router.post('/tests/:id/integrity', async (req: Request, res: Response) => {
   const { data: existing } = await supabaseAdmin
     .from('test_integrity_logs')
     .select('id')
-    .eq('daily_test_attempt_id', monthly_recovery_attempt_id)
+    .eq('test_attempt_id', monthly_recovery_attempt_id)
     .maybeSingle();
 
   if (existing) {
@@ -778,7 +779,7 @@ router.post('/tests/:id/integrity', async (req: Request, res: Response) => {
     const { error: insertErr } = await supabaseAdmin
       .from('test_integrity_logs')
       .insert({
-        daily_test_attempt_id: monthly_recovery_attempt_id,
+        test_attempt_id: monthly_recovery_attempt_id,
         student_id: studentId,
         school_id: schoolId,
         exit_count,

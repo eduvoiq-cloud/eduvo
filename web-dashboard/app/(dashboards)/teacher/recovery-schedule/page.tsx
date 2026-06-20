@@ -14,7 +14,7 @@ interface RecoveryCycle {
   id: string;
   class: string;
   section: string;
-  status: 'generating_pack' | 'pack_ready' | 'generating_tests' | 'tests_ready' | 'completed' | 'pack_failed';
+  status: 'generating_pack' | 'pack_ready' | 'pack_failed' | 'generating_tests' | 'tests_ready' | 'test_failed' | 'completed';
   pack_generated_at: string | null;
   test_generated_at: string | null;
   lockout_until: string | null;
@@ -301,10 +301,15 @@ export default function RecoverySchedulePage() {
       const res = await fetch(`${BASE_URL}/api/recovery/cycle-status?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const json = await res.json();
-      if (res.ok) setCycleStatus(json.data as CycleStatus);
-    } catch { /* silent */ }
-    finally { setCycleLoading(false); }
+      const json = await res.json() as { data?: CycleStatus; message?: string };
+      if (res.ok) {
+        setCycleStatus(json.data ?? null);
+      } else {
+        console.error('[cycle-status] API error:', json.message);
+      }
+    } catch (err) {
+      console.error('[cycle-status] fetch error:', err);
+    } finally { setCycleLoading(false); }
   }, [selectedClass, selectedSection]);
 
   useEffect(() => {
@@ -606,6 +611,22 @@ export default function RecoverySchedulePage() {
                   ⚡ Tests Active
                 </span>
                 <span className="text-xs text-gray-500">Tests generated {cycle.test_generated_at ? new Date(cycle.test_generated_at).toLocaleDateString() : ''}</span>
+              </div>
+            )}
+
+            {cycle?.status === 'test_failed' && (
+              <div className="flex flex-col items-center gap-4 py-6">
+                <span className="text-4xl">⚠️</span>
+                <div className="text-center">
+                  <p className="text-base font-semibold text-red-700">Test generation failed</p>
+                  <p className="text-sm text-gray-500 mt-1">Something went wrong generating the recovery tests. The pack is still ready — you can try generating tests again.</p>
+                </div>
+                <button
+                  onClick={() => setShowTestModal(true)}
+                  className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl transition-colors"
+                >
+                  ↺ Retry Test Generation
+                </button>
               </div>
             )}
 

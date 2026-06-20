@@ -294,30 +294,23 @@ router.put('/:id/approve', async (req: Request, res: Response) => {
     `Recovery test approved for ${schedule.subject as string} — Generation started`
   );
 
-  // Auto-trigger pack + test generation in background
+  // Auto-trigger pack generation for this class+section using the new cycle-based system
   setImmediate(async () => {
-    const scheduleId = req.params.id;
     const apiBase = process.env.INTERNAL_API_BASE ?? `http://localhost:${process.env.PORT ?? 3001}`;
-    const cronSecret = process.env.CRON_SECRET ?? '';
+    // Build a minimal teacher auth token to call the internal API
+    // Use the teacher's token from the original request headers
+    const authHeader = req.headers.authorization ?? '';
     try {
-      // Trigger pack generation
-      await fetch(`${apiBase}/api/recovery/generate-pack`, {
+      await fetch(`${apiBase}/api/recovery/start-pack`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-cron-secret': cronSecret,
+          Authorization: authHeader,
         },
-        body: JSON.stringify({ schedule_id: scheduleId }),
-      });
-      // Small delay, then trigger test generation
-      await new Promise((r) => setTimeout(r, 1000));
-      await fetch(`${apiBase}/api/recovery/generate-test`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-cron-secret': cronSecret,
-        },
-        body: JSON.stringify({ schedule_id: scheduleId }),
+        body: JSON.stringify({
+          class:   schedule.class   as string,
+          section: schedule.section as string,
+        }),
       });
     } catch (genErr) {
       console.error('[recovery-schedules/approve] Auto-generation trigger failed:', genErr instanceof Error ? genErr.message : genErr);
