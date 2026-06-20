@@ -139,6 +139,12 @@ export default function RecoveryPacksScreen() {
   return (
     <>
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
+      {/* Error banner — shown above list when a refresh fails after successful load */}
+      {error && packs.length > 0 && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>⚠️ {error} — showing cached data</Text>
+        </View>
+      )}
       <FlatList
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -233,4 +239,6 @@ const styles = StyleSheet.create({
   emptySubtext: { fontSize: 13, color: '#D1D5DB', marginTop: 6, textAlign: 'center', paddingHorizontal: 20 },
   retryButton: { marginTop: 16, backgroundColor: '#1D4ED8', borderRadius: 8, paddingHorizontal: 24, paddingVertical: 10 },
   retryText: { color: '#FFFFFF', fontWeight: '600', fontSize: 14 },
+  errorBanner: { backgroundColor: '#FEE2E2', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#FECACA' },
+  errorBannerText: { color: '#DC2626', fontSize: 13, fontWeight: '500', textAlign: 'center' },
 });

@@ -239,7 +239,7 @@ router.get('/packs/:id', async (req: Request, res: Response) => {
   // Check if a monthly_recovery_test is available for same subject + month
   const { data: testRow } = await supabaseAdmin
     .from('monthly_recovery_tests')
-    .select('id, total_questions')
+    .select('id, total_questions, cycle_id')
     .eq('student_id', studentId)
     .eq('subject', p.subject)
     .eq('scheduled_month', p.scheduled_month)
@@ -252,20 +252,35 @@ router.get('/packs/:id', async (req: Request, res: Response) => {
   let testTotalQuestions: number | null = null;
 
   if (testRow) {
-    const tr = testRow as { id: string; total_questions: number | null };
+    const tr = testRow as { id: string; total_questions: number | null; cycle_id: string | null };
     testId = tr.id;
     testTotalQuestions = tr.total_questions;
 
-    // Only show banner if no completed attempt exists
-    const { data: attemptRow } = await supabaseAdmin
-      .from('monthly_recovery_attempts')
-      .select('id, status')
-      .eq('monthly_recovery_test_id', tr.id)
-      .eq('student_id', studentId)
-      .eq('status', 'completed')
-      .maybeSingle();
+    // Cycle-based tests use recovery_test_attempts; legacy tests use monthly_recovery_attempts
+    const isCycleBased = Boolean(tr.cycle_id);
 
-    testAvailable = !attemptRow;
+    let completed = false;
+    if (isCycleBased) {
+      const { data: rta } = await supabaseAdmin
+        .from('recovery_test_attempts')
+        .select('id')
+        .eq('recovery_test_id', tr.id)
+        .eq('student_id', studentId)
+        .eq('status', 'submitted')
+        .maybeSingle();
+      completed = Boolean(rta);
+    } else {
+      const { data: attemptRow } = await supabaseAdmin
+        .from('monthly_recovery_attempts')
+        .select('id, status')
+        .eq('monthly_recovery_test_id', tr.id)
+        .eq('student_id', studentId)
+        .eq('status', 'completed')
+        .maybeSingle();
+      completed = Boolean(attemptRow);
+    }
+
+    testAvailable = !completed;
   }
 
   sendSuccess(res, {
