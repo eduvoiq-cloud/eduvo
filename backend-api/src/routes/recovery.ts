@@ -342,12 +342,15 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
       await supabaseAdmin.from('recovery_cycles').update({ status: 'pack_ready', updated_at: new Date().toISOString() }).eq('id', cycleId);
     } catch (err) {
       console.error('[recovery/start-pack] Fatal:', err instanceof Error ? err.message : err);
-      // Mark cycle as failed so teacher isn't locked out indefinitely
-      await supabaseAdmin.from('recovery_cycles').update({
-        status: 'pack_failed' as unknown as string,
-        lockout_until: null,
-        updated_at: new Date().toISOString(),
-      }).eq('id', cycleId).catch(() => {});
+      // Mark cycle as failed so teacher isn't locked out indefinitely.
+      // 'pack_failed' is valid per the updated recovery_cycles CHECK constraint.
+      try {
+        await supabaseAdmin.from('recovery_cycles').update({
+          status: 'pack_failed',
+          lockout_until: null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', cycleId);
+      } catch { /* best-effort */ }
     }
   });
 });
@@ -389,7 +392,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
   if (!cycle) { sendError(res, 'Cycle not found', 404); return; }
   const c = cycle as { id: string; class: string; section: string; status: string; school_id: string };
 
-  if (!['pack_ready', 'tests_ready'].includes(c.status)) {
+  if (!['pack_ready', 'tests_ready', 'test_failed'].includes(c.status)) {
     sendError(res, `Cannot generate tests for a cycle with status '${c.status}'`, 400);
     return;
   }
@@ -477,11 +480,13 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
       }).eq('id', cycleId);
     } catch (err) {
       console.error('[recovery/start-tests] Fatal:', err instanceof Error ? err.message : err);
-      // Revert to pack_ready so teacher can retry test generation
-      await supabaseAdmin.from('recovery_cycles').update({
-        status: 'pack_ready',
-        updated_at: new Date().toISOString(),
-      }).eq('id', cycleId).catch(() => {});
+      // Mark cycle as test_failed so teacher sees the retry button
+      try {
+        await supabaseAdmin.from('recovery_cycles').update({
+          status: 'test_failed',
+          updated_at: new Date().toISOString(),
+        }).eq('id', cycleId);
+      } catch { /* best-effort */ }
     }
   });
 });
