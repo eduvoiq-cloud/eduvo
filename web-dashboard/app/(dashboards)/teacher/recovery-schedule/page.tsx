@@ -255,9 +255,7 @@ export default function RecoverySchedulePage() {
   const [resultsLoading, setResultsLoading] = useState(false);
 
   // Countdown timer ref
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // ── Fetch assignments ───────────────────────────────────────────────────────
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);  // ── Fetch assignments ───────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!user?.school_id) return;
@@ -313,27 +311,10 @@ export default function RecoverySchedulePage() {
   }, [selectedClass, selectedSection]);
 
   useEffect(() => {
+    // Only poll if something just changed — no need to hammer the server
+    // since batch jobs take hours, not seconds
     void fetchCycleStatus();
   }, [fetchCycleStatus]);
-
-  // Poll while generating — use a ref for fetchCycleStatus to avoid recreating the interval
-  const fetchCycleStatusRef = useRef(fetchCycleStatus);
-  useEffect(() => { fetchCycleStatusRef.current = fetchCycleStatus; }, [fetchCycleStatus]);
-
-  useEffect(() => {
-    const status = cycleStatus?.cycle?.status;
-    const isGenerating = status === 'generating_pack' || status === 'generating_tests';
-
-    if (isGenerating) {
-      // Only create a new interval if one isn't already running
-      if (!pollRef.current) {
-        pollRef.current = setInterval(() => void fetchCycleStatusRef.current(), 5000);
-      }
-    } else {
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-    }
-    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  }, [cycleStatus?.cycle?.status]);
 
   // ── Generate pack ───────────────────────────────────────────────────────────
 
@@ -530,18 +511,14 @@ export default function RecoverySchedulePage() {
             )}
 
             {cycle?.status === 'generating_pack' && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm font-medium text-gray-700">Generating packs…</span>
+              <div className="flex items-center gap-3 py-4">
+                <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                  <span className="text-xl">⏳</span>
                 </div>
-                <div className="w-full bg-gray-100 rounded-full h-2">
-                  <div
-                    className="bg-purple-600 h-2 rounded-full transition-all"
-                    style={{ width: packTotal > 0 ? `${Math.round((packDone / packTotal) * 100)}%` : '10%' }}
-                  />
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">Packs submitted — generating in background</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Recovery packs will be ready in a few hours. You'll get a notification when done.</p>
                 </div>
-                <p className="text-xs text-gray-500">{packDone} / {packTotal || '…'} students done</p>
               </div>
             )}
 
@@ -582,26 +559,14 @@ export default function RecoverySchedulePage() {
             )}
 
             {cycle?.status === 'generating_tests' && (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="w-4 h-4 border-2 border-purple-600 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm font-medium text-gray-700">Generating tests…</span>
+              <div className="flex items-center gap-3 py-4">
+                <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
+                  <span className="text-xl">⏳</span>
                 </div>
-                <div className="w-full bg-gray-100 rounded-full h-2">
-                  <div
-                    className="bg-purple-400 h-2 rounded-full transition-all"
-                    style={{
-                      width: cycleStatus && cycleStatus.test_progress.total > 0
-                        ? `${Math.round((cycleStatus.test_progress.completed / cycleStatus.test_progress.total) * 100)}%`
-                        : '10%'
-                    }}
-                  />
+                <div>
+                  <p className="text-sm font-semibold text-gray-800">Tests submitted — generating in background</p>
+                  <p className="text-xs text-gray-500 mt-0.5">Recovery tests will be ready in a few hours. You'll get a notification when students can attempt them.</p>
                 </div>
-                <p className="text-xs text-gray-500">
-                  {cycleStatus && cycleStatus.test_progress.total > 0
-                    ? `${cycleStatus.test_progress.completed} / ${cycleStatus.test_progress.total} tests done`
-                    : 'This may take a few minutes'}
-                </p>
               </div>
             )}
 

@@ -220,9 +220,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     saveSession(token, user, refresh_token, expires_at);
 
-    // Set active school to primary on fresh login
-    setActiveSchoolId(user.school_id);
-    setState({ user, token, loading: false, subscriptionExpired: false, schools: [], activeSchoolId: user.school_id });
+    // Preserve the previously-selected medium across logins.
+    // The stored school_id will be validated against the fresh schools list
+    // when /me resolves in the useEffect below. If it's invalid, it falls back
+    // to user.school_id automatically. Only reset to the primary school when
+    // there is no previously stored value (i.e., first-ever login).
+    const existingSchoolId = getActiveSchoolId();
+    const activeSchoolId = existingSchoolId ?? user.school_id;
+    if (!existingSchoolId) {
+      setActiveSchoolId(user.school_id);
+    }
+    setState({ user, token, loading: false, subscriptionExpired: false, schools: [], activeSchoolId });
 
     // Schedule proactive token refresh
     if (expires_at && refresh_token) {
@@ -256,11 +264,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/login');
   }, [router]);
 
-  /** Switch the active medium — updates context and localStorage */
+  /** Switch the active medium — updates context, localStorage, and re-fetches the current page */
   const switchMedium = useCallback((schoolId: string) => {
     setActiveSchoolId(schoolId);
     setState((s) => ({ ...s, activeSchoolId: schoolId }));
-  }, []);
+    // Refresh the current route so all page-level useEffects re-run with the new X-School-ID header
+    router.refresh();
+  }, [router]);
 
   /** Re-fetch /me to get an updated schools list after adding a new medium */
   const refreshSchools = useCallback(async () => {

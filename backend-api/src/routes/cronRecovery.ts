@@ -332,17 +332,90 @@ async function runMonthlyScheduler(req: Request, res: Response): Promise<void> {
 router.get('/monthly-scheduler',  runMonthlyScheduler);
 router.post('/monthly-scheduler', runMonthlyScheduler);
 
+// ── Gemini Batch API poller ───────────────────────────────────────────────────
+
+interface BatchJobResult {
+  state: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+  results: Array<{ key: string; content: string }>;
+}
+
+/**
+ * Poll a Gemini Batch API job by name.
+ * Returns the job state and, if SUCCEEDED, the inline response results.
+ */
+async function pollGeminiBatchJob(jobName: string, apiKey: string): Promise<BatchJobResult> {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/${jobName}?key=${apiKey}`,
+    { method: 'GET' }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Batch API poll failed ${response.status}: ${await response.text()}`);
+  }
+
+  const data = await response.json() as {
+    state?: string;
+    dest?: {
+      inlinedResponses?: Array<{
+        key?: string;
+        response?: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      }>;
+    };
+  };
+
+  const rawState = data.state ?? 'PENDING';
+  // Gemini Batch API states: JOB_STATE_PENDING, JOB_STATE_RUNNING, JOB_STATE_SUCCEEDED, etc.
+  let state: BatchJobResult['state'] = 'PENDING';
+  if (rawState.includes('SUCCEEDED')) state = 'SUCCEEDED';
+  else if (rawState.includes('FAILED')) state = 'FAILED';
+  else if (rawState.includes('CANCELLED')) state = 'CANCELLED';
+  else if (rawState.includes('RUNNING')) state = 'RUNNING';
+
+  const results: Array<{ key: string; content: string }> = [];
+  if (state === 'SUCCEEDED' && data.dest?.inlinedResponses) {
+    for (const r of data.dest.inlinedResponses) {
+      if (!r.key) continue;
+      const text = r.response?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      results.push({ key: r.key, content: text });
+    }
+  }
+
+  return { state, results };
+}
+
+// ── Teacher notification helper ───────────────────────────────────────────────
+
+async function notifyTeacher(teacherId: string, title: string, message: string): Promise<void> {
+  try {
+    await supabaseAdmin.from('notifications').insert({
+      title,
+      message,
+      type: 'reminder',
+      recipient_id: teacherId,
+      sender_id: teacherId,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    });
+
+    const { sendPushNotification } = await import('../services/fcmService');
+    await sendPushNotification(teacherId, title, message, { type: 'recovery_pack_ready' }, 'user');
+  } catch { /* non-fatal */ }
+}
+
 // ── POST /api/cron/recovery/check-batch-jobs ──────────────────────────────────
 /**
- * Every-2-hours cron: poll Gemini batch job status and update recovery_packs
- * and monthly_recovery_tests when generation has been done in-process.
+ * Every-2-hours cron: poll Gemini Batch API for recovery_cycles that are still
+ * in 'generating_pack' or 'generating_tests' state.
  *
- * For the standard (non-Vertex-AI) path, results are written inline by the
- * generation endpoint and this cron's role is to handle any stuck 'processing'
- * rows that never got updated (timeout / crash recovery).
+ * When a pack batch job is done:
+ *   - saves each student's pack_content into recovery_packs
+ *   - sets cycle status → pack_ready
+ *   - sends teacher notification
  *
- * For the Vertex AI batch path, this polls the batch job status endpoint
- * and processes results when the job is DONE.
+ * When a test batch job is done:
+ *   - saves each student's questions into monthly_recovery_tests
+ *   - sets cycle status → tests_ready
+ *   - sends teacher notification
  *
  * Railway cron schedule: 0 *\/2 * * *  (every 2 hours)
  */
@@ -360,272 +433,148 @@ router.post('/check-batch-jobs', async (req: Request, res: Response) => {
     const errors: string[] = [];
 
     try {
-      const useVertexBatch = Boolean(process.env.GOOGLE_CLOUD_PROJECT);
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        console.error('[cron/recovery] GEMINI_API_KEY not set — skipping batch job check');
+        return;
+      }
 
-      if (useVertexBatch) {
-        // ── Vertex AI batch path: poll real batch jobs ───────────────────────
-        // For recovery_packs still processing
-        const { data: processingPacks } = await supabaseAdmin
-          .from('recovery_packs')
-          .select('id, batch_job_id, student_id')
-          .eq('generation_status', 'processing')
-          .not('batch_job_id', 'is', null);
+      // ── 1. Find all cycles with pending pack batch jobs ──────────────────────
+      const { data: packCycles } = await supabaseAdmin
+        .from('recovery_cycles')
+        .select('id, pack_batch_job_id, class, section, school_id, created_by')
+        .eq('status', 'generating_pack')
+        .not('pack_batch_job_id', 'is', null);
 
-        // For monthly_recovery_tests still processing
-        const { data: processingTests } = await supabaseAdmin
-          .from('monthly_recovery_tests')
-          .select('id, batch_job_id, student_id, total_questions')
-          .eq('generation_status', 'processing')
-          .not('batch_job_id', 'is', null);
+      for (const cycle of (packCycles ?? []) as Array<{
+        id: string; pack_batch_job_id: string; class: string;
+        section: string; school_id: string; created_by: string;
+      }>) {
+        try {
+          const jobResult = await pollGeminiBatchJob(cycle.pack_batch_job_id, apiKey);
 
-        // Collect unique batch job IDs from both tables
-        const uniqueBatchJobs = new Set<string>();
-        for (const row of (processingPacks ?? []) as Array<{ batch_job_id: string | null }>) {
-          if (row.batch_job_id) uniqueBatchJobs.add(row.batch_job_id);
-        }
-        for (const row of (processingTests ?? []) as Array<{ batch_job_id: string | null }>) {
-          if (row.batch_job_id) uniqueBatchJobs.add(row.batch_job_id);
-        }
+          if (jobResult.state === 'PENDING' || jobResult.state === 'RUNNING') continue; // still processing
 
-        const { GoogleAuth } = await import('google-auth-library');
-        const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' });
-        const client = await auth.getClient();
-        const accessToken = await client.getAccessToken();
-
-        for (const jobId of uniqueBatchJobs) {
-          try {
-            // Poll Vertex AI batch job status
-            const statusResp = await fetch(
-              `https://aiplatform.googleapis.com/v1/${jobId}`,
-              {
-                headers: { Authorization: `Bearer ${accessToken.token}` },
-              }
-            );
-
-            if (!statusResp.ok) {
-              errors.push(`Failed to fetch job status for ${jobId}: ${statusResp.status}`);
-              continue;
-            }
-
-            const jobData = await statusResp.json() as {
-              state: string;
-              outputConfig?: { gcsDestination?: { outputUriPrefix?: string } };
-              error?: { message: string };
-            };
-
-            if (jobData.state === 'JOB_STATE_SUCCEEDED') {
-              // Mark all rows with this batch_job_id as completed
-              // (Results would need to be fetched from GCS — for now mark completed)
-              const { error: packErr } = await supabaseAdmin
-                .from('recovery_packs')
-                .update({ generation_status: 'completed', generated_at: new Date().toISOString() })
-                .eq('batch_job_id', jobId)
-                .eq('generation_status', 'processing');
-              if (!packErr) packsUpdated++;
-
-              const { error: testErr } = await supabaseAdmin
-                .from('monthly_recovery_tests')
-                .update({ generation_status: 'completed', generated_at: new Date().toISOString() })
-                .eq('batch_job_id', jobId)
-                .eq('generation_status', 'processing');
-              if (!testErr) testsUpdated++;
-
-            } else if (jobData.state === 'JOB_STATE_FAILED' || jobData.state === 'JOB_STATE_CANCELLED') {
-              const errMsg = jobData.error?.message ?? 'Batch job failed';
-              errors.push(`Job ${jobId}: ${errMsg}`);
-
-              await supabaseAdmin
-                .from('recovery_packs')
-                .update({ generation_status: 'failed' })
-                .eq('batch_job_id', jobId)
-                .eq('generation_status', 'processing');
-              packsFailed++;
-
-              await supabaseAdmin
-                .from('monthly_recovery_tests')
-                .update({ generation_status: 'failed' })
-                .eq('batch_job_id', jobId)
-                .eq('generation_status', 'processing');
-              testsFailed++;
-            }
-            // JOB_STATE_RUNNING / PENDING — still processing, skip
-          } catch (jobErr) {
-            const msg = jobErr instanceof Error ? jobErr.message : String(jobErr);
-            errors.push(`Job poll error [${jobId}]: ${msg}`);
-          }
-        }
-      } else {
-        // ── Standard API path: check for stuck 'processing' rows ─────────────
-        // Any row that has been stuck in 'processing' for more than 30 minutes
-        // without a result should be retried or marked failed.
-        const stuckThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-
-        // Find stuck recovery_packs (processing but no generated_at, older than 30min)
-        const { data: stuckPacks } = await supabaseAdmin
-          .from('recovery_packs')
-          .select('id, student_id, recovery_schedule_id, subject, scheduled_month, school_id, weak_topics')
-          .eq('generation_status', 'processing')
-          .lt('created_at', stuckThreshold);
-
-        for (const pack of (stuckPacks ?? []) as Array<{
-          id: string; student_id: string; recovery_schedule_id: string;
-          subject: string; scheduled_month: string; school_id: string; weak_topics: string[] | null;
-        }>) {
-          try {
-            const weakTopics = pack.weak_topics ?? [pack.subject];
-            const weakTopicsList = weakTopics.join(', ');
-
-            // Fetch schedule for class info + board
-            const { data: schedule } = await supabaseAdmin
-              .from('monthly_recovery_schedules')
-              .select('class, section, school_id')
-              .eq('id', pack.recovery_schedule_id)
-              .maybeSingle();
-
-            if (!schedule) {
-              await supabaseAdmin.from('recovery_packs').update({ generation_status: 'failed' }).eq('id', pack.id);
-              packsFailed++;
-              continue;
-            }
-
-            const sch = schedule as { class: string; section: string; school_id: string };
-            const { data: schoolRow } = await supabaseAdmin.from('schools').select('board').eq('id', sch.school_id).maybeSingle();
-            const board = (schoolRow as { board?: string } | null)?.board ?? 'CBSE';
-
-            // Re-generate via Gemini
-            const apiKey = process.env.GEMINI_API_KEY;
-            if (!apiKey) {
-              await supabaseAdmin.from('recovery_packs').update({ generation_status: 'failed' }).eq('id', pack.id);
-              packsFailed++;
-              continue;
-            }
-
-            const modelId = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-            const prompt = `You are creating a personalized study recovery pack for a Class ${sch.class} student in India studying ${pack.subject} (${board} curriculum). This student is weak in: ${weakTopicsList}. Create a Recovery Pack with one section per weak topic. Return ONLY valid JSON: {"sections":[{"topic":"string","explanation":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
-
-            const resp = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                  generationConfig: { responseMimeType: 'application/json' },
-                }),
-              }
-            );
-
-            if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`);
-
-            const geminiData = await resp.json() as {
-              candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-            };
-            const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-            const jsonText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-            const parsed = JSON.parse(jsonText) as unknown;
-
-            await supabaseAdmin
-              .from('recovery_packs')
-              .update({
-                generation_status: 'completed',
-                generated_at: new Date().toISOString(),
-                pack_content: parsed,
-              })
-              .eq('id', pack.id);
-
-            packsUpdated++;
-            await new Promise((r) => setTimeout(r, 800));
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            errors.push(`Pack retry failed [${pack.id}]: ${msg}`);
-            await supabaseAdmin.from('recovery_packs').update({ generation_status: 'failed' }).eq('id', pack.id);
+          if (jobResult.state === 'FAILED' || jobResult.state === 'CANCELLED') {
+            await supabaseAdmin.from('recovery_cycles').update({
+              status: 'pack_failed',
+              lockout_until: null,
+              updated_at: new Date().toISOString(),
+            }).eq('id', cycle.id);
             packsFailed++;
+            continue;
           }
-        }
 
-        // Find stuck monthly_recovery_tests
-        const { data: stuckTests } = await supabaseAdmin
-          .from('monthly_recovery_tests')
-          .select('id, student_id, recovery_schedule_id, subject, scheduled_month, school_id, weak_topics_used, total_questions')
-          .eq('generation_status', 'processing')
-          .lt('created_at', stuckThreshold);
+          if (jobResult.state === 'SUCCEEDED') {
+            // Save each student's pack content into recovery_packs
+            for (const { key, content } of jobResult.results) {
+              try {
+                const [studentId, subject] = key.split('|');
+                const parsed = JSON.parse(content) as unknown;
 
-        for (const test of (stuckTests ?? []) as Array<{
-          id: string; student_id: string; recovery_schedule_id: string;
-          subject: string; scheduled_month: string; school_id: string;
-          weak_topics_used: string[] | null; total_questions: number | null;
-        }>) {
-          try {
-            const weakTopics = test.weak_topics_used ?? [test.subject];
-            const weakTopicsList = weakTopics.join(', ');
-            const questionCount = test.total_questions ?? Math.min(30, Math.max(20, weakTopics.length * 4));
+                await supabaseAdmin
+                  .from('recovery_packs')
+                  .update({
+                    pack_content: parsed,
+                    generation_status: 'completed',
+                    generated_at: new Date().toISOString(),
+                  })
+                  .eq('cycle_id', cycle.id)
+                  .eq('student_id', studentId)
+                  .eq('subject', subject);
 
-            const { data: schedule } = await supabaseAdmin
-              .from('monthly_recovery_schedules')
-              .select('class, section, school_id')
-              .eq('id', test.recovery_schedule_id)
-              .maybeSingle();
-
-            if (!schedule) {
-              await supabaseAdmin.from('monthly_recovery_tests').update({ generation_status: 'failed' }).eq('id', test.id);
-              testsFailed++;
-              continue;
-            }
-
-            const sch = schedule as { class: string; section: string; school_id: string };
-            const { data: schoolRow } = await supabaseAdmin.from('schools').select('board').eq('id', sch.school_id).maybeSingle();
-            const board = (schoolRow as { board?: string } | null)?.board ?? 'CBSE';
-
-            const apiKey = process.env.GEMINI_API_KEY;
-            if (!apiKey) {
-              await supabaseAdmin.from('monthly_recovery_tests').update({ generation_status: 'failed' }).eq('id', test.id);
-              testsFailed++;
-              continue;
-            }
-
-            const modelId = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-            const prompt = `You are creating a personalized Monthly Recovery Test for a Class ${sch.class} student in India. Subject: ${test.subject} (${board} curriculum). This student is weak in: ${weakTopicsList}. Generate exactly ${questionCount} multiple choice questions. Return ONLY valid JSON: {"questions":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"string","difficulty":"easy","topic":"string"}]}`;
-
-            const resp = await fetch(
-              `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                  generationConfig: { responseMimeType: 'application/json' },
-                }),
+                packsUpdated++;
+              } catch (parseErr) {
+                errors.push(`Pack parse error [cycle=${cycle.id} key=${key}]: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
               }
+            }
+
+            await supabaseAdmin.from('recovery_cycles').update({
+              status: 'pack_ready',
+              pack_generated_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }).eq('id', cycle.id);
+
+            // Notify teacher
+            await notifyTeacher(
+              cycle.created_by,
+              '✅ Recovery Packs Ready',
+              `Recovery study packs for Class ${cycle.class}-${cycle.section} have been generated. You can now create recovery tests.`
             );
-
-            if (!resp.ok) throw new Error(`Gemini HTTP ${resp.status}`);
-
-            const geminiData = await resp.json() as {
-              candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-            };
-            const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-            const jsonText = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-            const parsed = JSON.parse(jsonText) as { questions?: unknown[] };
-
-            await supabaseAdmin
-              .from('monthly_recovery_tests')
-              .update({
-                generation_status: 'completed',
-                generated_at: new Date().toISOString(),
-                questions: parsed.questions,
-                total_questions: Array.isArray(parsed.questions) ? parsed.questions.length : questionCount,
-                is_available: false,
-              })
-              .eq('id', test.id);
-
-            testsUpdated++;
-            await new Promise((r) => setTimeout(r, 800));
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            errors.push(`Test retry failed [${test.id}]: ${msg}`);
-            await supabaseAdmin.from('monthly_recovery_tests').update({ generation_status: 'failed' }).eq('id', test.id);
-            testsFailed++;
           }
+        } catch (cycleErr) {
+          errors.push(`Pack cycle [${cycle.id}]: ${cycleErr instanceof Error ? cycleErr.message : String(cycleErr)}`);
+        }
+      }
+
+      // ── 2. Find all cycles with pending test batch jobs ──────────────────────
+      const { data: testCycles } = await supabaseAdmin
+        .from('recovery_cycles')
+        .select('id, test_batch_job_id, class, section, school_id, created_by')
+        .eq('status', 'generating_tests')
+        .not('test_batch_job_id', 'is', null);
+
+      for (const cycle of (testCycles ?? []) as Array<{
+        id: string; test_batch_job_id: string; class: string;
+        section: string; school_id: string; created_by: string;
+      }>) {
+        try {
+          const jobResult = await pollGeminiBatchJob(cycle.test_batch_job_id, apiKey);
+
+          if (jobResult.state === 'PENDING' || jobResult.state === 'RUNNING') continue;
+
+          if (jobResult.state === 'FAILED' || jobResult.state === 'CANCELLED') {
+            await supabaseAdmin.from('recovery_cycles').update({
+              status: 'test_failed',
+              updated_at: new Date().toISOString(),
+            }).eq('id', cycle.id);
+            testsFailed++;
+            continue;
+          }
+
+          if (jobResult.state === 'SUCCEEDED') {
+            // Save each student's test questions into monthly_recovery_tests
+            for (const { key, content } of jobResult.results) {
+              try {
+                const [studentId, subject] = key.split('|');
+                const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+                const parsed = JSON.parse(cleaned) as { questions?: unknown[] };
+                const questions = parsed.questions ?? [];
+
+                await supabaseAdmin
+                  .from('monthly_recovery_tests')
+                  .update({
+                    questions,
+                    total_questions: questions.length,
+                    generation_status: 'completed',
+                    generated_at: new Date().toISOString(),
+                    is_available: true,
+                  })
+                  .eq('cycle_id', cycle.id)
+                  .eq('student_id', studentId)
+                  .eq('subject', subject);
+
+                testsUpdated++;
+              } catch (parseErr) {
+                errors.push(`Test parse error [cycle=${cycle.id} key=${key}]: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+              }
+            }
+
+            await supabaseAdmin.from('recovery_cycles').update({
+              status: 'tests_ready',
+              test_generated_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }).eq('id', cycle.id);
+
+            // Notify teacher
+            await notifyTeacher(
+              cycle.created_by,
+              '⚡ Recovery Tests Ready',
+              `Recovery tests for Class ${cycle.class}-${cycle.section} are live. Students can now attempt them.`
+            );
+          }
+        } catch (cycleErr) {
+          errors.push(`Test cycle [${cycle.id}]: ${cycleErr instanceof Error ? cycleErr.message : String(cycleErr)}`);
         }
       }
 
@@ -647,48 +596,9 @@ router.post('/check-batch-jobs', async (req: Request, res: Response) => {
 router.get('/check-batch-jobs', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
-  const startedAt = new Date().toISOString();
-  sendSuccess(res, { message: 'Batch job checker started', started_at: startedAt }, 'Job started');
-
-  setImmediate(async () => {
-    try {
-      console.log('[cron/recovery] check-batch-jobs (GET) starting at', startedAt);
-      // Reuse the same logic — find stuck processing rows and retry/mark failed
-      const stuckThreshold = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-
-      const { data: stuckPacks } = await supabaseAdmin
-        .from('recovery_packs')
-        .select('id')
-        .eq('generation_status', 'processing')
-        .lt('created_at', stuckThreshold);
-
-      for (const pack of (stuckPacks ?? []) as Array<{ id: string }>) {
-        await supabaseAdmin
-          .from('recovery_packs')
-          .update({ generation_status: 'failed' })
-          .eq('id', pack.id);
-      }
-
-      const { data: stuckTests } = await supabaseAdmin
-        .from('monthly_recovery_tests')
-        .select('id')
-        .eq('generation_status', 'processing')
-        .lt('created_at', stuckThreshold);
-
-      for (const test of (stuckTests ?? []) as Array<{ id: string }>) {
-        await supabaseAdmin
-          .from('monthly_recovery_tests')
-          .update({ generation_status: 'failed' })
-          .eq('id', test.id);
-      }
-
-      console.log(`[cron/recovery] check-batch-jobs (GET) complete — stuck packs: ${stuckPacks?.length ?? 0}, stuck tests: ${stuckTests?.length ?? 0}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[cron/recovery] check-batch-jobs (GET) crashed:', msg);
-      if (process.env.SENTRY_DSN) Sentry.captureException(err);
-    }
-  });
+  // Delegate to the same POST handler logic by forwarding internally
+  req.method = 'POST';
+  return router.handle(req, res, () => {});
 });
 
 // ── GET|POST /api/cron/recovery/activate-tests ───────────────────────────────
