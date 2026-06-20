@@ -66,6 +66,7 @@ function FeesPageInner() {
   const [filterClass, setFilterClass] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [filterMinBalance, setFilterMinBalance] = useState('');
 
   // Payment modal
   const [payTarget, setPayTarget] = useState<FeeRecord | null>(null);
@@ -124,13 +125,20 @@ function FeesPageInner() {
       const filtered = filterStatus
         ? arr.filter((r) => r.payment_status === filterStatus)
         : arr;
-      setRecords(filtered);
+      const minBal = parseFloat(filterMinBalance);
+      const finalFiltered = !isNaN(minBal) && minBal > 0
+        ? filtered.filter((r) => {
+            const balance = Math.max(0, (r.total_fee_amount ?? 0) - (r.amount_paid ?? 0));
+            return balance >= minBal;
+          })
+        : filtered;
+      setRecords(finalFiltered);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load fee records');
     } finally {
       setLoading(false);
     }
-  }, [filterClass, filterSection, filterStatus]);
+  }, [filterClass, filterSection, filterStatus, filterMinBalance]);
 
   useEffect(() => { fetchFees(); }, [fetchFees]);
 
@@ -305,6 +313,39 @@ function FeesPageInner() {
             {s === '' ? 'All' : statusLabel(s)}
           </button>
         ))}
+
+        {/* ── Balance filter ──────────────────────────────────────────────── */}
+        <div className="flex items-center gap-2 ml-auto">
+          <div className="relative flex items-center">
+            <span className="absolute left-3 text-xs text-gray-400 font-medium pointer-events-none">₹</span>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={filterMinBalance}
+              onChange={(e) => setFilterMinBalance(e.target.value)}
+              placeholder="Min balance due"
+              aria-label="Filter by minimum balance due"
+              className="pl-7 pr-3 py-2 text-sm border border-gray-300 rounded-lg bg-white text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 w-44"
+            />
+            {filterMinBalance && (
+              <button
+                onClick={() => setFilterMinBalance('')}
+                className="absolute right-2 text-gray-400 hover:text-gray-600 transition-colors"
+                aria-label="Clear balance filter"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
+          </div>
+          {filterMinBalance && !isNaN(parseFloat(filterMinBalance)) && parseFloat(filterMinBalance) > 0 && (
+            <span className="text-xs text-orange-600 font-medium whitespace-nowrap bg-orange-50 border border-orange-200 px-2 py-1 rounded-full">
+              Balance ≥ {fmt(parseFloat(filterMinBalance))}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── Feedback ─────────────────────────────────────────────────────────── */}

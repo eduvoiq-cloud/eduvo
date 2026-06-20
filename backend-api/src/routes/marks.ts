@@ -7,6 +7,7 @@ import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 import { normaliseTerm, termFilterValues } from '../utils/term';
+import { getTokensForStudents, getTokensForUsers, sendPushMulticast } from '../services/fcmService';
 
 const router = Router();
 
@@ -216,6 +217,71 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     student_id: parsed.data.student_id,
     subject: parsed.data.subject,
     score: parsed.data.score,
+  });
+
+  // Fire-and-forget: notify student (and parent) that marks were uploaded
+  setImmediate(() => {
+    (async () => {
+      try {
+        const { student_id, subject, score, max_score, term: markTerm, exam_type } = parsed.data;
+        const pct = max_score > 0 ? Math.round((score / max_score) * 100) : 0;
+        const senderId = req.user!.id;
+
+        // In-app notification for the student
+        await supabaseAdmin.from('notifications').insert({
+          title:        '📊 Marks Uploaded',
+          message:      `Your ${subject} marks for ${markTerm} ${exam_type.replace('_', ' ')} have been uploaded: ${score}/${max_score} (${pct}%)`,
+          type:         'marks',
+          recipient_id: student_id,
+          sender_id:    senderId,
+          is_read:      false,
+          created_at:   new Date().toISOString(),
+        });
+
+        // FCM push to student
+        const studentTokens = await getTokensForStudents([student_id]);
+        if (studentTokens.length > 0) {
+          await sendPushMulticast(
+            studentTokens,
+            '📊 Marks Uploaded',
+            `Your ${subject} marks: ${score}/${max_score} (${pct}%)`,
+            { type: 'marks', subject, term: markTerm, exam_type }
+          );
+        }
+
+        // Notify parent if linked
+        const { data: studentRow } = await supabaseAdmin
+          .from('students')
+          .select('full_name, parent_id')
+          .eq('id', student_id)
+          .maybeSingle();
+
+        const sr = studentRow as { full_name: string; parent_id: string | null } | null;
+        if (sr?.parent_id) {
+          await supabaseAdmin.from('notifications').insert({
+            title:        '📊 Marks Uploaded',
+            message:      `${sr.full_name}'s ${subject} marks for ${markTerm} ${exam_type.replace('_', ' ')}: ${score}/${max_score} (${pct}%)`,
+            type:         'marks',
+            recipient_id: sr.parent_id,
+            sender_id:    senderId,
+            is_read:      false,
+            created_at:   new Date().toISOString(),
+          });
+
+          const parentTokens = await getTokensForUsers([sr.parent_id]);
+          if (parentTokens.length > 0) {
+            await sendPushMulticast(
+              parentTokens,
+              '📊 Marks Uploaded',
+              `${sr.full_name}'s ${subject} marks: ${score}/${max_score} (${pct}%)`,
+              { type: 'marks', subject, term: markTerm, exam_type }
+            );
+          }
+        }
+      } catch (err) {
+        console.error('[marks] Failed to send marks notification:', err);
+      }
+    })();
   });
 
   sendSuccess(res, data, 'Mark recorded', 201);

@@ -30,6 +30,7 @@ import RecoveryPacksScreen from '../screens/student/RecoveryPacksScreen';
 import RecoveryPackDetailScreen from '../screens/student/RecoveryPackDetailScreen';
 import MonthlyRecoveryTestsScreen from '../screens/student/RecoveryTestListScreen';
 import MonthlyRecoveryTestAttemptScreen from '../screens/student/RecoveryTestAttemptScreen';
+import ReportCardsScreen from '../screens/student/ReportCardsScreen';
 
 // More home screen
 import MoreHomeScreen from '../screens/main/MoreHomeScreen';
@@ -83,6 +84,7 @@ export type MainStackParamList = {
   RecoveryPackDetail: { packId: string; isCycle?: boolean };
   MonthlyRecoveryTests: { cycleId?: string } | undefined;
   MonthlyRecoveryTestAttempt: { testId: string };
+  ReportCards: undefined;
 };
 
 // Keep StudentStackParamList as an alias so existing student screens don't break
@@ -266,6 +268,11 @@ function MoreNavigator() {
         name="Settings"
         component={SettingsScreen}
         options={{ title: 'Settings' }}
+      />
+      <MoreStack.Screen
+        name="ReportCards"
+        component={ReportCardsScreen}
+        options={{ title: 'Report Cards' }}
       />
     </MoreStack.Navigator>
   );
@@ -453,6 +460,17 @@ function MainNavigator() {
         name="MonthlyRecoveryTestAttempt"
         component={MonthlyRecoveryTestAttemptScreen}
         options={{ headerShown: false }}
+      />
+      <MainStack.Screen
+        name="ReportCards"
+        component={ReportCardsScreen}
+        options={{
+          headerShown: true,
+          headerTitle: 'Report Cards',
+          headerStyle: { backgroundColor: '#1D4ED8' },
+          headerTintColor: '#FFFFFF',
+          headerTitleStyle: { fontWeight: '600' },
+        }}
       />
     </MainStack.Navigator>
   );

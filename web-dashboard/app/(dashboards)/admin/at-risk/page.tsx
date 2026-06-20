@@ -8,12 +8,12 @@ import PageHeader from '@/components/PageHeader';
 
 // ── Filter tab type ───────────────────────────────────────────────────────────
 
-type RiskFilter = 'all' | 3 | 2;
+type RiskFilter = 'all' | 2 | 1;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function RiskBadge({ score }: { score: number }) {
-  if (score === 3) {
+  if (score === 2) {
     return (
       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
         <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
@@ -50,7 +50,6 @@ function TableSkeleton() {
           <div className="h-4 bg-gray-200 rounded flex-1" />
           <div className="h-4 bg-gray-200 rounded w-16" />
           <div className="h-4 bg-gray-200 rounded w-16" />
-          <div className="h-4 bg-gray-200 rounded w-20" />
           <div className="h-6 bg-gray-200 rounded-full w-24" />
         </div>
       ))}
@@ -88,19 +87,19 @@ function AtRiskPageInner() {
 
   // Derived stats
   const allStudents: AtRiskStudent[] = data?.students ?? [];
-  const highRisk   = allStudents.filter((s) => s.risk_score === 3);
-  const medRisk    = allStudents.filter((s) => s.risk_score === 2);
+  const highRisk = allStudents.filter((s) => s.risk_score === 2);
+  const medRisk  = allStudents.filter((s) => s.risk_score === 1);
 
   const filtered =
-    filter === 3 ? highRisk :
-    filter === 2 ? medRisk  :
+    filter === 2 ? highRisk :
+    filter === 1 ? medRisk  :
     allStudents;
 
   return (
     <>
       <PageHeader
         title="At-Risk Students"
-        description="Students flagged across attendance, marks, and fees"
+        description="Students flagged across attendance and marks"
         action={
           <button
             onClick={fetchData}
@@ -140,7 +139,7 @@ function AtRiskPageInner() {
           <p className="mt-1 text-2xl font-semibold text-red-600">
             {loading ? '—' : (data?.total_at_risk ?? 0)}
           </p>
-          <p className="mt-0.5 text-xs text-gray-400">2+ risk flags</p>
+          <p className="mt-0.5 text-xs text-gray-400">1+ academic flag</p>
         </div>
 
         {/* High risk */}
@@ -149,7 +148,7 @@ function AtRiskPageInner() {
           <p className="mt-1 text-2xl font-semibold text-red-700">
             {loading ? '—' : highRisk.length}
           </p>
-          <p className="mt-0.5 text-xs text-gray-400">All 3 flags triggered</p>
+          <p className="mt-0.5 text-xs text-gray-400">Both flags triggered</p>
         </div>
 
         {/* Medium risk */}
@@ -158,7 +157,7 @@ function AtRiskPageInner() {
           <p className="mt-1 text-2xl font-semibold text-orange-600">
             {loading ? '—' : medRisk.length}
           </p>
-          <p className="mt-0.5 text-xs text-gray-400">2 of 3 flags triggered</p>
+          <p className="mt-0.5 text-xs text-gray-400">1 of 2 flags triggered</p>
         </div>
       </div>
 
@@ -166,8 +165,8 @@ function AtRiskPageInner() {
       <div className="flex items-center gap-2 mb-5">
         {([
           { key: 'all', label: `All (${allStudents.length})` },
-          { key: 3,     label: `3 Flags (${highRisk.length})` },
-          { key: 2,     label: `2 Flags (${medRisk.length})` },
+          { key: 2,     label: `2 Flags (${highRisk.length})` },
+          { key: 1,     label: `1 Flag (${medRisk.length})` },
         ] as const).map(({ key, label }) => (
           <button
             key={String(key)}
@@ -186,11 +185,10 @@ function AtRiskPageInner() {
       {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {/* Header */}
-        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 items-center px-5 py-3 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 uppercase tracking-wide">
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 items-center px-5 py-3 bg-gray-50 border-b border-gray-100 text-xs font-medium text-gray-500 uppercase tracking-wide">
           <span>Student</span>
           <span className="text-right">Attendance %</span>
           <span className="text-right">Avg Marks %</span>
-          <span className="text-right hidden sm:block">Fee Status</span>
           <span className="text-right">Risk</span>
         </div>
 
@@ -206,7 +204,7 @@ function AtRiskPageInner() {
             {filtered.map((s) => (
               <div
                 key={s.student_id}
-                className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-4 items-center px-5 py-3 hover:bg-gray-50 transition-colors"
+                className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 items-center px-5 py-3 hover:bg-gray-50 transition-colors"
               >
                 {/* Student name + class */}
                 <div className="min-w-0">
@@ -227,14 +225,6 @@ function AtRiskPageInner() {
                   <FlagDot active={s.low_marks} />
                   <span className={`text-sm font-medium ${s.low_marks ? 'text-red-600' : 'text-gray-700'}`}>
                     {s.avg_marks_pct.toFixed(1)}%
-                  </span>
-                </div>
-
-                {/* Fee status with flag dot */}
-                <div className="hidden sm:flex items-center gap-1.5 justify-end">
-                  <FlagDot active={s.fee_unpaid} />
-                  <span className={`text-sm font-medium capitalize ${s.fee_unpaid ? 'text-red-600' : 'text-gray-700'}`}>
-                    {s.fee_status}
                   </span>
                 </div>
 

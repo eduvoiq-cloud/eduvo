@@ -3,14 +3,82 @@ import { z } from 'zod';
 import archiver from 'archiver';
 import PDFDocument from 'pdfkit';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { isClassAdmin } from './classAdmin';
 import { sendSuccess, sendError, sendValidationError, sendDbError } from '../utils/response';
 import { termFilterValues, normaliseTerm } from '../utils/term';
+import { getTokensForStudents, getTokensForUsers, sendPushMulticast } from '../services/fcmService';
 
 const router = Router();
 
+// ── GET /api/report-cards/my ──────────────────────────────────────────────────
+// Student-facing: returns all report cards for the authenticated student.
+// Uses authenticateAny so it works with the student token.
+router.get('/my', authenticateAny, async (req: Request, res: Response) => {
+  const studentId = req.tokenType === 'student' ? req.student!.id : null;
+
+  if (!studentId) {
+    sendError(res, 'Only students can access this endpoint', 403);
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('student_report_cards')
+    .select('*')
+    .eq('student_id', studentId)
+    .order('generated_at', { ascending: false });
+
+  if (error) {
+    sendError(res, error.message, 500);
+    return;
+  }
+
+  sendSuccess(res, data ?? []);
+});
+
+// ── GET /api/report-cards/student/:studentId ──────────────────────────────────
+// Parent-facing: returns report cards for a specific student.
+// The parent must have the student linked (parent_id on students table).
+router.get('/student/:studentId', authenticateAny, async (req: Request, res: Response) => {
+  const { studentId } = req.params;
+
+  // Require a user token (parent)
+  if (req.tokenType !== 'user') {
+    sendError(res, 'Access denied', 403);
+    return;
+  }
+
+  const parentId = req.user!.id;
+
+  // Verify the student belongs to this parent
+  const { data: studentRow } = await supabaseAdmin
+    .from('students')
+    .select('id')
+    .eq('id', studentId)
+    .eq('parent_id', parentId)
+    .maybeSingle();
+
+  if (!studentRow) {
+    sendError(res, 'Student not found or not linked to your account', 403);
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('student_report_cards')
+    .select('*')
+    .eq('student_id', studentId)
+    .order('generated_at', { ascending: false });
+
+  if (error) {
+    sendError(res, error.message, 500);
+    return;
+  }
+
+  sendSuccess(res, data ?? []);
+});
+
+// ── All teacher routes below require a staff JWT ──────────────────────────────
 router.use(authenticate);
 
 // ── Grade helper ──────────────────────────────────────────────────────────────
@@ -314,6 +382,128 @@ router.post(
     }
 
     await archive.finalize();
+
+  // ── Fire-and-forget: store report cards + notify students & parents ─────────
+  setImmediate(() => {
+    (async () => {
+      try {
+        const sessionYearStr2 = sessionYear();
+        const senderId = teacherId;
+
+        for (const student of students) {
+          const marks = marksByStudent.get(student.id) ?? [];
+
+          // Build per-subject summary
+          let grandTotal = 0;
+          let grandMax   = 0;
+          const marksJson = marks.map((m) => {
+            const pct = m.max_score > 0 ? (m.score / m.max_score) * 100 : 0;
+            grandTotal += m.score;
+            grandMax   += m.max_score;
+            return {
+              subject: m.subject,
+              score: m.score,
+              max_score: m.max_score,
+              percentage: parseFloat(pct.toFixed(2)),
+            };
+          });
+
+          const overallPct = grandMax > 0 ? (grandTotal / grandMax) * 100 : 0;
+          const grade      = calcGrade(overallPct);
+
+          // Upsert: one record per student per term+exam_type
+          await supabaseAdmin
+            .from('student_report_cards')
+            .upsert(
+              {
+                student_id:   student.id,
+                school_id:    schoolId,
+                class_name,
+                section,
+                term,
+                exam_type,
+                marks:        marksJson,
+                grand_total:  grandTotal,
+                grand_max:    grandMax,
+                percentage:   parseFloat(overallPct.toFixed(2)),
+                grade,
+                session_year: sessionYearStr2,
+                generated_by: senderId,
+                generated_at: new Date().toISOString(),
+              },
+              { onConflict: 'student_id,term,exam_type' }
+            );
+
+          // In-app notification for the student
+          await supabaseAdmin.from('notifications').insert({
+            title:        '📄 Report Card Available',
+            message:      `Your ${term} ${exam_type.replace('_', ' ')} report card is ready. Overall: ${overallPct.toFixed(1)}% — Grade ${grade}`,
+            type:         'grade',
+            recipient_id: student.id,
+            sender_id:    senderId,
+            is_read:      false,
+            created_at:   new Date().toISOString(),
+          });
+        }
+
+        // ── Push notifications: batch all student IDs ──────────────────────
+        const allStudentIds = students.map((s) => s.id);
+
+        // Get parent IDs for all students
+        const { data: parentRows } = await supabaseAdmin
+          .from('students')
+          .select('id, full_name, parent_id')
+          .in('id', allStudentIds);
+
+        const parentIds: string[] = [];
+        if (parentRows) {
+          for (const row of parentRows as Array<{ id: string; full_name: string; parent_id: string | null }>) {
+            // In-app notification for the parent
+            if (row.parent_id) {
+              parentIds.push(row.parent_id);
+              await supabaseAdmin.from('notifications').insert({
+                title:        '📄 Report Card Available',
+                message:      `${row.full_name}'s ${term} ${exam_type.replace('_', ' ')} report card is ready.`,
+                type:         'grade',
+                recipient_id: row.parent_id,
+                sender_id:    senderId,
+                is_read:      false,
+                created_at:   new Date().toISOString(),
+              });
+            }
+          }
+        }
+
+        // FCM push to students
+        const studentTokens = await getTokensForStudents(allStudentIds);
+        if (studentTokens.length > 0) {
+          await sendPushMulticast(
+            studentTokens,
+            '📄 Report Card Available',
+            `Your ${term} ${exam_type.replace('_', ' ')} report card is ready. Check your marks now!`,
+            { type: 'report_card', term, exam_type }
+          );
+        }
+
+        // FCM push to parents
+        if (parentIds.length > 0) {
+          const parentTokens = await getTokensForUsers(parentIds);
+          if (parentTokens.length > 0) {
+            await sendPushMulticast(
+              parentTokens,
+              '📄 Report Card Available',
+              `Your child's ${term} ${exam_type.replace('_', ' ')} report card is now available.`,
+              { type: 'report_card', term, exam_type }
+            );
+          }
+        }
+
+        console.log(`[reportCards] Stored ${students.length} report cards and sent notifications.`);
+      } catch (err) {
+        console.error('[reportCards] Error storing/notifying report cards:', err);
+      }
+    })();
+  });
   }
 );
 

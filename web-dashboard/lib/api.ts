@@ -1711,10 +1711,8 @@ export interface AtRiskStudent {
   risk_score:     number;
   low_attendance: boolean;
   low_marks:      boolean;
-  fee_unpaid:     boolean;
   attendance_pct: number;
   avg_marks_pct:  number;
-  fee_status:     string;
 }
 
 export interface AtRiskResponse {

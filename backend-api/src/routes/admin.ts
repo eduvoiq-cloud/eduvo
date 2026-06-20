@@ -2543,11 +2543,12 @@ router.get('/class-comparison', async (req: Request, res: Response) => {
 /**
  * GET /api/admin/at-risk
  *
- * Returns students flagged as "at-risk" — those with at least 2 of 3 risk flags:
+ * Returns students flagged as "at-risk" based on academic flags only:
  *   - low_attendance  : attendance % < 75%
  *   - low_marks       : average marks % < 40%
- *   - fee_unpaid      : no fee record OR fee_paid=false AND payment_status != 'paid'
  *
+ * A student is at-risk when either flag is triggered (score >= 1).
+ * High risk = both flags (score 2), Medium risk = one flag (score 1).
  * Sorted by risk_score desc, then avg_marks_pct asc (worst first).
  */
 router.get('/at-risk', async (req: Request, res: Response) => {
@@ -2569,8 +2570,8 @@ router.get('/at-risk', async (req: Request, res: Response) => {
 
   const studentIds = students.map((s: { id: string }) => s.id);
 
-  // 2. Fetch attendance, marks, fees in parallel (chunked for large schools)
-  const [attendanceRows, marksRows, feeRows] = await Promise.all([
+  // 2. Fetch attendance and marks in parallel (chunked for large schools)
+  const [attendanceRows, marksRows] = await Promise.all([
     // Attendance
     (async () => {
       let all: Array<{ student_id: string; status: string }> = [];
@@ -2595,18 +2596,6 @@ router.get('/at-risk', async (req: Request, res: Response) => {
       }
       return all;
     })(),
-    // Fees
-    (async () => {
-      let all: Array<{ student_id: string; fee_paid: boolean; payment_status: string | null }> = [];
-      for (let i = 0; i < studentIds.length; i += CHUNK) {
-        const { data } = await supabaseAdmin
-          .from('student_fees')
-          .select('student_id, fee_paid, payment_status')
-          .in('student_id', studentIds.slice(i, i + CHUNK));
-        if (data) all = all.concat(data);
-      }
-      return all;
-    })(),
   ]);
 
   // 3. Build per-student aggregates
@@ -2615,7 +2604,6 @@ router.get('/at-risk', async (req: Request, res: Response) => {
 
   const attMap = new Map<string, AttAgg>();
   const marksMap = new Map<string, MarksAgg>();
-  const feeMap = new Map<string, { fee_paid: boolean; payment_status: string | null }>();
 
   for (const a of attendanceRows) {
     const existing = attMap.get(a.student_id) ?? { total: 0, present: 0 };
@@ -2632,12 +2620,7 @@ router.get('/at-risk', async (req: Request, res: Response) => {
     marksMap.set(m.student_id, existing);
   }
 
-  // Last fee record per student wins
-  for (const f of feeRows) {
-    feeMap.set(f.student_id, { fee_paid: f.fee_paid, payment_status: f.payment_status });
-  }
-
-  // 4. Compute risk flags per student
+  // 4. Compute risk flags per student (academic only)
   type AtRiskRow = {
     student_id:     string;
     full_name:      string;
@@ -2646,10 +2629,8 @@ router.get('/at-risk', async (req: Request, res: Response) => {
     risk_score:     number;
     low_attendance: boolean;
     low_marks:      boolean;
-    fee_unpaid:     boolean;
     attendance_pct: number;
     avg_marks_pct:  number;
-    fee_status:     string;
   };
 
   const atRiskList: AtRiskRow[] = [];
@@ -2673,22 +2654,9 @@ router.get('/at-risk', async (req: Request, res: Response) => {
       low_marks = avgMarksPct < 40;
     }
 
-    // Fee flag
-    const fee = feeMap.get(s.id);
-    let fee_unpaid = false;
-    let feeStatus = 'unknown';
-    if (!fee) {
-      fee_unpaid = true;
-      feeStatus = 'unpaid';
-    } else {
-      const isPaid = fee.fee_paid || fee.payment_status === 'paid';
-      fee_unpaid = !isPaid;
-      feeStatus = fee.payment_status ?? (fee.fee_paid ? 'paid' : 'unpaid');
-    }
+    const riskScore = (low_attendance ? 1 : 0) + (low_marks ? 1 : 0);
 
-    const riskScore = (low_attendance ? 1 : 0) + (low_marks ? 1 : 0) + (fee_unpaid ? 1 : 0);
-
-    if (riskScore >= 2) {
+    if (riskScore >= 1) {
       atRiskList.push({
         student_id:     s.id,
         full_name:      s.full_name,
@@ -2697,10 +2665,8 @@ router.get('/at-risk', async (req: Request, res: Response) => {
         risk_score:     riskScore,
         low_attendance,
         low_marks,
-        fee_unpaid,
         attendance_pct: attendancePct,
         avg_marks_pct:  avgMarksPct,
-        fee_status:     feeStatus,
       });
     }
   }
