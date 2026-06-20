@@ -17,7 +17,7 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading, subscriptionExpired, logout } = useAuth();
+  const { user, loading, subscriptionExpired, logout, activeSchoolId } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
@@ -82,7 +82,10 @@ export default function DashboardLayout({
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* key={activeSchoolId} causes all page children to fully remount whenever
+          the admin switches medium, so every page's useEffect re-runs and fetches
+          data for the newly selected school. */}
+      <main key={activeSchoolId ?? 'default'} className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {children}
       </main>
     </div>

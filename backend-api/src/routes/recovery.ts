@@ -7,6 +7,10 @@
  * GET  /api/recovery/test-results
  * POST /api/recovery/attempt/start
  * POST /api/recovery/attempt/submit
+ *
+ * Pack + test generation use the Gemini Batch API (50% cheaper, async).
+ * Teacher clicks → batch job submitted → "ready in a few hours" message shown.
+ * The /api/cron/recovery/check-batch-jobs cron picks up results every 2 hours.
  */
 
 import { Router, Request, Response } from 'express';
@@ -19,7 +23,48 @@ import { analyzeStudentWeakness, StudentProfileType } from '../services/weakness
 
 const router = Router();
 
-// ── Gemini helper (reused from original recovery.ts) ─────────────────────────
+// ── Gemini Batch API helper ───────────────────────────────────────────────────
+
+/**
+ * Submit a list of prompts as a single Gemini Batch API job.
+ * Returns the batch job name (e.g. "batches/abc123") which is used to poll status.
+ * Cost: 50% of standard per-request pricing.
+ */
+async function submitGeminiBatchJob(
+  requests: Array<{ key: string; prompt: string }>
+): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+  const modelId = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+
+  const inlineRequests = requests.map(({ key, prompt }) => ({
+    key,
+    request: {
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: 'application/json' },
+    },
+  }));
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:batchGenerateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests: inlineRequests }),
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gemini Batch API error ${response.status}: ${err}`);
+  }
+
+  const data = await response.json() as { name?: string };
+  if (!data.name) throw new Error('Gemini Batch API did not return a job name');
+  return data.name;
+}
+
+// ── Fallback: single Gemini call (used by cron retry logic) ──────────────────
 
 async function callGeminiGenerateContent(prompt: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -51,6 +96,9 @@ async function callGeminiJSON<T>(prompt: string): Promise<T> {
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   return JSON.parse(cleaned) as T;
 }
+
+// Export for use by cron batch-job result processor
+export { callGeminiJSON };
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
 
@@ -147,6 +195,56 @@ Each question must have:
 
 Return ONLY valid JSON, no markdown fences:
 {"questions":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"string","reasoning":"string","difficulty":"easy","topic":"string"}]}`;
+}
+
+/**
+ * Build a test prompt that generates questions DIRECTLY from the student's recovery pack content.
+ * If pack_content is available, questions are based on what the student actually studied.
+ * Falls back to topic-based generation if pack_content is not available.
+ */
+function buildTestPromptFromPack(
+  className: string,
+  subject: string,
+  board: string,
+  topics: string[],
+  questionCount: number,
+  profileType: StudentProfileType,
+  packContent: unknown
+): string {
+  const difficultyLine =
+    profileType === 'enrichment'
+      ? '20% easy, 30% medium, 50% hard'
+      : profileType === 'no_data'
+      ? '40% easy, 40% medium, 20% hard'
+      : '30% easy, 40% medium, 30% hard';
+
+  if (packContent) {
+    // Questions come directly from the pack the student will study
+    const packJson = JSON.stringify(packContent);
+    return `You are creating a personalised recovery test for a Class ${className} student in India. Subject: ${subject} (${board} curriculum).
+
+The student has been given the following recovery study pack to read:
+${packJson}
+
+Generate exactly ${questionCount} multiple choice questions based ONLY on the content in this recovery pack above.
+Questions must test understanding of the explanations, key concepts, solved examples, and practice questions from the pack.
+Difficulty distribution: ${difficultyLine}
+
+Each question must have:
+- question: question text
+- options: array of exactly 4 strings
+- correct_index: integer 0-3
+- explanation: one factual line, max 20 words, referencing the pack content
+- reasoning: teaching explanation, 2-4 sentences, why the answer is correct
+- difficulty: "easy", "medium", or "hard"
+- topic: which topic from the pack this tests
+
+Return ONLY valid JSON, no markdown fences:
+{"questions":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"string","reasoning":"string","difficulty":"easy","topic":"string"}]}`;
+  }
+
+  // Fallback: topic-based (pack content not ready yet)
+  return buildTestPrompt(className, subject, board, topics, questionCount, profileType);
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -266,7 +364,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
 
   sendSuccess(res, { cycle_id: cycleId, lockout_until: lockoutUntil }, 'Recovery pack generation started');
 
-  // Background generation
+  // Submit Gemini Batch API job in background — teacher does not wait for this
   setImmediate(async () => {
     try {
       const [subjects, students, board] = await Promise.all([
@@ -276,11 +374,19 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
       ]);
 
       if (students.length === 0 || subjects.length === 0) {
-        await supabaseAdmin.from('recovery_cycles').update({ status: 'pack_ready', updated_at: new Date().toISOString() }).eq('id', cycleId);
+        // Nothing to generate — mark ready immediately
+        await supabaseAdmin.from('recovery_cycles').update({
+          status: 'pack_ready',
+          updated_at: new Date().toISOString(),
+        }).eq('id', cycleId);
         return;
       }
 
       const currentMonth = now.toISOString().slice(0, 7) + '-01';
+
+      // ── Build one Gemini Batch request per student × subject ────────────────
+      // Key format: "<studentId>|<subject>" — used by cron to route results back
+      const batchRequests: Array<{ key: string; prompt: string }> = [];
 
       for (const student of students) {
         for (const subject of subjects) {
@@ -298,9 +404,9 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
               prompt = buildPackPromptWeak(className, subject, board, weakTopics);
             }
 
-            const packContent = await callGeminiJSON<unknown>(prompt);
+            batchRequests.push({ key: `${student.id}|${subject}`, prompt });
 
-            // Upsert pack row
+            // Pre-create the recovery_pack row as 'processing' so cron can upsert results
             const { data: existing } = await supabaseAdmin
               .from('recovery_packs')
               .select('id')
@@ -309,15 +415,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
               .eq('subject', subject)
               .maybeSingle();
 
-            if (existing) {
-              await supabaseAdmin.from('recovery_packs').update({
-                pack_content: packContent,
-                weak_topics: weakTopics,
-                student_profile_type: profileType,
-                generation_status: 'completed',
-                generated_at: new Date().toISOString(),
-              }).eq('id', (existing as { id: string }).id);
-            } else {
+            if (!existing) {
               await supabaseAdmin.from('recovery_packs').insert({
                 cycle_id: cycleId,
                 student_id: student.id,
@@ -326,24 +424,42 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
                 scheduled_month: currentMonth,
                 weak_topics: weakTopics,
                 student_profile_type: profileType,
-                pack_content: packContent,
-                generation_status: 'completed',
-                generated_at: new Date().toISOString(),
+                generation_status: 'processing',
               });
+            } else {
+              await supabaseAdmin.from('recovery_packs').update({
+                weak_topics: weakTopics,
+                student_profile_type: profileType,
+                generation_status: 'processing',
+              }).eq('id', (existing as { id: string }).id);
             }
-
-            await new Promise((r) => setTimeout(r, 500));
           } catch (err) {
-            console.error(`[recovery/start-pack] student=${student.id} subject=${subject}:`, err instanceof Error ? err.message : err);
+            console.error(`[recovery/start-pack] weakness analysis failed student=${student.id} subject=${subject}:`, err instanceof Error ? err.message : err);
           }
         }
       }
 
-      await supabaseAdmin.from('recovery_cycles').update({ status: 'pack_ready', updated_at: new Date().toISOString() }).eq('id', cycleId);
+      if (batchRequests.length === 0) {
+        await supabaseAdmin.from('recovery_cycles').update({
+          status: 'pack_failed',
+          lockout_until: null,
+          updated_at: new Date().toISOString(),
+        }).eq('id', cycleId);
+        return;
+      }
+
+      // ── Submit single Batch API job for all students × subjects ─────────────
+      const batchJobName = await submitGeminiBatchJob(batchRequests);
+
+      // Store the batch job name on the cycle so the cron can poll it
+      await supabaseAdmin.from('recovery_cycles').update({
+        pack_batch_job_id: batchJobName,
+        updated_at: new Date().toISOString(),
+      }).eq('id', cycleId);
+
+      console.log(`[recovery/start-pack] Batch job submitted: ${batchJobName} (${batchRequests.length} requests)`);
     } catch (err) {
       console.error('[recovery/start-pack] Fatal:', err instanceof Error ? err.message : err);
-      // Mark cycle as failed so teacher isn't locked out indefinitely.
-      // 'pack_failed' is valid per the updated recovery_cycles CHECK constraint.
       try {
         await supabaseAdmin.from('recovery_cycles').update({
           status: 'pack_failed',
@@ -405,34 +521,52 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
 
   sendSuccess(res, { cycle_id: cycleId }, 'Recovery test generation started');
 
-  // Background generation
+  // Submit Gemini Batch API job in background — teacher does not wait for this
   setImmediate(async () => {
     try {
       const students = await getStudentsInClass(schoolId, c.class, c.section);
       const board = await getSchoolBoard(schoolId);
 
+      // ── Build one Gemini Batch request per student × subject ────────────────
+      // Key format: "<studentId>|<subject>" — used by cron to route results back
+      const batchRequests: Array<{ key: string; prompt: string }> = [];
+
       for (const config of subjectConfigs) {
         for (const student of students) {
           try {
-            // Read pre-computed weak topics from recovery_packs for this cycle
+            // Load this student's recovery PACK content — questions are generated FROM the pack
             const { data: packRow } = await supabaseAdmin
               .from('recovery_packs')
-              .select('weak_topics, student_profile_type')
+              .select('weak_topics, student_profile_type, pack_content')
               .eq('cycle_id', cycleId)
               .eq('student_id', student.id)
               .eq('subject', config.subject)
               .maybeSingle();
 
-            const pack = packRow as { weak_topics: string[] | null; student_profile_type: string | null } | null;
+            const pack = packRow as {
+              weak_topics: string[] | null;
+              student_profile_type: string | null;
+              pack_content: unknown | null;
+            } | null;
+
             const topics: string[] = pack?.weak_topics ?? [config.subject];
             const profileType: StudentProfileType = (pack?.student_profile_type as StudentProfileType | null) ?? 'weak';
             const questionCount = Math.min(30, Math.max(20, topics.length * 4));
 
-            const prompt = buildTestPrompt(c.class, config.subject, board, topics, questionCount, profileType);
-            const testData = await callGeminiJSON<{ questions: unknown[] }>(prompt);
-            const questions = testData.questions ?? [];
+            // Build prompt using pack content so questions come directly from the pack material
+            const prompt = buildTestPromptFromPack(
+              c.class,
+              config.subject,
+              board,
+              topics,
+              questionCount,
+              profileType,
+              pack?.pack_content
+            );
 
-            // Upsert test row
+            batchRequests.push({ key: `${student.id}|${config.subject}`, prompt });
+
+            // Pre-create the test row as 'processing' so cron can upsert results
             const { data: existing } = await supabaseAdmin
               .from('monthly_recovery_tests')
               .select('id')
@@ -448,10 +582,9 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
               subject: config.subject,
               scheduled_month: new Date().toISOString().slice(0, 7) + '-01',
               weak_topics_used: topics,
-              questions,
-              total_questions: questions.length,
-              generation_status: 'completed',
-              is_available: true,
+              total_questions: questionCount,
+              generation_status: 'processing',
+              is_available: false,
               time_limit_minutes: config.time_limit_minutes,
               shuffle_questions: config.shuffle_questions,
               shuffle_options: config.shuffle_options,
@@ -461,17 +594,44 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
             };
 
             if (existing) {
-              await supabaseAdmin.from('monthly_recovery_tests').update({ ...testPayload, generated_at: new Date().toISOString() }).eq('id', (existing as { id: string }).id);
+              await supabaseAdmin.from('monthly_recovery_tests').update(testPayload).eq('id', (existing as { id: string }).id);
             } else {
               await supabaseAdmin.from('monthly_recovery_tests').insert(testPayload);
             }
-
-            await new Promise((r) => setTimeout(r, 500));
           } catch (err) {
-            console.error(`[recovery/start-tests] student=${student.id} subject=${config.subject}:`, err instanceof Error ? err.message : err);
+            console.error(`[recovery/start-tests] prep failed student=${student.id} subject=${config.subject}:`, err instanceof Error ? err.message : err);
           }
         }
       }
+
+      if (batchRequests.length === 0) {
+        await supabaseAdmin.from('recovery_cycles').update({
+          status: 'test_failed',
+          updated_at: new Date().toISOString(),
+        }).eq('id', cycleId);
+        return;
+      }
+
+      // ── Submit single Batch API job for all students × subjects ─────────────
+      const batchJobName = await submitGeminiBatchJob(batchRequests);
+
+      await supabaseAdmin.from('recovery_cycles').update({
+        test_batch_job_id: batchJobName,
+        updated_at: new Date().toISOString(),
+      }).eq('id', cycleId);
+
+      console.log(`[recovery/start-tests] Batch job submitted: ${batchJobName} (${batchRequests.length} requests)`);
+    } catch (err) {
+      console.error('[recovery/start-tests] Fatal:', err instanceof Error ? err.message : err);
+      try {
+        await supabaseAdmin.from('recovery_cycles').update({
+          status: 'test_failed',
+          updated_at: new Date().toISOString(),
+        }).eq('id', cycleId);
+      } catch { /* best-effort */ }
+    }
+  });
+});
 
       await supabaseAdmin.from('recovery_cycles').update({
         status: 'tests_ready',
