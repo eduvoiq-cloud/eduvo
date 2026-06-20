@@ -22,6 +22,28 @@ interface StudentSub {
   section: string;
 }
 
+interface ReportStructuredLines {
+  overall: string;
+  best_subject: string | null;
+  best_score: number | null;
+  weak_subject: string | null;
+  weak_score: number | null;
+  attendance_pct: number;
+  attendance_present: number;
+  attendance_total: number;
+  streak_days: number;
+  homework_submitted: number;
+  homework_assigned: number;
+  tests_missed: number;
+  suspicious_test_count: number;
+  tip: string;
+}
+
+interface ParsedReportContent {
+  structured_lines: ReportStructuredLines;
+  summary_en: string;
+}
+
 interface MonthlyReport {
   month_start_date: string;
   report_text: string;
@@ -42,6 +64,17 @@ interface InsightsData {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function parseReportText(reportText: string): ParsedReportContent | null {
+  if (!reportText) return null;
+  try {
+    const parsed = JSON.parse(reportText) as ParsedReportContent;
+    if (parsed?.structured_lines) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function avgBarColor(avg: number): string {
   if (avg >= 75) return 'bg-green-500';
@@ -85,6 +118,8 @@ function InsightsSkeleton() {
 
 function PastReportCard({ report }: { report: MonthlyReport }) {
   const [expanded, setExpanded] = useState(false);
+  const parsed = parseReportText(report.report_text);
+  const sl = parsed?.structured_lines;
 
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -99,13 +134,21 @@ function PastReportCard({ report }: { report: MonthlyReport }) {
       </button>
 
       {expanded && (
-        <div className="bg-blue-50 border-t border-blue-100 p-4">
-          <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-            {report.report_text}
-          </p>
-          <p className="text-xs text-gray-400 mt-3">
-            Generated: {formatDate(report.generated_at)}
-          </p>
+        <div className="bg-gray-50 border-t border-gray-100 p-4 space-y-3">
+          {sl ? (
+            <>
+              <p className="text-sm text-gray-800 leading-relaxed">{parsed.summary_en}</p>
+              <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                <span>📅 Attendance: <strong>{sl.attendance_pct}%</strong> ({sl.attendance_present}/{sl.attendance_total})</span>
+                {sl.best_subject && <span>🏆 Best: <strong>{sl.best_subject} ({sl.best_score}%)</strong></span>}
+                {sl.weak_subject && <span>⚠️ Weak: <strong>{sl.weak_subject} ({sl.weak_score}%)</strong></span>}
+                {sl.streak_days > 0 && <span>🔥 Streak: <strong>{sl.streak_days} days</strong></span>}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500 italic">No report data available.</p>
+          )}
+          <p className="text-xs text-gray-400">Generated: {formatDate(report.generated_at)}</p>
         </div>
       )}
     </div>
@@ -361,16 +404,112 @@ export default function PremiumInsightsPage() {
                   )}
                 </div>
 
-                {insights.latest_report ? (
-                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
-                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
-                      {insights.latest_report.report_text}
-                    </p>
-                    <p className="text-xs text-gray-400 mt-3">
-                      Generated: {formatDate(insights.latest_report.generated_at)}
-                    </p>
-                  </div>
-                ) : (
+                {insights.latest_report ? (() => {
+                  const parsed = parseReportText(insights.latest_report.report_text);
+                  const sl = parsed?.structured_lines;
+
+                  if (!parsed || !sl) {
+                    return (
+                      <div className="bg-gray-50 rounded-xl p-4 text-sm text-gray-500 italic">
+                        Report data could not be parsed.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Overall */}
+                      <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
+                        <p className="text-xs font-medium text-blue-600 uppercase tracking-wide mb-1">Overall</p>
+                        <p className="text-sm font-semibold text-gray-900">{sl.overall}</p>
+                      </div>
+
+                      {/* Summary */}
+                      <p className="text-sm text-gray-700 leading-relaxed">{parsed.summary_en}</p>
+
+                      {/* Stats grid */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+                          <p className="text-xs text-gray-500 mb-1">📅 Attendance</p>
+                          <p className="text-lg font-bold text-gray-900">{sl.attendance_pct}%</p>
+                          <p className="text-xs text-gray-400">{sl.attendance_present} / {sl.attendance_total} days</p>
+                        </div>
+
+                        {sl.best_subject && (
+                          <div className="rounded-xl bg-green-50 border border-green-100 px-4 py-3">
+                            <p className="text-xs text-green-600 mb-1">🏆 Best Subject</p>
+                            <p className="text-lg font-bold text-green-700">{sl.best_subject}</p>
+                            <p className="text-xs text-green-500">{sl.best_score}%</p>
+                          </div>
+                        )}
+
+                        {sl.weak_subject && (
+                          <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3">
+                            <p className="text-xs text-red-500 mb-1">⚠️ Needs Attention</p>
+                            <p className="text-lg font-bold text-red-700">{sl.weak_subject}</p>
+                            <p className="text-xs text-red-400">{sl.weak_score}%</p>
+                          </div>
+                        )}
+
+                        {sl.homework_assigned > 0 && (
+                          <div className={`rounded-xl border px-4 py-3 ${
+                            sl.homework_assigned - sl.homework_submitted > 0
+                              ? 'bg-orange-50 border-orange-100'
+                              : 'bg-green-50 border-green-100'
+                          }`}>
+                            <p className={`text-xs mb-1 ${sl.homework_assigned - sl.homework_submitted > 0 ? 'text-orange-500' : 'text-green-600'}`}>
+                              📝 Homework
+                            </p>
+                            <p className={`text-lg font-bold ${sl.homework_assigned - sl.homework_submitted > 0 ? 'text-orange-700' : 'text-green-700'}`}>
+                              {sl.homework_submitted}/{sl.homework_assigned}
+                            </p>
+                            <p className={`text-xs ${sl.homework_assigned - sl.homework_submitted > 0 ? 'text-orange-400' : 'text-green-500'}`}>
+                              {sl.homework_assigned - sl.homework_submitted > 0
+                                ? `${sl.homework_assigned - sl.homework_submitted} not submitted`
+                                : 'all submitted'}
+                            </p>
+                          </div>
+                        )}
+
+                        {sl.tests_missed > 0 ? (
+                          <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3">
+                            <p className="text-xs text-red-500 mb-1">📋 Tests Missed</p>
+                            <p className="text-lg font-bold text-red-700">{sl.tests_missed}</p>
+                            <p className="text-xs text-red-400">not attempted</p>
+                          </div>
+                        ) : null}
+
+                        {sl.suspicious_test_count > 0 && (
+                          <div className="rounded-xl bg-yellow-50 border border-yellow-200 px-4 py-3">
+                            <p className="text-xs text-yellow-600 mb-1">🚨 Integrity Concern</p>
+                            <p className="text-lg font-bold text-yellow-700">{sl.suspicious_test_count}</p>
+                            <p className="text-xs text-yellow-500">test{sl.suspicious_test_count > 1 ? 's' : ''} flagged</p>
+                          </div>
+                        )}
+
+                        {sl.streak_days > 0 && (
+                          <div className="rounded-xl bg-amber-50 border border-amber-100 px-4 py-3">
+                            <p className="text-xs text-amber-600 mb-1">🔥 Study Streak</p>
+                            <p className="text-lg font-bold text-amber-700">{sl.streak_days} days</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Tip */}
+                      <div className="flex items-start gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
+                        <span className="text-base mt-0.5">💡</span>
+                        <div>
+                          <p className="text-xs font-semibold text-indigo-600 mb-0.5">Tip</p>
+                          <p className="text-sm text-gray-700">{sl.tip}</p>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-gray-400">
+                        Generated: {formatDate(insights.latest_report.generated_at)}
+                      </p>
+                    </div>
+                  );
+                })() : (
                   <div className="bg-gray-50 rounded-xl p-6 text-center">
                     <p className="text-sm text-gray-400">
                       No report generated yet. Reports are created on the 1st of each month, or you can trigger a manual recalculation above.

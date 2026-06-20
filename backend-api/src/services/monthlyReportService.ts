@@ -31,6 +31,18 @@ export interface StudentMonthlyData {
   bestScore: number | null;
   weakSubject: string | null;
   weakScore: number | null;
+  // Homework
+  homeworkAssigned: number;
+  homeworkSubmitted: number;
+  homeworkNotSubmitted: number;
+  homeworkFlaggedCount: number;          // AI flagged suspicious submissions
+  // Tests
+  testsScheduled: number;
+  testsAttempted: number;
+  testsMissed: number;
+  // Integrity / suspicious activity
+  suspiciousTestCount: number;           // tests where is_suspicious = true
+  suspiciousReasons: string[];           // aggregated unique reasons
 }
 
 export interface MonthlyReportContent {
@@ -44,6 +56,10 @@ export interface MonthlyReportContent {
     attendance_present: number;
     attendance_total: number;
     streak_days: number;
+    homework_submitted: number;
+    homework_assigned: number;
+    tests_missed: number;
+    suspicious_test_count: number;
     tip: string;
   };
   summary_en: string;
@@ -69,12 +85,21 @@ export async function getStudentMonthlyData(
   const endIso   = periodEnd.toISOString().slice(0, 10);
 
   // Fetch all data in parallel
-  const [studentRes, marksRes, attendanceRes, weakTopicsRes, streakRes] =
-    await Promise.all([
+  const [
+    studentRes,
+    marksRes,
+    attendanceRes,
+    weakTopicsRes,
+    streakRes,
+    homeworkAssignedRes,
+    homeworkSubmissionsRes,
+    testAttemptsRes,
+    integrityRes,
+  ] = await Promise.all([
       // Student record — name, class, parent_phone
       supabaseAdmin
         .from('students')
-        .select('full_name, class_name, class, parent_phone')
+        .select('full_name, class_name, class, parent_phone, section')
         .eq('id', studentId)
         .maybeSingle(),
 
@@ -108,6 +133,36 @@ export async function getStudentMonthlyData(
         .select('current_streak, longest_streak')
         .eq('student_id', studentId)
         .maybeSingle(),
+
+      // We'll fetch homework assigned for this student's class+section after
+      // we know their class — done below after student row is fetched.
+      // Placeholder: fetch student row first, then homework.
+      Promise.resolve({ data: null, error: null }),
+
+      // Homework submissions by this student in the period
+      supabaseAdmin
+        .from('homework_submissions')
+        .select('status, ai_result, flagged_reason, submitted_at')
+        .eq('student_id', studentId)
+        .gte('submitted_at', monthStartDate.toISOString())
+        .lte('submitted_at', periodEnd.toISOString()),
+
+      // Tests this student attempted in the period
+      supabaseAdmin
+        .from('test_attempts')
+        .select('id, test_id, is_submitted, submitted_at')
+        .eq('student_id', studentId)
+        .gte('started_at', monthStartDate.toISOString())
+        .lte('started_at', periodEnd.toISOString()),
+
+      // Integrity logs for this student in the period — suspicious tests
+      supabaseAdmin
+        .from('test_integrity_logs')
+        .select('is_suspicious, suspicious_reasons')
+        .eq('student_id', studentId)
+        .eq('is_suspicious', true)
+        .gte('created_at', monthStartDate.toISOString())
+        .lte('created_at', periodEnd.toISOString()),
     ]);
 
   // ── Student info ──────────────────────────────────────────────────────────
@@ -115,6 +170,7 @@ export async function getStudentMonthlyData(
   const studentName = (studentRow?.full_name as string) ?? 'Unknown';
   const studentClass =
     (studentRow?.class_name as string) ?? (studentRow?.class as string) ?? '';
+  const studentSection = (studentRow?.section as string) ?? '';
   const parentPhone = (studentRow?.parent_phone as string) ?? null;
 
   // ── Marks: build subject -> average percentage map ────────────────────────
@@ -182,6 +238,57 @@ export async function getStudentMonthlyData(
   const streakRow    = streakRes.data as Record<string, unknown> | null;
   const currentStreak = Number(streakRow?.current_streak ?? 0);
 
+  // ── Homework assigned vs submitted ────────────────────────────────────────
+  // Fetch homework assigned to this student's class+section in the period
+  let homeworkAssigned = 0;
+  if (studentClass) {
+    const { data: hwRows } = await supabaseAdmin
+      .from('homework')
+      .select('id')
+      .eq('class_name', studentClass)
+      .eq('section', studentSection)
+      .gte('due_date', startIso)
+      .lte('due_date', endIso);
+    homeworkAssigned = (hwRows ?? []).length;
+  }
+
+  const hwSubmissions = (homeworkSubmissionsRes.data ?? []) as Array<Record<string, unknown>>;
+  const homeworkSubmitted = hwSubmissions.filter(
+    (r) => r.status !== 'not_submitted'
+  ).length;
+  const homeworkNotSubmitted = Math.max(0, homeworkAssigned - homeworkSubmitted);
+  const homeworkFlaggedCount = hwSubmissions.filter(
+    (r) => r.status === 'flagged_for_review' || r.flagged_reason != null
+  ).length;
+
+  // ── Tests scheduled vs attempted ─────────────────────────────────────────
+  let testsScheduled = 0;
+  if (studentClass) {
+    const { data: testRows } = await supabaseAdmin
+      .from('tests')
+      .select('id')
+      .eq('class', studentClass)
+      .eq('section', studentSection)
+      .gte('date', startIso)
+      .lte('date', endIso);
+    testsScheduled = (testRows ?? []).length;
+  }
+
+  const attempts = (testAttemptsRes.data ?? []) as Array<Record<string, unknown>>;
+  const testsAttempted = attempts.filter((r) => r.is_submitted === true).length;
+  const testsMissed = Math.max(0, testsScheduled - testsAttempted);
+
+  // ── Integrity / suspicious activity ──────────────────────────────────────
+  const integrityRows = (integrityRes.data ?? []) as Array<Record<string, unknown>>;
+  const suspiciousTestCount = integrityRows.length;
+  const suspiciousReasons = [
+    ...new Set(
+      integrityRows.flatMap(
+        (r) => (r.suspicious_reasons as string[] | null) ?? []
+      )
+    ),
+  ];
+
   return {
     studentId,
     studentName,
@@ -197,6 +304,15 @@ export async function getStudentMonthlyData(
     bestScore:  bestScore !== null ? Math.round(bestScore * 10) / 10 : null,
     weakSubject,
     weakScore:  weakScore !== null ? Math.round(weakScore * 10) / 10 : null,
+    homeworkAssigned,
+    homeworkSubmitted,
+    homeworkNotSubmitted,
+    homeworkFlaggedCount,
+    testsScheduled,
+    testsAttempted,
+    testsMissed,
+    suspiciousTestCount,
+    suspiciousReasons,
   };
 }
 
@@ -227,6 +343,11 @@ export async function generateMonthlyReport(
       ? `${data.weakSubject} (${data.weakScore}%)`
       : 'null (all subjects above 70%)';
 
+  const suspiciousStr =
+    data.suspiciousTestCount > 0
+      ? `${data.suspiciousTestCount} test(s) flagged (reasons: ${data.suspiciousReasons.join(', ') || 'unspecified'})`
+      : 'none';
+
   const prompt = `You are generating a monthly academic report for an Indian school student.
 Student: ${data.studentName}
 Class: ${data.class}
@@ -239,6 +360,9 @@ Academic Data:
 - Attendance: ${data.attendancePresent}/${data.attendanceTotal} days (${data.attendancePct}%)
 - Study streak: ${data.currentStreak} days
 - Weak topics: ${weakTopicsStr}
+- Homework: ${data.homeworkSubmitted}/${data.homeworkAssigned} submitted (${data.homeworkNotSubmitted} not submitted${data.homeworkFlaggedCount > 0 ? `, ${data.homeworkFlaggedCount} flagged by AI` : ''})
+- Tests: ${data.testsAttempted}/${data.testsScheduled} given (${data.testsMissed} missed)
+- Suspicious activity in tests: ${suspiciousStr}
 
 Generate a JSON report with this exact structure. No markdown, no extra text:
 {
@@ -252,18 +376,25 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
     "attendance_present": ${data.attendancePresent},
     "attendance_total": ${data.attendanceTotal},
     "streak_days": ${data.currentStreak},
-    "tip": "one specific actionable tip for the parent (max 12 words)"
+    "homework_submitted": ${data.homeworkSubmitted},
+    "homework_assigned": ${data.homeworkAssigned},
+    "tests_missed": ${data.testsMissed},
+    "suspicious_test_count": ${data.suspiciousTestCount},
+    "tip": "one specific actionable tip for the parent (max 15 words)"
   },
-  "summary_en": "one paragraph in English (max 2 sentences, warm and direct)",
+  "summary_en": "2-3 sentences in English covering marks, attendance, homework, tests, and any concerns. Warm but direct.",
   "summary_hi": "same in Hindi (Devanagari script)",
   "summary_gu": "same in Gujarati (Gujarati script)"
 }
 
 Rules:
 - Be specific, not generic
+- Mention homework non-submission if homeworkNotSubmitted > 0
+- Mention missed tests if testsMissed > 0
+- Mention suspicious activity if suspiciousTestCount > 0 — use the word "integrity concern" not "cheating"
 - If streak is 0, set streak_days to 0
 - All scores are percentages (0-100)
-- tip must be actionable, not vague`;
+- tip must address the biggest concern first`;
 
   const responseSchema = {
     type: 'object' as const,
@@ -271,20 +402,26 @@ Rules:
       structured_lines: {
         type: 'object' as const,
         properties: {
-          overall:            { type: 'string' as const },
-          best_subject:       { type: 'string' as const },
-          best_score:         { type: 'number' as const },
-          weak_subject:       { type: 'string' as const },
-          weak_score:         { type: 'number' as const },
-          attendance_pct:     { type: 'number' as const },
-          attendance_present: { type: 'number' as const },
-          attendance_total:   { type: 'number' as const },
-          streak_days:        { type: 'number' as const },
-          tip:                { type: 'string' as const },
+          overall:              { type: 'string' as const },
+          best_subject:         { type: 'string' as const },
+          best_score:           { type: 'number' as const },
+          weak_subject:         { type: 'string' as const },
+          weak_score:           { type: 'number' as const },
+          attendance_pct:       { type: 'number' as const },
+          attendance_present:   { type: 'number' as const },
+          attendance_total:     { type: 'number' as const },
+          streak_days:          { type: 'number' as const },
+          homework_submitted:   { type: 'number' as const },
+          homework_assigned:    { type: 'number' as const },
+          tests_missed:         { type: 'number' as const },
+          suspicious_test_count:{ type: 'number' as const },
+          tip:                  { type: 'string' as const },
         },
         required: [
           'overall', 'attendance_pct', 'attendance_present',
-          'attendance_total', 'streak_days', 'tip',
+          'attendance_total', 'streak_days',
+          'homework_submitted', 'homework_assigned',
+          'tests_missed', 'suspicious_test_count', 'tip',
         ],
       },
       summary_en: { type: 'string' as const },
@@ -346,7 +483,7 @@ export function assembleWhatsAppMessage(
     `📚 Best Subject: ${sl.best_subject ?? 'N/A'} — ${sl.best_score ?? 'N/A'}%`,
   ];
 
-  // ⚠️ line only if weak_subject is not null
+  // ⚠️ weak subject only if present
   if (sl.weak_subject !== null && sl.weak_subject !== undefined) {
     lines.push(`⚠️ Needs Attention: ${sl.weak_subject} — ${sl.weak_score}%`);
   }
@@ -355,9 +492,29 @@ export function assembleWhatsAppMessage(
     `📅 Attendance: ${sl.attendance_pct}% (${sl.attendance_present}/${sl.attendance_total} days)`
   );
 
-  // 🔥 line only if streak_days > 0
+  // 📝 Homework
+  if (sl.homework_assigned > 0) {
+    const notSubmitted = sl.homework_assigned - sl.homework_submitted;
+    if (notSubmitted > 0) {
+      lines.push(`📝 Homework: ${sl.homework_submitted}/${sl.homework_assigned} submitted (${notSubmitted} pending)`);
+    } else {
+      lines.push(`📝 Homework: All ${sl.homework_assigned} submitted ✓`);
+    }
+  }
+
+  // 📋 Tests missed
+  if (sl.tests_missed > 0) {
+    lines.push(`📋 Tests Missed: ${sl.tests_missed}`);
+  }
+
+  // 🔥 streak only if > 0
   if (sl.streak_days > 0) {
     lines.push(`🔥 Study Streak: ${sl.streak_days} days`);
+  }
+
+  // 🚨 Integrity concern — only if suspicious activity found
+  if (sl.suspicious_test_count > 0) {
+    lines.push(`🚨 Integrity Concern: ${sl.suspicious_test_count} test(s) flagged for review`);
   }
 
   lines.push(
@@ -472,6 +629,11 @@ function buildMonthlyPrompt(data: StudentMonthlyData, monthLabel: string): strin
       ? `${data.weakSubject} (${data.weakScore}%)`
       : 'null (all subjects above 70%)';
 
+  const suspiciousStr =
+    data.suspiciousTestCount > 0
+      ? `${data.suspiciousTestCount} test(s) flagged (reasons: ${data.suspiciousReasons.join(', ') || 'unspecified'})`
+      : 'none';
+
   return `You are generating a monthly academic report for an Indian school student.
 Student: ${data.studentName}
 Class: ${data.class}
@@ -484,6 +646,9 @@ Academic Data:
 - Attendance: ${data.attendancePresent}/${data.attendanceTotal} days (${data.attendancePct}%)
 - Study streak: ${data.currentStreak} days
 - Weak topics: ${weakTopicsStr}
+- Homework: ${data.homeworkSubmitted}/${data.homeworkAssigned} submitted (${data.homeworkNotSubmitted} not submitted${data.homeworkFlaggedCount > 0 ? `, ${data.homeworkFlaggedCount} flagged by AI` : ''})
+- Tests: ${data.testsAttempted}/${data.testsScheduled} given (${data.testsMissed} missed)
+- Suspicious activity in tests: ${suspiciousStr}
 
 Generate a JSON report with this exact structure. No markdown, no extra text:
 {
@@ -497,18 +662,25 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
     "attendance_present": ${data.attendancePresent},
     "attendance_total": ${data.attendanceTotal},
     "streak_days": ${data.currentStreak},
-    "tip": "one specific actionable tip for the parent (max 12 words)"
+    "homework_submitted": ${data.homeworkSubmitted},
+    "homework_assigned": ${data.homeworkAssigned},
+    "tests_missed": ${data.testsMissed},
+    "suspicious_test_count": ${data.suspiciousTestCount},
+    "tip": "one specific actionable tip for the parent (max 15 words)"
   },
-  "summary_en": "one paragraph in English (max 2 sentences, warm and direct)",
+  "summary_en": "2-3 sentences in English covering marks, attendance, homework, tests, and any concerns. Warm but direct.",
   "summary_hi": "same in Hindi (Devanagari script)",
   "summary_gu": "same in Gujarati (Gujarati script)"
 }
 
 Rules:
 - Be specific, not generic
+- Mention homework non-submission if homeworkNotSubmitted > 0
+- Mention missed tests if testsMissed > 0
+- Mention suspicious activity if suspiciousTestCount > 0 — use the word "integrity concern" not "cheating"
 - If streak is 0, set streak_days to 0
 - All scores are percentages (0-100)
-- tip must be actionable, not vague`;
+- tip must address the biggest concern first`;
 }
 
 /**
