@@ -240,15 +240,13 @@ export default function TeacherDashboard() {
                     📄 Generate Report Cards
                   </Link>
 
-                  {/* Class Recovery — placeholder */}
-                  <button
-                    type="button"
-                    onClick={() => alert('Class Recovery — coming soon!')}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-200 bg-gray-50 hover:bg-gray-100 text-sm font-medium text-gray-600 transition-colors"
+                  {/* Class Recovery */}
+                  <Link
+                    href="/teacher/recovery-schedule"
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-purple-200 bg-purple-50 hover:bg-purple-100 text-sm font-medium text-purple-700 transition-colors"
                   >
                     🔄 Class Recovery
-                    <span className="text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded-full">Soon</span>
-                  </button>
+                  </Link>
                 </div>
               </div>
             ))}

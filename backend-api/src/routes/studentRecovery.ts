@@ -108,13 +108,15 @@ function calculateIntegrityScore(
 // ── GET /api/student-recovery/packs ──────────────────────────────────────────
 /**
  * Returns all completed recovery packs for this student, newest first.
+ * Groups by cycle_id so multi-subject cycles appear as one logical entry.
+ * Returns the subjects array per cycle for the badge display.
  */
 router.get('/packs', async (req: Request, res: Response) => {
   const studentId = req.student!.id;
 
   const { data, error } = await supabaseAdmin
     .from('recovery_packs')
-    .select('id, subject, scheduled_month, weak_topics, created_at')
+    .select('id, subject, scheduled_month, weak_topics, created_at, cycle_id, student_profile_type')
     .eq('student_id', studentId)
     .eq('generation_status', 'completed')
     .order('created_at', { ascending: false });
@@ -124,7 +126,79 @@ router.get('/packs', async (req: Request, res: Response) => {
     return;
   }
 
-  sendSuccess(res, data ?? []);
+  // Group by cycle_id so the student sees one card per cycle
+  type PackRow = {
+    id: string; subject: string; scheduled_month: string;
+    weak_topics: string[] | null; created_at: string;
+    cycle_id: string | null; student_profile_type: string | null;
+  };
+
+  const rows = (data ?? []) as PackRow[];
+
+  // Build grouped map: cycle_id → { subjects[], representative row }
+  const cycleMap = new Map<string, { subjects: string[]; pack: PackRow }>();
+  const noCycleList: PackRow[] = [];
+
+  for (const row of rows) {
+    if (!row.cycle_id) {
+      noCycleList.push(row);
+      continue;
+    }
+    if (!cycleMap.has(row.cycle_id)) {
+      cycleMap.set(row.cycle_id, { subjects: [], pack: row });
+    }
+    cycleMap.get(row.cycle_id)!.subjects.push(row.subject);
+  }
+
+  // For cycle-based packs return one card per cycle with subject count
+  const cycleCards = Array.from(cycleMap.values()).map(({ subjects, pack }) => ({
+    id: pack.cycle_id!,
+    type: 'cycle' as const,
+    subjects,
+    subject_count: subjects.length,
+    scheduled_month: pack.scheduled_month,
+    created_at: pack.created_at,
+  }));
+
+  // Legacy (no cycle_id) packs returned individually
+  const legacyCards = noCycleList.map((p) => ({
+    id: p.id,
+    type: 'legacy' as const,
+    subject: p.subject,
+    subjects: [p.subject],
+    subject_count: 1,
+    scheduled_month: p.scheduled_month,
+    weak_topics: p.weak_topics,
+    created_at: p.created_at,
+  }));
+
+  sendSuccess(res, [...cycleCards, ...legacyCards]);
+});
+
+// ── GET /api/student-recovery/packs/by-cycle/:cycleId ────────────────────────
+/**
+ * Returns all completed recovery packs for a cycle, for the detail view.
+ * Each element has the full pack_content for rendering in subject tabs.
+ */
+router.get('/packs/by-cycle/:cycleId', async (req: Request, res: Response) => {
+  const studentId = req.student!.id;
+  const cycleId   = req.params.cycleId;
+
+  const { data, error } = await supabaseAdmin
+    .from('recovery_packs')
+    .select('id, subject, scheduled_month, weak_topics, pack_content, student_profile_type, created_at')
+    .eq('student_id', studentId)
+    .eq('cycle_id', cycleId)
+    .eq('generation_status', 'completed')
+    .order('subject', { ascending: true });
+
+  if (error) { sendError(res, error.message, 500); return; }
+  if (!data || (data as unknown[]).length === 0) {
+    sendError(res, 'No packs found for this cycle', 404);
+    return;
+  }
+
+  sendSuccess(res, data);
 });
 
 // ── GET /api/student-recovery/packs/:id ──────────────────────────────────────
@@ -200,6 +274,61 @@ router.get('/packs/:id', async (req: Request, res: Response) => {
     test_id: testId,
     test_total_questions: testTotalQuestions,
   });
+});
+
+// ── GET /api/student-recovery/tests/by-cycle/:cycleId ────────────────────────
+/**
+ * Returns available recovery tests for a cycle (one per subject).
+ */
+router.get('/tests/by-cycle/:cycleId', async (req: Request, res: Response) => {
+  const studentId = req.student!.id;
+  const cycleId   = req.params.cycleId;
+
+  const { data, error } = await supabaseAdmin
+    .from('monthly_recovery_tests')
+    .select('id, subject, total_questions, time_limit_minutes, available_from, available_until, is_available, generation_status, cycle_id')
+    .eq('student_id', studentId)
+    .eq('cycle_id', cycleId)
+    .eq('generation_status', 'completed');
+
+  if (error) { sendError(res, error.message, 500); return; }
+
+  const tests = (data ?? []) as Array<{
+    id: string; subject: string; total_questions: number | null;
+    time_limit_minutes: number | null; available_from: string | null;
+    available_until: string | null; is_available: boolean;
+    generation_status: string; cycle_id: string | null;
+  }>;
+
+  // Fetch attempt statuses
+  const testIds = tests.map((t) => t.id);
+  const { data: attempts } = await supabaseAdmin
+    .from('recovery_test_attempts')
+    .select('recovery_test_id, status, percentage')
+    .eq('student_id', studentId)
+    .in('recovery_test_id', testIds);
+
+  const attemptMap = new Map<string, { status: string; percentage: number | null }>(
+    ((attempts ?? []) as Array<{ recovery_test_id: string; status: string; percentage: number | null }>)
+      .map((a) => [a.recovery_test_id, a])
+  );
+
+  const result = tests.map((t) => {
+    const att = attemptMap.get(t.id);
+    return {
+      id: t.id,
+      subject: t.subject,
+      total_questions: t.total_questions,
+      time_limit_minutes: t.time_limit_minutes,
+      available_from: t.available_from,
+      available_until: t.available_until,
+      is_available: t.is_available,
+      attempt_status: att?.status ?? 'not_started',
+      percentage: att?.percentage ?? null,
+    };
+  });
+
+  sendSuccess(res, result);
 });
 
 // ── GET /api/student-recovery/tests ──────────────────────────────────────────

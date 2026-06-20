@@ -1,75 +1,30 @@
 /**
- * /api/recovery — Recovery pack and test generation endpoints
+ * /api/recovery — Teacher-initiated recovery system
  *
- * POST /api/recovery/generate-pack
- *   Called after teacher approves a schedule. Submits a Gemini Batch job
- *   to generate personalised recovery study packs for every premium student
- *   in the class. Sets generation_status = 'processing' and stores batch_job_id.
- *
- * POST /api/recovery/generate-test
- *   Called after pack generation completes (or independently). Submits a
- *   Gemini Batch job to generate personalised MCQ recovery tests.
- *
- * Both endpoints are guarded by either:
- *   - x-cron-secret header (internal/cron calls)
- *   - Teacher JWT + x-internal-token header (retry from dashboard)
- *
- * The actual result processing is done by the batch-checker cron.
+ * POST /api/recovery/start-pack
+ * POST /api/recovery/start-tests
+ * GET  /api/recovery/cycle-status
+ * GET  /api/recovery/test-results
+ * POST /api/recovery/attempt/start
+ * POST /api/recovery/attempt/submit
  */
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate } from '../middleware/auth';
+import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
-import { analyzeStudentWeakness } from '../services/weaknessAnalysisService';
+import { analyzeStudentWeakness, StudentProfileType } from '../services/weaknessAnalysisService';
 
 const router = Router();
 
-// ── Auth helpers ──────────────────────────────────────────────────────────────
+// ── Gemini helper (reused from original recovery.ts) ─────────────────────────
 
-/** Accepts either CRON_SECRET header or authenticated teacher/admin token. */
-function isCronAuthorized(req: Request): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  const rawHeader = req.headers['x-cron-secret'];
-  const provided = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-  return Boolean(cronSecret && provided === cronSecret);
-}
-
-// ── Gemini Batch API helpers ──────────────────────────────────────────────────
-
-interface GeminiBatchRequest {
-  model: string;
-  contents: Array<{
-    role: string;
-    parts: Array<{ text: string }>;
-  }>;
-}
-
-interface GeminiBatchResponse {
-  name: string; // batch job name / id
-  state: string;
-}
-
-/** Build the Gemini Batch API base URL for the configured project. */
-function geminiBaseUrl(): string {
-  // Vertex AI Batch Prediction endpoint
-  const project  = process.env.GOOGLE_CLOUD_PROJECT ?? '';
-  const location = process.env.GOOGLE_CLOUD_LOCATION ?? 'us-central1';
-  return `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}`;
-}
-
-/**
- * Call Google Gemini (generate content) directly with REST — used for batch.
- * Falls back to the @google/generative-ai SDK for non-batch single calls.
- */
 async function callGeminiGenerateContent(prompt: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-
   const modelId = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
     {
@@ -81,172 +36,81 @@ async function callGeminiGenerateContent(prompt: string): Promise<string> {
       }),
     }
   );
-
   if (!response.ok) {
     const err = await response.text();
     throw new Error(`Gemini API error ${response.status}: ${err}`);
   }
-
   const data = await response.json() as {
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string }> };
-    }>;
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
-
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-  return text;
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
-/**
- * Submit a Gemini Batch job.
- *
- * Note: Gemini Batch API (Vertex AI) processes a list of requests asynchronously.
- * Each "request" in the batch is one student's prompt.
- * Returns the batch job name used for status polling.
- *
- * Since Gemini Batch API via Vertex AI requires GCP service accounts,
- * and many deployments use the simple API key path, we implement a
- * "pseudo-batch" that processes each student individually but stores
- * a shared job ID, then marks all rows as processing.
- * The cron checker processes them sequentially.
- *
- * If GOOGLE_CLOUD_PROJECT is set, uses the real Vertex AI Batch API.
- * Otherwise, processes immediately using the REST API and stores results.
- */
-async function submitGeminiBatchOrProcess(
-  requests: Array<{ studentId: string; prompt: string; rowId: string }>,
-  tableName: 'recovery_packs' | 'monthly_recovery_tests'
-): Promise<string> {
-  const batchJobId = `batch_${tableName}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-  const useVertexBatch = Boolean(process.env.GOOGLE_CLOUD_PROJECT);
-
-  if (useVertexBatch) {
-    // ── Real Vertex AI Batch Prediction ────────────────────────────────────
-    // Build JSONL requests and submit to Vertex AI batch endpoint.
-    // This requires GOOGLE_APPLICATION_CREDENTIALS or service account env vars.
-    const { GoogleAuth } = await import('google-auth-library').catch(() => {
-      throw new Error('google-auth-library not installed. Run: npm install google-auth-library');
-    });
-
-    const auth = new GoogleAuth({ scopes: 'https://www.googleapis.com/auth/cloud-platform' });
-    const client = await auth.getClient();
-    const token = await client.getAccessToken();
-
-    const modelId = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-    const project  = process.env.GOOGLE_CLOUD_PROJECT!;
-    const location = process.env.GOOGLE_CLOUD_LOCATION ?? 'us-central1';
-
-    const batchPayload = {
-      displayName: batchJobId,
-      model: `publishers/google/models/${modelId}`,
-      inputConfig: {
-        instancesFormat: 'jsonl',
-        gcsSource: { uris: [] }, // handled via inline requests below
-      },
-      // For simplicity: submit as inline content list
-      instances: requests.map((r) => ({
-        contents: [{ role: 'user', parts: [{ text: r.prompt }] }],
-        generationConfig: { responseMimeType: 'application/json' },
-      })),
-    };
-
-    const batchUrl = `https://${location}-aiplatform.googleapis.com/v1/projects/${project}/locations/${location}/batchPredictionJobs`;
-
-    const resp = await fetch(batchUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(batchPayload),
-    });
-
-    if (!resp.ok) {
-      const errText = await resp.text();
-      console.error(`[recovery] Vertex AI batch submit failed: ${resp.status}: ${errText}`);
-      throw new Error(`Vertex AI batch submission failed: ${resp.status}`);
-    }
-
-    const jobData = await resp.json() as { name: string };
-    return jobData.name; // real Vertex AI job name
-
-  } else {
-    // ── Immediate processing via standard Gemini API ────────────────────────
-    // Process each request inline and store results. The cron checker will
-    // find these with generation_status='completed' and skip re-processing.
-    // We still set generation_status='processing' first, then update per student.
-
-    for (const req of requests) {
-      try {
-        const rawText = await callGeminiGenerateContent(req.prompt);
-
-        // Strip markdown fences if present
-        const jsonText = rawText
-          .replace(/^```(?:json)?\s*/i, '')
-          .replace(/\s*```$/, '')
-          .trim();
-
-        const parsed = JSON.parse(jsonText) as unknown;
-
-        await supabaseAdmin
-          .from(tableName)
-          .update({
-            generation_status: 'completed',
-            generated_at: new Date().toISOString(),
-            batch_job_id: batchJobId,
-            ...(tableName === 'recovery_packs'
-              ? { pack_content: parsed }
-              : {
-                  questions: (parsed as { questions?: unknown }).questions,
-                  total_questions: Array.isArray((parsed as { questions?: unknown[] }).questions)
-                    ? (parsed as { questions: unknown[] }).questions.length
-                    : 0,
-                  is_available: false,
-                }),
-          })
-          .eq('id', req.rowId);
-
-        // Small delay between Gemini calls to respect rate limits
-        await new Promise((r) => setTimeout(r, 800));
-      } catch (err) {
-        console.error(`[recovery] Failed to generate for student ${req.studentId}:`, err instanceof Error ? err.message : err);
-        await supabaseAdmin
-          .from(tableName)
-          .update({ generation_status: 'failed', batch_job_id: batchJobId })
-          .eq('id', req.rowId);
-      }
-    }
-
-    return batchJobId;
-  }
+async function callGeminiJSON<T>(prompt: string): Promise<T> {
+  const raw = await callGeminiGenerateContent(prompt);
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  return JSON.parse(cleaned) as T;
 }
 
 // ── Prompt builders ───────────────────────────────────────────────────────────
 
-function buildPackPrompt(
+function buildPackPromptWeak(
   className: string,
   subject: string,
   board: string,
-  weakTopicsList: string
+  topics: string[]
 ): string {
-  return `You are creating a personalized study recovery pack for a Class ${className} student in India studying ${subject} (${board} curriculum).
-This student is weak in these topics: ${weakTopicsList}
+  const topicList = topics.slice(0, 4).join(', ');
+  return `You are creating a personalised remediation recovery pack for a Class ${className} student in India studying ${subject} (${board} curriculum).
+This student needs help with these topics: ${topicList}
 
-Create a Recovery Pack with one section per weak topic. Each section must include:
-1. Simple explanation (max 100 words, language appropriate for Class ${className})
-2. Key concepts (3-5 bullet points)
-3. Common mistakes students make (2-3 bullet points)
-4. One solved example with step-by-step solution
-5. Two short practice questions with answers
+Create one section per topic (max 4 topics). Each section must include:
+1. explanation: simple explanation, max 100 words, age-appropriate for Class ${className}
+2. key_concepts: 3-5 bullet points
+3. common_mistakes: 2-3 bullet points of mistakes students make
+4. solved_examples: exactly 1, with step-by-step solution using Indian names/contexts
+5. practice_questions: exactly 2 short questions with answers
 
-Rules:
-- Use simple, engaging language
-- Avoid copying textbook definitions exactly
-- Make examples relatable to Indian students (use Indian names, contexts)
-- Do NOT provide test answers that could be used for cheating
+Return ONLY valid JSON, no markdown fences:
+{"sections":[{"topic":"string","explanation":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
+}
 
-Return ONLY valid JSON matching this exact structure, no markdown:
+function buildPackPromptNoData(
+  className: string,
+  subject: string,
+  board: string
+): string {
+  return `You are creating a curiosity and overview recovery pack for a Class ${className} student in India studying ${subject} (${board} curriculum).
+This student has no test history yet — introduce them to the major topics of this subject in an engaging way.
+
+Cover 4 major topics of ${subject} for Class ${className} ${board}. For each topic:
+1. explanation: engaging overview (max 100 words), tone: "let's explore this subject"
+2. key_concepts: 3 bullet points of the most important ideas
+3. common_mistakes: 1-2 bullet points (common beginner mistakes)
+4. solved_examples: exactly 1, simple and relatable
+5. practice_questions: exactly 1 easy question with answer
+
+Return ONLY valid JSON, no markdown fences:
+{"sections":[{"topic":"string","explanation":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
+}
+
+function buildPackPromptEnrichment(
+  className: string,
+  subject: string,
+  board: string
+): string {
+  return `You are creating an extension/challenge recovery pack for a high-achieving Class ${className} student in India studying ${subject} (${board} curriculum).
+This student has mastered the standard syllabus. Give them advanced, beyond-syllabus content.
+
+Cover 4 advanced or extension topics in ${subject}. Tone: "You've mastered the basics — here's something to challenge you."
+For each topic:
+1. explanation: advanced explanation with real-world applications (max 100 words)
+2. key_concepts: 4-5 challenging concepts
+3. common_mistakes: 2 mistakes even good students make
+4. solved_examples: exactly 1, a harder problem with detailed solution
+5. practice_questions: exactly 2 hard practice questions with answers
+
+Return ONLY valid JSON, no markdown fences:
 {"sections":[{"topic":"string","explanation":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
 }
 
@@ -254,417 +118,673 @@ function buildTestPrompt(
   className: string,
   subject: string,
   board: string,
-  weakTopicsList: string,
-  questionCount: number
+  topics: string[],
+  questionCount: number,
+  profileType: StudentProfileType
 ): string {
-  return `You are creating a personalized Monthly Recovery Test for a Class ${className} student in India. Subject: ${subject} (${board} curriculum).
-This student is weak in: ${weakTopicsList}
+  const topicList = topics.join(', ');
+  const difficultyLine =
+    profileType === 'enrichment'
+      ? '20% easy, 30% medium, 50% hard'
+      : profileType === 'no_data'
+      ? '40% easy, 40% medium, 20% hard'
+      : '30% easy, 40% medium, 30% hard';
+
+  return `You are creating a personalised recovery test for a Class ${className} student in India. Subject: ${subject} (${board} curriculum).
+Topics: ${topicList}
 
 Generate exactly ${questionCount} multiple choice questions.
-
-Distribution:
-- 40% questions from weakest 2 topics
-- 30% from other weak topics
-- 30% mixed review from the whole subject
-
-Difficulty:
-- 30% easy (foundation recall)
-- 40% medium (application)
-- 30% hard (analysis/problem-solving)
+Difficulty distribution: ${difficultyLine}
 
 Each question must have:
-- question text
-- 4 options
-- correct_index (0-3)
-- explanation: one line stating which answer is correct and why (max 20 words, factual)
-- reasoning: a teaching explanation helping the student understand the concept behind this question (2-4 sentences, educational, appropriate for Class ${className} level, explains WHY the answer is correct and why the wrong options are wrong if relevant)
-- difficulty: 'easy', 'medium', or 'hard'
-- topic: which weak topic this tests
+- question: question text
+- options: array of exactly 4 strings
+- correct_index: integer 0-3
+- explanation: one factual line, max 20 words
+- reasoning: teaching explanation, 2-4 sentences, why the answer is correct
+- difficulty: "easy", "medium", or "hard"
+- topic: which topic this tests
 
-Return ONLY valid JSON, no markdown:
+Return ONLY valid JSON, no markdown fences:
 {"questions":[{"question":"string","options":["a","b","c","d"],"correct_index":0,"explanation":"string","reasoning":"string","difficulty":"easy","topic":"string"}]}`;
 }
 
-// ── Shared: get all students + school board for a schedule ────────────────────
+// ── Auth helpers ──────────────────────────────────────────────────────────────
 
-interface ScheduleContext {
-  scheduleRow: {
-    id: string;
-    class: string;
-    section: string;
-    subject: string;
-    scheduled_month: string;
-    school_id: string;
-  };
-  board: string;
-  enrolledStudents: Array<{ id: string; full_name: string; class_name: string }>;
+/** Middleware stack for teacher/schooladmin routes */
+const teacherAuth = [authenticate, requireRole('teacher', 'schooladmin')];
+
+/** Get teacher's class+section assignments */
+async function getTeacherClassSections(
+  teacherId: string,
+  schoolId: string
+): Promise<Array<{ class_name: string; section: string; subject: string }>> {
+  const { data } = await supabaseAdmin
+    .from('teacher_assignments')
+    .select('class_name, section, subject')
+    .eq('teacher_id', teacherId)
+    .eq('school_id', schoolId);
+  return (data ?? []) as Array<{ class_name: string; section: string; subject: string }>;
 }
 
-async function getScheduleContext(scheduleId: string): Promise<ScheduleContext | null> {
-  const { data: scheduleRow, error: schedErr } = await supabaseAdmin
-    .from('monthly_recovery_schedules')
-    .select('id, class, section, subject, scheduled_month, school_id')
-    .eq('id', scheduleId)
-    .maybeSingle();
+/** Get all subjects a teacher teaches in a given class+section */
+async function getTeacherSubjectsForClass(
+  teacherId: string,
+  schoolId: string,
+  className: string,
+  section: string
+): Promise<string[]> {
+  const assignments = await getTeacherClassSections(teacherId, schoolId);
+  const subjects = assignments
+    .filter((a) => a.class_name === className && a.section === section)
+    .map((a) => a.subject);
+  return [...new Set(subjects)];
+}
 
-  if (schedErr || !scheduleRow) return null;
-
-  const row = scheduleRow as {
-    id: string; class: string; section: string;
-    subject: string; scheduled_month: string; school_id: string;
-  };
-
-  // Fetch school board
-  const { data: school } = await supabaseAdmin
+/** Fetch school board */
+async function getSchoolBoard(schoolId: string): Promise<string> {
+  const { data } = await supabaseAdmin
     .from('schools')
     .select('board')
-    .eq('id', row.school_id)
+    .eq('id', schoolId)
     .maybeSingle();
-
-  const board = (school as { board?: string } | null)?.board ?? 'CBSE';
-
-  // Fetch all enrolled students in this class+section
-  const { data: students } = await supabaseAdmin
-    .from('students')
-    .select('id, full_name, class_name')
-    .eq('school_id', row.school_id)
-    .eq('is_deleted', false)
-    .ilike('class_name', row.class)
-    .ilike('section', row.section);
-
-  const enrolledStudents = ((students ?? []) as Array<{
-    id: string;
-    full_name: string;
-    class_name: string;
-  }>);
-
-  return { scheduleRow: row, board, enrolledStudents };
+  return (data as { board?: string } | null)?.board ?? 'CBSE';
 }
 
-// ── Validation schemas ────────────────────────────────────────────────────────
+/** Fetch all active students in a class+section */
+async function getStudentsInClass(
+  schoolId: string,
+  className: string,
+  section: string
+): Promise<Array<{ id: string; full_name: string }>> {
+  const { data } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name')
+    .eq('school_id', schoolId)
+    .eq('is_deleted', false)
+    .ilike('class_name', className)
+    .ilike('section', section);
+  return (data ?? []) as Array<{ id: string; full_name: string }>;
+}
 
-const generateSchema = z.object({
-  schedule_id: z.string().uuid(),
+// ── POST /api/recovery/start-pack ────────────────────────────────────────────
+
+const startPackSchema = z.object({
+  class: z.string().min(1),
+  section: z.string().min(1),
 });
 
-// ── POST /api/recovery/generate-pack ─────────────────────────────────────────
-/**
- * Triggers recovery pack generation for all premium students
- * in a class after the teacher approves the schedule.
- *
- * Auth: CRON_SECRET header OR teacher/schooladmin JWT token.
- */
-router.post('/generate-pack', async (req: Request, res: Response) => {
-  // Auth: cron secret OR authenticated teacher/admin
-  const cronOk = isCronAuthorized(req);
-  if (!cronOk) {
-    // Try JWT auth
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      sendError(res, 'Unauthorized', 401);
-      return;
-    }
-    // Import auth middleware inline to authenticate the request
-    const { supabase: supabaseClient } = await import('../config/supabase');
-    const token = authHeader.split(' ')[1];
-    const { data: authData, error: authError } = await supabaseClient.auth.getUser(token);
-    if (authError || !authData.user) {
-      sendError(res, 'Unauthorized', 401);
-      return;
-    }
-    const { data: profile } = await supabaseAdmin
-      .from('users')
-      .select('role')
-      .eq('id', authData.user.id)
-      .single();
-    if (!profile || !['teacher', 'schooladmin', 'superadmin'].includes(profile.role)) {
-      sendError(res, 'Access denied', 403);
+router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) => {
+  const teacherId = req.user!.id;
+  const schoolId  = req.user!.school_id as string;
+  if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
+
+  const parsed = startPackSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+  const { class: className, section } = parsed.data;
+
+  // Check 30-day lockout
+  const now = new Date();
+  const { data: activeCycle } = await supabaseAdmin
+    .from('recovery_cycles')
+    .select('id, status, lockout_until, pack_generated_at')
+    .eq('school_id', schoolId)
+    .eq('class', className)
+    .eq('section', section)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (activeCycle) {
+    const c = activeCycle as { id: string; status: string; lockout_until: string | null; pack_generated_at: string | null };
+    if (c.lockout_until && new Date(c.lockout_until) > now) {
+      const daysLeft = Math.ceil((new Date(c.lockout_until).getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      sendError(res, `Class is locked out for ${daysLeft} more day(s). Next cycle available on ${c.lockout_until}.`, 429);
       return;
     }
   }
 
-  const parsed = generateSchema.safeParse(req.body);
-  if (!parsed.success) {
-    sendValidationError(res, parsed.error.flatten());
-    return;
-  }
+  const lockoutUntil = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { schedule_id } = parsed.data;
+  // Create new cycle
+  const { data: cycle, error: cycleErr } = await supabaseAdmin
+    .from('recovery_cycles')
+    .insert({
+      school_id: schoolId,
+      class: className,
+      section,
+      created_by: teacherId,
+      status: 'generating_pack',
+      pack_generated_at: now.toISOString(),
+      lockout_until: lockoutUntil,
+    })
+    .select('id')
+    .single();
 
-  // Respond immediately — generation runs in background
-  sendSuccess(res, { message: 'Recovery pack generation started', schedule_id }, 'Job started');
+  if (cycleErr || !cycle) { sendError(res, cycleErr?.message ?? 'Failed to create cycle', 500); return; }
+  const cycleId = (cycle as { id: string }).id;
 
+  sendSuccess(res, { cycle_id: cycleId, lockout_until: lockoutUntil }, 'Recovery pack generation started');
+
+  // Background generation
   setImmediate(async () => {
     try {
-      const ctx = await getScheduleContext(schedule_id);
-      if (!ctx) {
-        console.error(`[recovery/generate-pack] Schedule ${schedule_id} not found`);
+      const [subjects, students, board] = await Promise.all([
+        getTeacherSubjectsForClass(teacherId, schoolId, className, section),
+        getStudentsInClass(schoolId, className, section),
+        getSchoolBoard(schoolId),
+      ]);
+
+      if (students.length === 0 || subjects.length === 0) {
+        await supabaseAdmin.from('recovery_cycles').update({ status: 'pack_ready', updated_at: new Date().toISOString() }).eq('id', cycleId);
         return;
       }
 
-      const { scheduleRow, board, enrolledStudents } = ctx;
+      const currentMonth = now.toISOString().slice(0, 7) + '-01';
 
-      if (enrolledStudents.length === 0) {
-        console.log(`[recovery/generate-pack] No students found for schedule ${schedule_id}`);
-        return;
-      }
+      for (const student of students) {
+        for (const subject of subjects) {
+          try {
+            const weakness = await analyzeStudentWeakness(student.id, subject, schoolId, currentMonth);
+            const profileType = weakness.profile_type;
+            const weakTopics = weakness.weak_topics.slice(0, 4).map((t) => t.topic);
 
-      console.log(`[recovery/generate-pack] Processing ${enrolledStudents.length} students for schedule ${schedule_id}`);
-
-      const batchRequests: Array<{ studentId: string; prompt: string; rowId: string }> = [];
-
-      for (const student of enrolledStudents) {
-        try {
-          // Analyse student weakness
-          const weaknessResult = await analyzeStudentWeakness(
-            student.id,
-            scheduleRow.subject,
-            scheduleRow.school_id,
-            scheduleRow.scheduled_month
-          );
-
-          const weakTopicNames = weaknessResult.weak_topics.map((t) => t.topic);
-          const weakTopicsList = weakTopicNames.join(', ');
-
-          // Check if recovery_pack row already exists
-          const { data: existing } = await supabaseAdmin
-            .from('recovery_packs')
-            .select('id, generation_status')
-            .eq('recovery_schedule_id', schedule_id)
-            .eq('student_id', student.id)
-            .maybeSingle();
-
-          let rowId: string;
-
-          if (existing && (existing as { id: string; generation_status: string }).generation_status === 'completed') {
-            // Already generated — skip
-            console.log(`[recovery/generate-pack] Pack already completed for student ${student.id}, skipping`);
-            continue;
-          } else if (existing) {
-            rowId = (existing as { id: string }).id;
-            // Reset to processing
-            await supabaseAdmin
-              .from('recovery_packs')
-              .update({
-                generation_status: 'processing',
-                weak_topics: weakTopicNames,
-                pack_content: null,
-              })
-              .eq('id', rowId);
-          } else {
-            // Insert new row
-            const { data: inserted, error: insertErr } = await supabaseAdmin
-              .from('recovery_packs')
-              .insert({
-                recovery_schedule_id: schedule_id,
-                student_id: student.id,
-                school_id: scheduleRow.school_id,
-                subject: scheduleRow.subject,
-                scheduled_month: scheduleRow.scheduled_month,
-                weak_topics: weakTopicNames,
-                generation_status: 'processing',
-              })
-              .select('id')
-              .single();
-
-            if (insertErr || !inserted) {
-              console.error(`[recovery/generate-pack] Insert failed for student ${student.id}:`, insertErr?.message);
-              continue;
+            let prompt: string;
+            if (profileType === 'no_data') {
+              prompt = buildPackPromptNoData(className, subject, board);
+            } else if (profileType === 'enrichment') {
+              prompt = buildPackPromptEnrichment(className, subject, board);
+            } else {
+              prompt = buildPackPromptWeak(className, subject, board, weakTopics);
             }
-            rowId = (inserted as { id: string }).id;
+
+            const packContent = await callGeminiJSON<unknown>(prompt);
+
+            // Upsert pack row
+            const { data: existing } = await supabaseAdmin
+              .from('recovery_packs')
+              .select('id')
+              .eq('cycle_id', cycleId)
+              .eq('student_id', student.id)
+              .eq('subject', subject)
+              .maybeSingle();
+
+            if (existing) {
+              await supabaseAdmin.from('recovery_packs').update({
+                pack_content: packContent,
+                weak_topics: weakTopics,
+                student_profile_type: profileType,
+                generation_status: 'completed',
+                generated_at: new Date().toISOString(),
+              }).eq('id', (existing as { id: string }).id);
+            } else {
+              await supabaseAdmin.from('recovery_packs').insert({
+                cycle_id: cycleId,
+                student_id: student.id,
+                school_id: schoolId,
+                subject,
+                scheduled_month: currentMonth,
+                weak_topics: weakTopics,
+                student_profile_type: profileType,
+                pack_content: packContent,
+                generation_status: 'completed',
+                generated_at: new Date().toISOString(),
+              });
+            }
+
+            await new Promise((r) => setTimeout(r, 500));
+          } catch (err) {
+            console.error(`[recovery/start-pack] student=${student.id} subject=${subject}:`, err instanceof Error ? err.message : err);
           }
-
-          const prompt = buildPackPrompt(
-            scheduleRow.class,
-            scheduleRow.subject,
-            board,
-            weakTopicsList
-          );
-
-          batchRequests.push({ studentId: student.id, prompt, rowId });
-        } catch (err) {
-          console.error(`[recovery/generate-pack] Student ${student.id} setup error:`, err instanceof Error ? err.message : err);
         }
       }
 
-      if (batchRequests.length === 0) {
-        console.log(`[recovery/generate-pack] No requests to process for schedule ${schedule_id}`);
-        return;
-      }
-
-      const batchJobId = await submitGeminiBatchOrProcess(batchRequests, 'recovery_packs');
-
-      // Update schedule status
-      await supabaseAdmin
-        .from('monthly_recovery_schedules')
-        .update({ status: 'pack_generated', updated_at: new Date().toISOString() })
-        .eq('id', schedule_id);
-
-      console.log(`[recovery/generate-pack] Batch job ${batchJobId} submitted for schedule ${schedule_id}, ${batchRequests.length} students`);
+      await supabaseAdmin.from('recovery_cycles').update({ status: 'pack_ready', updated_at: new Date().toISOString() }).eq('id', cycleId);
     } catch (err) {
-      console.error('[recovery/generate-pack] Fatal error:', err instanceof Error ? err.message : err);
+      console.error('[recovery/start-pack] Fatal:', err instanceof Error ? err.message : err);
     }
   });
 });
 
-// ── POST /api/recovery/generate-test ─────────────────────────────────────────
-/**
- * Triggers recovery test generation for all premium students.
- * Can be called independently or after pack generation completes.
- *
- * Auth: CRON_SECRET header OR teacher/schooladmin JWT token.
- */
-router.post('/generate-test', async (req: Request, res: Response) => {
-  // Auth check (same as generate-pack)
-  const cronOk = isCronAuthorized(req);
-  if (!cronOk) {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      sendError(res, 'Unauthorized', 401);
-      return;
-    }
-    const { supabase: supabaseClient } = await import('../config/supabase');
-    const token = authHeader.split(' ')[1];
-    const { data: authData, error: authError } = await supabaseClient.auth.getUser(token);
-    if (authError || !authData.user) {
-      sendError(res, 'Unauthorized', 401);
-      return;
-    }
-    const { data: profile } = await supabaseAdmin
-      .from('users')
-      .select('role')
-      .eq('id', authData.user.id)
-      .single();
-    if (!profile || !['teacher', 'schooladmin', 'superadmin'].includes(profile.role)) {
-      sendError(res, 'Access denied', 403);
-      return;
-    }
-  }
+// ── POST /api/recovery/start-tests ───────────────────────────────────────────
 
-  const parsed = generateSchema.safeParse(req.body);
-  if (!parsed.success) {
-    sendValidationError(res, parsed.error.flatten());
+const subjectConfigSchema = z.object({
+  subject:             z.string().min(1),
+  time_limit_minutes:  z.number().int().min(1).max(180),
+  shuffle_questions:   z.boolean().default(true),
+  shuffle_options:     z.boolean().default(true),
+  available_from:      z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+  available_until:     z.string().regex(/^\d{2}:\d{2}$/).optional().nullable(),
+  require_camera:      z.boolean().default(false),
+});
+
+const startTestsSchema = z.object({
+  cycle_id:       z.string().uuid(),
+  subject_configs: z.array(subjectConfigSchema).min(1),
+});
+
+router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) => {
+  const teacherId = req.user!.id;
+  const schoolId  = req.user!.school_id as string;
+  if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
+
+  const parsed = startTestsSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+  const { cycle_id: cycleId, subject_configs: subjectConfigs } = parsed.data;
+
+  // Verify cycle belongs to this teacher's school
+  const { data: cycle } = await supabaseAdmin
+    .from('recovery_cycles')
+    .select('id, class, section, status, school_id')
+    .eq('id', cycleId)
+    .eq('school_id', schoolId)
+    .maybeSingle();
+
+  if (!cycle) { sendError(res, 'Cycle not found', 404); return; }
+  const c = cycle as { id: string; class: string; section: string; status: string; school_id: string };
+
+  if (!['pack_ready', 'tests_ready'].includes(c.status)) {
+    sendError(res, `Cannot generate tests for a cycle with status '${c.status}'`, 400);
     return;
   }
 
-  const { schedule_id } = parsed.data;
+  // Update cycle status
+  await supabaseAdmin.from('recovery_cycles').update({
+    status: 'generating_tests',
+    updated_at: new Date().toISOString(),
+  }).eq('id', cycleId);
 
-  sendSuccess(res, { message: 'Recovery test generation started', schedule_id }, 'Job started');
+  sendSuccess(res, { cycle_id: cycleId }, 'Recovery test generation started');
 
+  // Background generation
   setImmediate(async () => {
     try {
-      const ctx = await getScheduleContext(schedule_id);
-      if (!ctx) {
-        console.error(`[recovery/generate-test] Schedule ${schedule_id} not found`);
-        return;
-      }
+      const students = await getStudentsInClass(schoolId, c.class, c.section);
+      const board = await getSchoolBoard(schoolId);
 
-      const { scheduleRow, board, enrolledStudents } = ctx;
+      for (const config of subjectConfigs) {
+        for (const student of students) {
+          try {
+            // Read pre-computed weak topics from recovery_packs for this cycle
+            const { data: packRow } = await supabaseAdmin
+              .from('recovery_packs')
+              .select('weak_topics, student_profile_type')
+              .eq('cycle_id', cycleId)
+              .eq('student_id', student.id)
+              .eq('subject', config.subject)
+              .maybeSingle();
 
-      if (enrolledStudents.length === 0) {
-        console.log(`[recovery/generate-test] No students found for schedule ${schedule_id}`);
-        return;
-      }
+            const pack = packRow as { weak_topics: string[] | null; student_profile_type: string | null } | null;
+            const topics: string[] = pack?.weak_topics ?? [config.subject];
+            const profileType: StudentProfileType = (pack?.student_profile_type as StudentProfileType | null) ?? 'weak';
+            const questionCount = Math.min(30, Math.max(20, topics.length * 4));
 
-      console.log(`[recovery/generate-test] Processing ${enrolledStudents.length} students for schedule ${schedule_id}`);
+            const prompt = buildTestPrompt(c.class, config.subject, board, topics, questionCount, profileType);
+            const testData = await callGeminiJSON<{ questions: unknown[] }>(prompt);
+            const questions = testData.questions ?? [];
 
-      const batchRequests: Array<{ studentId: string; prompt: string; rowId: string }> = [];
-
-      for (const student of enrolledStudents) {
-        try {
-          const weaknessResult = await analyzeStudentWeakness(
-            student.id,
-            scheduleRow.subject,
-            scheduleRow.school_id,
-            scheduleRow.scheduled_month
-          );
-
-          const weakTopicNames = weaknessResult.weak_topics.map((t) => t.topic);
-          const weakTopicsList = weakTopicNames.join(', ');
-
-          // question_count: min(30, max(20, topic_count * 4))
-          const questionCount = Math.min(30, Math.max(20, weakTopicNames.length * 4));
-
-          // Check if monthly_recovery_tests row already exists
-          const { data: existing } = await supabaseAdmin
-            .from('monthly_recovery_tests')
-            .select('id, generation_status')
-            .eq('recovery_schedule_id', schedule_id)
-            .eq('student_id', student.id)
-            .maybeSingle();
-
-          let rowId: string;
-
-          if (existing && (existing as { id: string; generation_status: string }).generation_status === 'completed') {
-            console.log(`[recovery/generate-test] Test already completed for student ${student.id}, skipping`);
-            continue;
-          } else if (existing) {
-            rowId = (existing as { id: string }).id;
-            await supabaseAdmin
+            // Upsert test row
+            const { data: existing } = await supabaseAdmin
               .from('monthly_recovery_tests')
-              .update({
-                generation_status: 'processing',
-                weak_topics_used: weakTopicNames,
-                questions: null,
-                total_questions: questionCount,
-              })
-              .eq('id', rowId);
-          } else {
-            const { data: inserted, error: insertErr } = await supabaseAdmin
-              .from('monthly_recovery_tests')
-              .insert({
-                recovery_schedule_id: schedule_id,
-                student_id: student.id,
-                school_id: scheduleRow.school_id,
-                subject: scheduleRow.subject,
-                scheduled_month: scheduleRow.scheduled_month,
-                weak_topics_used: weakTopicNames,
-                total_questions: questionCount,
-                generation_status: 'processing',
-                is_available: false,
-              })
               .select('id')
-              .single();
+              .eq('cycle_id', cycleId)
+              .eq('student_id', student.id)
+              .eq('subject', config.subject)
+              .maybeSingle();
 
-            if (insertErr || !inserted) {
-              console.error(`[recovery/generate-test] Insert failed for student ${student.id}:`, insertErr?.message);
-              continue;
+            const testPayload = {
+              cycle_id: cycleId,
+              student_id: student.id,
+              school_id: schoolId,
+              subject: config.subject,
+              scheduled_month: new Date().toISOString().slice(0, 7) + '-01',
+              weak_topics_used: topics,
+              questions,
+              total_questions: questions.length,
+              generation_status: 'completed',
+              is_available: true,
+              time_limit_minutes: config.time_limit_minutes,
+              shuffle_questions: config.shuffle_questions,
+              shuffle_options: config.shuffle_options,
+              available_from: config.available_from ?? null,
+              available_until: config.available_until ?? null,
+              require_camera: config.require_camera,
+            };
+
+            if (existing) {
+              await supabaseAdmin.from('monthly_recovery_tests').update({ ...testPayload, generated_at: new Date().toISOString() }).eq('id', (existing as { id: string }).id);
+            } else {
+              await supabaseAdmin.from('monthly_recovery_tests').insert(testPayload);
             }
-            rowId = (inserted as { id: string }).id;
+
+            await new Promise((r) => setTimeout(r, 500));
+          } catch (err) {
+            console.error(`[recovery/start-tests] student=${student.id} subject=${config.subject}:`, err instanceof Error ? err.message : err);
           }
-
-          const prompt = buildTestPrompt(
-            scheduleRow.class,
-            scheduleRow.subject,
-            board,
-            weakTopicsList,
-            questionCount
-          );
-
-          batchRequests.push({ studentId: student.id, prompt, rowId });
-        } catch (err) {
-          console.error(`[recovery/generate-test] Student ${student.id} setup error:`, err instanceof Error ? err.message : err);
         }
       }
 
-      if (batchRequests.length === 0) {
-        console.log(`[recovery/generate-test] No requests to process for schedule ${schedule_id}`);
-        return;
-      }
-
-      const batchJobId = await submitGeminiBatchOrProcess(batchRequests, 'monthly_recovery_tests');
-
-      // Update schedule status
-      await supabaseAdmin
-        .from('monthly_recovery_schedules')
-        .update({ status: 'test_generated', updated_at: new Date().toISOString() })
-        .eq('id', schedule_id);
-
-      console.log(`[recovery/generate-test] Batch job ${batchJobId} submitted for schedule ${schedule_id}, ${batchRequests.length} students`);
+      await supabaseAdmin.from('recovery_cycles').update({
+        status: 'tests_ready',
+        test_generated_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq('id', cycleId);
     } catch (err) {
-      console.error('[recovery/generate-test] Fatal error:', err instanceof Error ? err.message : err);
+      console.error('[recovery/start-tests] Fatal:', err instanceof Error ? err.message : err);
     }
   });
+});
+
+// ── GET /api/recovery/cycle-status ───────────────────────────────────────────
+
+router.get('/cycle-status', ...teacherAuth, async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id as string;
+  if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
+
+  const className = req.query.class as string | undefined;
+  const section   = req.query.section as string | undefined;
+
+  if (!className || !section) {
+    sendError(res, 'class and section query params are required', 400);
+    return;
+  }
+
+  const { data: cycle } = await supabaseAdmin
+    .from('recovery_cycles')
+    .select('*')
+    .eq('school_id', schoolId)
+    .eq('class', className)
+    .eq('section', section)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!cycle) {
+    sendSuccess(res, { cycle: null, lockout_until: null, days_remaining: 0 });
+    return;
+  }
+
+  const c = cycle as {
+    id: string; status: string; lockout_until: string | null;
+    pack_generated_at: string | null; test_generated_at: string | null;
+    class: string; section: string;
+  };
+
+  const now = new Date();
+  const locked = c.lockout_until ? new Date(c.lockout_until) > now : false;
+  const daysRemaining = c.lockout_until && locked
+    ? Math.ceil((new Date(c.lockout_until).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+    : 0;
+
+  // Pack progress
+  const { data: packs } = await supabaseAdmin
+    .from('recovery_packs')
+    .select('generation_status')
+    .eq('cycle_id', c.id);
+
+  const packRows = (packs ?? []) as Array<{ generation_status: string }>;
+  const packProgress = {
+    total: packRows.length,
+    completed: packRows.filter((r) => r.generation_status === 'completed').length,
+    failed: packRows.filter((r) => r.generation_status === 'failed').length,
+  };
+
+  // Test progress
+  const { data: tests } = await supabaseAdmin
+    .from('monthly_recovery_tests')
+    .select('generation_status')
+    .eq('cycle_id', c.id);
+
+  const testRows = (tests ?? []) as Array<{ generation_status: string }>;
+  const testProgress = {
+    total: testRows.length,
+    completed: testRows.filter((r) => r.generation_status === 'completed').length,
+    failed: testRows.filter((r) => r.generation_status === 'failed').length,
+  };
+
+  sendSuccess(res, {
+    cycle: c,
+    pack_progress: packProgress,
+    test_progress: testProgress,
+    lockout_until: c.lockout_until,
+    days_remaining: daysRemaining,
+    is_locked: locked,
+  });
+});
+
+// ── GET /api/recovery/test-results ───────────────────────────────────────────
+
+router.get('/test-results', ...teacherAuth, async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id as string;
+  if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
+
+  const cycleId = req.query.cycle_id as string | undefined;
+  const subject = req.query.subject as string | undefined;
+
+  if (!cycleId || !subject) {
+    sendError(res, 'cycle_id and subject query params are required', 400);
+    return;
+  }
+
+  // Get all tests for this cycle+subject
+  const { data: tests } = await supabaseAdmin
+    .from('monthly_recovery_tests')
+    .select('id, student_id')
+    .eq('cycle_id', cycleId)
+    .eq('subject', subject);
+
+  const testRows = (tests ?? []) as Array<{ id: string; student_id: string }>;
+
+  if (testRows.length === 0) {
+    sendSuccess(res, []);
+    return;
+  }
+
+  const testIds = testRows.map((t) => t.id);
+  const studentIds = testRows.map((t) => t.student_id);
+
+  // Fetch student names
+  const { data: studentData } = await supabaseAdmin
+    .from('students')
+    .select('id, full_name')
+    .in('id', studentIds);
+
+  const studentMap = new Map<string, string>(
+    ((studentData ?? []) as Array<{ id: string; full_name: string }>).map((s) => [s.id, s.full_name])
+  );
+
+  // Fetch submitted attempts
+  const { data: attempts } = await supabaseAdmin
+    .from('recovery_test_attempts')
+    .select('recovery_test_id, student_id, score, total_questions, percentage, submitted_at, status')
+    .in('recovery_test_id', testIds)
+    .eq('status', 'submitted');
+
+  const attemptMap = new Map<string, {
+    score: number | null; total_questions: number | null;
+    percentage: number | null; submitted_at: string | null;
+  }>(
+    ((attempts ?? []) as Array<{
+      recovery_test_id: string; student_id: string;
+      score: number | null; total_questions: number | null;
+      percentage: number | null; submitted_at: string | null;
+    }>).map((a) => [a.student_id, a])
+  );
+
+  const results = testRows.map((t) => {
+    const attempt = attemptMap.get(t.student_id);
+    return {
+      student_id: t.student_id,
+      full_name: studentMap.get(t.student_id) ?? 'Unknown',
+      score: attempt?.score ?? null,
+      total_questions: attempt?.total_questions ?? null,
+      percentage: attempt?.percentage ?? null,
+      submitted_at: attempt?.submitted_at ?? null,
+      status: attempt ? 'submitted' : 'not_given',
+    };
+  });
+
+  // Sort: not_given first, then by percentage ascending
+  results.sort((a, b) => {
+    if (a.status === 'not_given' && b.status !== 'not_given') return -1;
+    if (a.status !== 'not_given' && b.status === 'not_given') return 1;
+    return (a.percentage ?? 0) - (b.percentage ?? 0);
+  });
+
+  sendSuccess(res, results);
+});
+
+// ── POST /api/recovery/attempt/start ─────────────────────────────────────────
+
+const startAttemptSchema = z.object({ recovery_test_id: z.string().uuid() });
+
+router.post('/attempt/start', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  const studentId = req.student!.id;
+
+  const parsed = startAttemptSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+  const { recovery_test_id } = parsed.data;
+
+  // Verify test exists and belongs to this student
+  const { data: test } = await supabaseAdmin
+    .from('monthly_recovery_tests')
+    .select('id, subject, questions, total_questions, time_limit_minutes, shuffle_questions, shuffle_options, cycle_id')
+    .eq('id', recovery_test_id)
+    .eq('student_id', studentId)
+    .eq('is_available', true)
+    .maybeSingle();
+
+  if (!test) { sendError(res, 'Test not found or not available', 404); return; }
+
+  const t = test as {
+    id: string; subject: string;
+    questions: Array<{ question: string; options: string[]; correct_index: number; explanation: string; reasoning: string; difficulty: string; topic: string }> | null;
+    total_questions: number | null;
+    time_limit_minutes: number | null;
+    shuffle_questions: boolean;
+    shuffle_options: boolean;
+    cycle_id: string | null;
+  };
+
+  // Prevent re-taking a submitted test
+  const { data: existing } = await supabaseAdmin
+    .from('recovery_test_attempts')
+    .select('id, status')
+    .eq('recovery_test_id', recovery_test_id)
+    .eq('student_id', studentId)
+    .maybeSingle();
+
+  if (existing && (existing as { status: string }).status === 'submitted') {
+    sendError(res, 'You have already submitted this test', 409);
+    return;
+  }
+
+  // Create or reuse in_progress attempt
+  let attemptId: string;
+  if (existing) {
+    attemptId = (existing as { id: string }).id;
+  } else {
+    const { data: inserted } = await supabaseAdmin
+      .from('recovery_test_attempts')
+      .insert({
+        recovery_test_id,
+        student_id: studentId,
+        cycle_id: t.cycle_id,
+        subject: t.subject,
+        status: 'in_progress',
+        total_questions: t.total_questions,
+      })
+      .select('id')
+      .single();
+    if (!inserted) { sendError(res, 'Failed to create attempt', 500); return; }
+    attemptId = (inserted as { id: string }).id;
+  }
+
+  // Strip correct_index; optionally shuffle
+  let questions = (t.questions ?? []).map(({ correct_index: _ci, ...q }) => q);
+  if (t.shuffle_questions) questions = questions.sort(() => Math.random() - 0.5);
+  if (t.shuffle_options) {
+    questions = questions.map((q) => {
+      const shuffled = [...q.options].sort(() => Math.random() - 0.5);
+      return { ...q, options: shuffled };
+    });
+  }
+
+  sendSuccess(res, {
+    attempt_id: attemptId,
+    time_limit_minutes: t.time_limit_minutes,
+    questions,
+  });
+});
+
+// ── POST /api/recovery/attempt/submit ─────────────────────────────────────────
+
+const submitAttemptSchema = z.object({
+  attempt_id: z.string().uuid(),
+  answers: z.array(z.object({
+    question_id: z.string(),
+    selected_option: z.enum(['a', 'b', 'c', 'd']).optional(),
+  })),
+});
+
+router.post('/attempt/submit', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  const studentId = req.student!.id;
+
+  const parsed = submitAttemptSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+  const { attempt_id: attemptId, answers } = parsed.data;
+
+  // Fetch attempt
+  const { data: attempt } = await supabaseAdmin
+    .from('recovery_test_attempts')
+    .select('id, student_id, recovery_test_id, status')
+    .eq('id', attemptId)
+    .eq('student_id', studentId)
+    .maybeSingle();
+
+  if (!attempt) { sendError(res, 'Attempt not found', 404); return; }
+  const a = attempt as { id: string; student_id: string; recovery_test_id: string; status: string };
+  if (a.status === 'submitted') { sendError(res, 'Test already submitted', 409); return; }
+
+  // Fetch full test with correct answers
+  const { data: test } = await supabaseAdmin
+    .from('monthly_recovery_tests')
+    .select('questions, total_questions')
+    .eq('id', a.recovery_test_id)
+    .maybeSingle();
+
+  if (!test) { sendError(res, 'Test not found', 404); return; }
+  const t = test as {
+    questions: Array<{ question: string; options: string[]; correct_index: number; topic: string }> | null;
+    total_questions: number | null;
+  };
+
+  const questions = t.questions ?? [];
+  const optionMap: Record<string, number> = { a: 0, b: 1, c: 2, d: 3 };
+
+  // Score: map answers by index (questions are ordered)
+  let score = 0;
+  const answersPayload = questions.map((q, i) => {
+    const ans = answers[i];
+    const selectedIndex = ans?.selected_option ? optionMap[ans.selected_option] : null;
+    const isCorrect = selectedIndex !== null && selectedIndex === q.correct_index;
+    if (isCorrect) score++;
+    return { question_index: i, selected_option: ans?.selected_option ?? null, is_correct: isCorrect };
+  });
+
+  const total = questions.length;
+  const percentage = total > 0 ? parseFloat(((score / total) * 100).toFixed(2)) : 0;
+
+  await supabaseAdmin.from('recovery_test_attempts').update({
+    score,
+    total_questions: total,
+    percentage,
+    answers: answersPayload,
+    status: 'submitted',
+    submitted_at: new Date().toISOString(),
+  }).eq('id', attemptId);
+
+  sendSuccess(res, { attempt_id: attemptId, score, total_questions: total, percentage });
 });
 
 export default router;

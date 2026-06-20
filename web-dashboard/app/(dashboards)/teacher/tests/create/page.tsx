@@ -445,6 +445,7 @@ const LS_TERM_KEY        = 'eduvo_last_term';
 const LS_EXAM_TYPE_KEY   = 'eduvo_last_exam_type';
 const LS_START_TIME_KEY  = 'eduvo_last_start_time';
 const LS_END_TIME_KEY    = 'eduvo_last_end_time';
+const LS_BOARD_KEY       = 'eduvo_last_board';
 
 function readLS(key: string): string {
   try { return localStorage.getItem(key) ?? ''; } catch { return ''; }
@@ -524,6 +525,7 @@ export default function CreateTestPage() {
     const lastExamType  = readLS(LS_EXAM_TYPE_KEY) as ExamTypeValue | '';
     const lastStartTime = readLS(LS_START_TIME_KEY);
     const lastEndTime   = readLS(LS_END_TIME_KEY);
+    const lastBoard     = readLS(LS_BOARD_KEY);
     return {
       ...EMPTY_DETAILS,
       term:       lastTerm     || EMPTY_DETAILS.term,
@@ -532,6 +534,9 @@ export default function CreateTestPage() {
                     : EMPTY_DETAILS.exam_type,
       start_time: lastStartTime || EMPTY_DETAILS.start_time,
       end_time:   lastEndTime   || EMPTY_DETAILS.end_time,
+      board:      (lastBoard && (BOARDS as readonly string[]).includes(lastBoard))
+                    ? lastBoard
+                    : EMPTY_DETAILS.board,
     };
   });
   const [detailsError, setDetailsError] = useState('');
@@ -541,6 +546,7 @@ export default function CreateTestPage() {
   useEffect(() => { if (details.exam_type)  writeLS(LS_EXAM_TYPE_KEY,  details.exam_type); }, [details.exam_type]);
   useEffect(() => {                          writeLS(LS_START_TIME_KEY, details.start_time); }, [details.start_time]);
   useEffect(() => {                          writeLS(LS_END_TIME_KEY,   details.end_time);   }, [details.end_time]);
+  useEffect(() => { if (details.board)      writeLS(LS_BOARD_KEY,      details.board);      }, [details.board]);
 
   // Step 2 — questions
   const [questions, setQuestions] = useState<QuestionDraft[]>([]);
@@ -1382,7 +1388,26 @@ export default function CreateTestPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <FormField label="Board" htmlFor="d-board">
                     <select id="d-board" className={inputClass} value={details.board}
-                      onChange={(e) => setDetails((d) => ({ ...d, board: e.target.value }))}>
+                      onChange={(e) => {
+                        const b = e.target.value;
+                        setDetails((d) => ({ ...d, board: b }));
+                        // Keep the chapter library board in sync so chapters
+                        // are fetched for the correct board.
+                        setLibSelection({
+                          board: b,
+                          subject: '',
+                          chapterId: '',
+                          chapterNumber: 0,
+                          chapterName: '',
+                          allTopics: [],
+                          checkedTopics: new Set(),
+                          customTopicChecked: false,
+                          customTopicText: '',
+                        });
+                        setLibSubjects([]);
+                        setLibChapters([]);
+                        if (details.class_name) fetchLibSubjects(b, details.class_name);
+                      }}>
                       {BOARDS.map((b) => <option key={b} value={b}>{b}</option>)}
                     </select>
                   </FormField>

@@ -28,8 +28,8 @@ import StudentTestsScreen from '../screens/main/TestsScreen';
 import HomeworkSubmitScreen, { type HomeworkMeta } from '../screens/student/HomeworkSubmitScreen';
 import RecoveryPacksScreen from '../screens/student/RecoveryPacksScreen';
 import RecoveryPackDetailScreen from '../screens/student/RecoveryPackDetailScreen';
-import MonthlyRecoveryTestsScreen from '../screens/student/MonthlyRecoveryTestsScreen';
-import MonthlyRecoveryTestAttemptScreen from '../screens/student/MonthlyRecoveryTestAttemptScreen';
+import MonthlyRecoveryTestsScreen from '../screens/student/RecoveryTestListScreen';
+import MonthlyRecoveryTestAttemptScreen from '../screens/student/RecoveryTestAttemptScreen';
 
 // More home screen
 import MoreHomeScreen from '../screens/main/MoreHomeScreen';
@@ -80,8 +80,8 @@ export type MainStackParamList = {
   LinkChild: undefined;
   Announcements: undefined;
   RecoveryPacks: undefined;
-  RecoveryPackDetail: { packId: string };
-  MonthlyRecoveryTests: undefined;
+  RecoveryPackDetail: { packId: string; isCycle?: boolean };
+  MonthlyRecoveryTests: { cycleId?: string } | undefined;
   MonthlyRecoveryTestAttempt: { testId: string };
 };
 

@@ -18,6 +18,14 @@ import { supabaseAdmin } from '../config/supabase';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Student profile type for recovery pack generation:
+ * - 'enrichment': subject_marks_pct >= 85 across all data — extension pack
+ * - 'no_data':    no test history at all — curiosity/overview pack
+ * - 'weak':       has identifiable weak topics — remediation pack
+ */
+export type StudentProfileType = 'weak' | 'no_data' | 'enrichment';
+
 export interface WeakTopic {
   topic: string;
   weakness_score: number; // 0–100, lower = weaker
@@ -35,6 +43,10 @@ export interface WeaknessAnalysisResult {
   scheduled_month: string;
   weak_topics: WeakTopic[];
   subject_marks_pct: number | null; // overall marks % for this subject
+  /** Profile type used to select Gemini prompt variant */
+  profile_type: StudentProfileType;
+  /** True when no test/homework/marks data exists at all */
+  has_no_data: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -389,5 +401,46 @@ export async function analyzeStudentWeakness(
     scheduled_month: scheduledMonth,
     weak_topics: weakTopics,
     subject_marks_pct: marksAvgPct !== null ? Math.round(marksAvgPct) : null,
+    profile_type: determineProfileType(
+      marksAvgPct,
+      topicCorrectMap.size,
+      homeworkTopicMap.size,
+      prevRecoveryTopicMap.size
+    ),
+    has_no_data:
+      topicCorrectMap.size === 0 &&
+      homeworkTopicMap.size === 0 &&
+      marksAvgPct === null &&
+      prevRecoveryTopicMap.size === 0,
   };
+}
+
+// ── Profile type determination ────────────────────────────────────────────────
+
+/**
+ * Determines the profile type for recovery pack generation.
+ *
+ * Rules (evaluated in order):
+ *   1. enrichment — subject_marks_pct >= 85 (strong performer)
+ *   2. no_data    — zero data points across all sources
+ *   3. weak       — default (has identifiable weak topics)
+ */
+function determineProfileType(
+  marksAvgPct: number | null,
+  testTopicCount: number,
+  hwTopicCount: number,
+  prevRecoveryTopicCount: number
+): StudentProfileType {
+  const hasNoData =
+    testTopicCount === 0 &&
+    hwTopicCount === 0 &&
+    marksAvgPct === null &&
+    prevRecoveryTopicCount === 0;
+
+  if (hasNoData) return 'no_data';
+
+  // Enrichment: marks >= 85% and enough data to make that determination
+  if (marksAvgPct !== null && marksAvgPct >= 85) return 'enrichment';
+
+  return 'weak';
 }
