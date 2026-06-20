@@ -118,30 +118,36 @@ router.get('/students', async (req: Request, res: Response) => {
 // ── POST /api/admin/students ──────────────────────────────────────────────────
 /**
  * Add a new student.
- * - phone_number is required — it is the login phone for the student/parent account.
- * - Default password = last 5 digits of phone_number (bcrypt hashed, rounds 10).
+ *
+ * Login phone logic:
+ *   - parent_phone is REQUIRED — used as login credential if no student_phone given.
+ *   - student_phone is OPTIONAL — if provided, used as the login credential instead.
+ *   - Default password = last 5 digits of the login phone (bcrypt hashed).
+ *   - parent_phone is always stored separately for WhatsApp notifications.
+ *   - Welcome SMS is sent to parent_phone.
+ *
  * - is_first_login = true so the app prompts a password change on first login.
- * - Sends a welcome SMS to the parent phone via MSG91 (best-effort).
  * - Inserts into students table with school_id from the logged-in admin.
  * - Auto-generates qr_code = student UUID.
  * - Logs to audit_logs.
  */
 router.post('/students', async (req: Request, res: Response) => {
   const schema = z.object({
-    name:         z.string().min(1),
-    class:        z.string().min(1),
-    section:      z.string().min(1),
-    roll_number:  z.string().optional(),
-    parent_phone: z.string().regex(/^\d{10}$/, 'parent_phone must be exactly 10 digits').optional(),
-    parent_email: z.string().email().optional(),
-    photo_url:    z.string().optional(),
+    name:          z.string().min(1),
+    class:         z.string().min(1),
+    section:       z.string().min(1),
+    roll_number:   z.string().optional(),
+    parent_phone:  z.string().regex(/^\d{10}$/, 'parent_phone must be exactly 10 digits'),
+    student_phone: z.string().regex(/^\d{10}$/, 'student_phone must be exactly 10 digits').optional(),
+    parent_email:  z.string().email().optional(),
+    photo_url:     z.string().optional(),
     date_of_birth: z.string().optional(), // YYYY-MM-DD or DD/MM/YYYY accepted
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { name, class: className, section, roll_number, parent_phone, parent_email, photo_url, date_of_birth } =
+  const { name, class: className, section, roll_number, parent_phone, student_phone, parent_email, photo_url, date_of_birth } =
     parsed.data;
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
@@ -150,10 +156,11 @@ router.post('/students', async (req: Request, res: Response) => {
   const normalizedClass   = className.trim();
   const normalizedSection = section.trim();
 
-  // phone_number is now optional — use parent_phone if provided, otherwise generate a temp one
-  const phone_number = parent_phone || `98${Math.random().toString().slice(2, 10)}`;
+  // Login phone: use student_phone if provided, otherwise parent_phone
+  // This is what the student uses to log into the mobile app.
+  const phone_number = student_phone || parent_phone;
 
-  // Check phone not already registered to another student in this school
+  // Check login phone not already registered to another student in this school
   const { data: phoneConflict } = await supabaseAdmin
     .from('students')
     .select('id')
@@ -167,7 +174,7 @@ router.post('/students', async (req: Request, res: Response) => {
     return;
   }
 
-  // Default password = last 5 digits of phone
+  // Default password = last 5 digits of login phone
   const defaultPassword = phone_number.slice(-5);
   let passwordHash: string;
   try {
@@ -199,7 +206,8 @@ router.post('/students', async (req: Request, res: Response) => {
       section:        normalizedSection,
       roll_number:    roll_number ?? null,
       phone_number,
-      phone:          phone_number, // keep legacy column in sync
+      phone:          phone_number,     // keep legacy column in sync
+      parent_phone,                     // stored separately for WhatsApp notifications
       date_of_birth:  dobIso,
       password_hash:  passwordHash,
       is_first_login: true,
@@ -296,14 +304,15 @@ router.post('/students', async (req: Request, res: Response) => {
     .maybeSingle();
   const schoolName = (school as Record<string, unknown> | null)?.name as string ?? 'your school';
 
-  // ── Send welcome SMS (best-effort) ────────────────────────────────────────
+  // ── Send welcome SMS to parent_phone (best-effort) ──────────────────────
   const smsMessage =
     `Welcome to Eduvo! Your child ${name} has been added to ${schoolName}. ` +
     `Download Eduvo app and login with: Phone: ${phone_number} Password: ${defaultPassword} ` +
     `Please change your password after first login.`;
 
   try {
-    await sendSMS(phone_number, smsMessage);
+    // Always send to parent_phone (may differ from login phone if student has own number)
+    await sendSMS(parent_phone, smsMessage);
   } catch (smsErr) {
     console.error('[admin] Welcome SMS failed for student:', name, smsErr);
   }
@@ -335,13 +344,14 @@ router.post('/students', async (req: Request, res: Response) => {
  */
 router.put('/students/:id', async (req: Request, res: Response) => {
   const schema = z.object({
-    name:         z.string().min(1).optional(),
-    class:        z.string().min(1).optional(),
-    section:      z.string().min(1).optional(),
-    roll_number:  z.string().min(1).optional(),
-    parent_phone: z.string().optional(),
-    parent_email: z.string().email().optional(),
-    photo_url:    z.string().url().optional(),
+    name:          z.string().min(1).optional(),
+    class:         z.string().min(1).optional(),
+    section:       z.string().min(1).optional(),
+    roll_number:   z.string().min(1).optional(),
+    parent_phone:  z.string().regex(/^\d{10}$/, 'parent_phone must be exactly 10 digits').optional(),
+    student_phone: z.string().regex(/^\d{10}$/, 'student_phone must be exactly 10 digits').optional(),
+    parent_email:  z.string().email().optional(),
+    photo_url:     z.string().url().optional(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -369,12 +379,23 @@ router.put('/students/:id', async (req: Request, res: Response) => {
   }
 
   const updates: Record<string, unknown> = {};
-  if (parsed.data.name)         updates.full_name  = parsed.data.name;
-  if (parsed.data.class)        updates.class_name = parsed.data.class;
-  if (parsed.data.section)      updates.section    = parsed.data.section;
-  if (parsed.data.roll_number)  updates.roll_number = parsed.data.roll_number;
-  if (parsed.data.parent_phone) updates.phone      = parsed.data.parent_phone;
-  if (parsed.data.photo_url)    updates.photo_url  = parsed.data.photo_url;
+  if (parsed.data.name)          updates.full_name    = parsed.data.name;
+  if (parsed.data.class)         updates.class_name   = parsed.data.class;
+  if (parsed.data.section)       updates.section      = parsed.data.section;
+  if (parsed.data.roll_number)   updates.roll_number  = parsed.data.roll_number;
+  if (parsed.data.parent_phone) {
+    updates.parent_phone = parsed.data.parent_phone;
+    // If no dedicated student_phone is provided, also update the login phone
+    if (!parsed.data.student_phone) {
+      updates.phone_number = parsed.data.parent_phone;
+      updates.phone        = parsed.data.parent_phone;
+    }
+  }
+  if (parsed.data.student_phone) {
+    updates.phone_number = parsed.data.student_phone;
+    updates.phone        = parsed.data.student_phone;
+  }
+  if (parsed.data.photo_url)     updates.photo_url    = parsed.data.photo_url;
 
   if (Object.keys(updates).length === 0) {
     sendError(res, 'No updatable fields provided', 400);

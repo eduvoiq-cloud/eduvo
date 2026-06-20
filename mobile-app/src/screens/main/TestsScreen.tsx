@@ -10,12 +10,12 @@ import {
   StatusBar,
   Alert,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 import { MainStackParamList } from '../../navigation/AppNavigator';
+import { toMinutes, formatHHMM } from '../../utils/dateUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -61,11 +61,6 @@ function formatDate(iso: string | null | undefined): string {
   });
 }
 
-function formatTimeWindow(from: string | null | undefined, until: string | null | undefined): string | null {
-  if (!from && !until) return null;
-  return `${from ?? '—'} – ${until ?? '—'}`;
-}
-
 const STATUS_CONFIG: Record<
   NonNullable<TestRecord['attempt_status']>,
   { label: string; color: string; bg: string }
@@ -76,11 +71,6 @@ const STATUS_CONFIG: Record<
 };
 
 // ── Countdown helpers ─────────────────────────────────────────────────────────
-
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
 
 function secondsUntilHHMM(hhmm: string | null | undefined): number | null {
   if (!hhmm) return null;
@@ -102,14 +92,6 @@ function formatCountdown(seconds: number): string {
     return `${m}m ${s}s`;
   }
   return `${seconds}s`;
-}
-
-function formatHHMM(hhmm: string): string {
-  const [hStr, mStr] = hhmm.split(':');
-  const h = parseInt(hStr, 10);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 || 12;
-  return `${h12}:${mStr} ${ampm}`;
 }
 
 // ── Test card ─────────────────────────────────────────────────────────────────
@@ -177,7 +159,7 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
               if (test.available_from && test.available_until) {
                 return `🟢 Window: ${formatHHMM(test.available_from)} – ${formatHHMM(test.available_until)}`;
               }
-              return `🕐 Window: ${formatTimeWindow(test.available_from, test.available_until)}`;
+              return `🕐 Window: ${test.available_from ?? '—'} – ${test.available_until ?? '—'}`;
             })()}
           </Text>
         </View>

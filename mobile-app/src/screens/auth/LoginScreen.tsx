@@ -121,15 +121,15 @@ export default function LoginScreen() {
         must_change_password
       );
       // AppNavigator handles routing based on isFirstLogin
-    } catch (error: any) {
+    } catch (error: unknown) {
       attemptCount.current += 1;
 
       if (attemptCount.current >= MAX_ATTEMPTS) {
         lockoutUntil.current = Date.now() + LOCKOUT_DURATION_MS;
         setErrorMessage('Too many attempts. Try again in 1 hour.');
       } else {
-        const message =
-          error.response?.data?.message ?? 'Login failed. Please check your credentials.';
+        const axiosError = error as { response?: { data?: { message?: string } } };
+        const message = axiosError.response?.data?.message ?? 'Login failed. Please check your credentials.';
         setErrorMessage(message);
       }
     } finally {

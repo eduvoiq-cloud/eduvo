@@ -88,9 +88,9 @@ export default function LinkChildScreen() {
       setSuccessMessage(
         `${student.name} linked! You can now switch between children from the home screen.`
       );
-    } catch (error: any) {
-      const message =
-        error.response?.data?.message ?? 'Failed to link account. Check credentials.';
+    } catch (error: unknown) {
+      const axiosError = error as { response?: { data?: { message?: string } } };
+      const message = axiosError.response?.data?.message ?? 'Failed to link account. Check credentials.';
       setErrorMessage(message);
     } finally {
       setLoading(false);

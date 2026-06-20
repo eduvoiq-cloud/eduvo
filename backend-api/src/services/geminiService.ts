@@ -89,7 +89,6 @@ export async function extractFromFile(
   // ── PDF: send as base64 directly to Gemini vision ──────────────────────────
   if (mime === "application/pdf" || originalName.endsWith(".pdf")) {
     const base64 = file.buffer.toString("base64");
-    console.log(`[extractFromFile] PDF stored as base64, size: ${file.buffer.length} bytes`);
     return {
       type: "pdf_base64",
       data: base64,
@@ -104,7 +103,6 @@ export async function extractFromFile(
   ) {
     const result = await mammoth.extractRawText({ buffer: file.buffer });
     const cleaned = cleanText(result.value);
-    console.log(`[extractFromFile] DOCX text chars: ${cleaned.length}`);
     return {
       type: "text",
       data: cleaned,
@@ -115,7 +113,6 @@ export async function extractFromFile(
   // ── TXT: read as utf-8 ─────────────────────────────────────────────────────
   if (mime === "text/plain" || originalName.endsWith(".txt")) {
     const cleaned = cleanText(file.buffer.toString("utf-8"));
-    console.log(`[extractFromFile] TXT chars: ${cleaned.length}`);
     return {
       type: "text",
       data: cleaned,
@@ -164,7 +161,6 @@ export async function generateQuestions(
   } = params;
 
   const t_gs0 = performance.now();
-  console.log('[PERF:gemini] generateQuestions — entered');
 
   // Rate-limit check
   const allowed = await checkDailyLimit(teacher_id, school_id);
@@ -174,7 +170,7 @@ export async function generateQuestions(
     );
   }
 
-  // Build a deterministic hash for caching
+  // Build a deterministic hash — return cached result if available
   const promptHash = buildPromptHash(
     extraction.data,
     subject,
@@ -183,17 +179,8 @@ export async function generateQuestions(
     mcq_count,
     theory_count
   );
-
-  const t_gs1_promptBuilt = performance.now();
-  console.log(`[PERF:gemini] Prompt hash built (incl. daily-limit DB check): ${((t_gs1_promptBuilt - t_gs0) / 1000).toFixed(3)}s`);
-
-  // Return cached result if fresh
   const cached = await getCachedResult(promptHash);
-  const t_gs2_cacheChecked = performance.now();
-  console.log(`[PERF:gemini] Cache DB lookup: ${((t_gs2_cacheChecked - t_gs1_promptBuilt) / 1000).toFixed(3)}s`);
-
   if (cached) {
-    console.log('[PERF:gemini] Cache HIT — returning cached result');
     return JSON.parse(cached) as GeneratedContent;
   }
 
@@ -264,7 +251,6 @@ Return this exact JSON structure:
   const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
   const fallbackModelId = "gemini-2.0-flash";
   const modelsToTry = modelId === fallbackModelId ? [modelId] : [modelId, fallbackModelId];
-  console.log(`[PERF:gemini] Using model: ${modelId}`);
 
   const genAI = new GoogleGenerativeAI(apiKey);
 
@@ -278,13 +264,11 @@ Return this exact JSON structure:
       const model = genAI.getGenerativeModel({ model: currentModelId, systemInstruction });
       t_gs3_geminiCallStart = performance.now();
       if (currentModelId !== modelId) {
-        console.warn(`[PERF:gemini] Falling back to ${currentModelId}…`);
+        console.warn(`[geminiService] Falling back to ${currentModelId}…`);
       }
-      console.log(`[PERF:gemini] Calling Gemini API (model: ${currentModelId}, content-type: ${extraction.type})...`);
       result = await model.generateContent({ contents: [{ role: "user", parts: requestParts }] });
       t_gs4_geminiCallDone = performance.now();
       tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
-      console.log(`[PERF:gemini] Gemini API responded: ${((t_gs4_geminiCallDone - t_gs3_geminiCallStart) / 1000).toFixed(3)}s | tokens used: ${tokensUsed}`);
       break; // success
     } catch (err) {
       const status = (err as Record<string, unknown>)?.status as number | undefined;
@@ -324,15 +308,13 @@ Return this exact JSON structure:
     cached_result: JSON.stringify(parsed),
   });
   const t_gs6_dbSaveDone = performance.now();
-  console.log(`[PERF:gemini] Usage record saved to DB: ${((t_gs6_dbSaveDone - t_gs5_dbSaveStart) / 1000).toFixed(3)}s`);
 
-  console.log(`[PERF:gemini] ── generateQuestions internal breakdown ──────────`);
-  console.log(`[PERF:gemini]   Daily-limit check + hash build: ${((t_gs1_promptBuilt - t_gs0) / 1000).toFixed(3)}s`);
-  console.log(`[PERF:gemini]   Cache DB lookup:                ${((t_gs2_cacheChecked - t_gs1_promptBuilt) / 1000).toFixed(3)}s`);
-  console.log(`[PERF:gemini]   Gemini API call (TTFB+stream):  ${((t_gs4_geminiCallDone - t_gs3_geminiCallStart) / 1000).toFixed(3)}s`);
-  console.log(`[PERF:gemini]   DB save (usage record):         ${((t_gs6_dbSaveDone - t_gs5_dbSaveStart) / 1000).toFixed(3)}s`);
-  console.log(`[PERF:gemini]   Total inside generateQuestions: ${((t_gs6_dbSaveDone - t_gs0) / 1000).toFixed(3)}s`);
-  console.log(`[PERF:gemini] ─────────────────────────────────────────────────`);
+  // Single summary log — enough for production monitoring without flooding logs
+  console.info(
+    `[gemini] generateQuestions done in ${((t_gs6_dbSaveDone - t_gs0) / 1000).toFixed(2)}s` +
+    ` | tokens: ${tokensUsed}` +
+    ` | api: ${((t_gs4_geminiCallDone - t_gs3_geminiCallStart) / 1000).toFixed(2)}s`
+  );
 
   return parsed;
 }

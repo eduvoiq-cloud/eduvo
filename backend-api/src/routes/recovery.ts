@@ -633,24 +633,6 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
   });
 });
 
-      await supabaseAdmin.from('recovery_cycles').update({
-        status: 'tests_ready',
-        test_generated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq('id', cycleId);
-    } catch (err) {
-      console.error('[recovery/start-tests] Fatal:', err instanceof Error ? err.message : err);
-      // Mark cycle as test_failed so teacher sees the retry button
-      try {
-        await supabaseAdmin.from('recovery_cycles').update({
-          status: 'test_failed',
-          updated_at: new Date().toISOString(),
-        }).eq('id', cycleId);
-      } catch { /* best-effort */ }
-    }
-  });
-});
-
 // ── GET /api/recovery/cycle-status ───────────────────────────────────────────
 
 router.get('/cycle-status', ...teacherAuth, async (req: Request, res: Response) => {

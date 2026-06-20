@@ -43,8 +43,8 @@ router.get('/my', authenticateAny, async (req: Request, res: Response) => {
 router.get('/student/:studentId', authenticateAny, async (req: Request, res: Response) => {
   const { studentId } = req.params;
 
-  // Require a user token (parent)
-  if (req.tokenType !== 'user') {
+  // Require a staff/user token (parent) — not a student token
+  if (req.tokenType !== 'staff') {
     sendError(res, 'Access denied', 403);
     return;
   }
@@ -383,8 +383,8 @@ router.post(
 
     await archive.finalize();
 
-  // ── Fire-and-forget: store report cards + notify students & parents ─────────
-  setImmediate(() => {
+    // ── Fire-and-forget: store report cards + notify students & parents ───────
+    setImmediate(() => {
     (async () => {
       try {
         const sessionYearStr2 = sessionYear();

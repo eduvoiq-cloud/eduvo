@@ -21,6 +21,8 @@ interface PreviewRow {
     division: string;
     parent_name: string;
     parent_phone: string;
+    student_phone?: string | null;
+    login_phone?: string;
     parent_email: string;
   };
   status: 'valid' | 'invalid' | 'duplicate';
@@ -47,13 +49,14 @@ interface ImportResult {
 // ── Column guide data ─────────────────────────────────────────────────────────
 
 const COLUMNS = [
-  { name: 'Student Name',           required: true,  note: 'Full name of the student' },
-  { name: 'Roll No (Optional)',      required: false, note: 'Unique roll number within the class — leave blank if not used' },
-  { name: 'Class',                   required: true,  note: 'e.g. Grade 5, Class 10' },
-  { name: 'Division',                required: true,  note: 'Section/Division e.g. A, B' },
-  { name: 'Parent Name',             required: false, note: 'Full name of parent/guardian' },
-  { name: 'Parent Phone',            required: true,  note: '10-digit phone number — used as login credential' },
-  { name: 'Parent Email (Optional)', required: false, note: 'Used to send parent invite' },
+  { name: 'Student Name',              required: true,  note: 'Full name of the student' },
+  { name: 'Roll No (Optional)',         required: false, note: 'Unique roll number within the class — leave blank if not used' },
+  { name: 'Class',                      required: true,  note: 'e.g. Grade 5, Class 10' },
+  { name: 'Division',                   required: true,  note: 'Section/Division e.g. A, B' },
+  { name: 'Parent Name',                required: false, note: 'Full name of parent/guardian' },
+  { name: 'Parent Phone',               required: true,  note: '10-digit parent phone — used for WhatsApp notifications; also login if no student phone' },
+  { name: 'Student Phone (Optional)',   required: false, note: '10-digit student phone — if entered, student logs in with this number instead of parent phone' },
+  { name: 'Parent Email (Optional)',    required: false, note: 'Used to send parent invite' },
 ];
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -567,7 +570,7 @@ export default function ImportStudentsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    {['Row #', 'Student Name', 'Roll No', 'Class', 'Division', 'Parent Name', 'Parent Phone', 'Status', 'Warning', 'Errors'].map((h) => (
+                    {['Row #', 'Student Name', 'Roll No', 'Class', 'Division', 'Parent Name', 'Parent Phone', 'Student Phone', 'Status', 'Warning', 'Errors'].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -575,7 +578,7 @@ export default function ImportStudentsPage() {
                 <tbody className="divide-y divide-gray-50">
                   {filteredRows.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="text-center py-10 text-sm text-gray-400">No rows in this category</td>
+                      <td colSpan={11} className="text-center py-10 text-sm text-gray-400">No rows in this category</td>
                     </tr>
                   ) : filteredRows.map((row) => (
                     <tr
@@ -593,6 +596,7 @@ export default function ImportStudentsPage() {
                       <td className="px-4 py-3 text-gray-600">{row.data.division || '—'}</td>
                       <td className="px-4 py-3 text-gray-600">{row.data.parent_name || '—'}</td>
                       <td className="px-4 py-3 text-gray-600">{row.data.parent_phone || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{row.data.student_phone || '—'}</td>
                       <td className="px-4 py-3">
                         <StatusBadge status={row.status} warning={row.warning} errors={row.errors} />
                       </td>

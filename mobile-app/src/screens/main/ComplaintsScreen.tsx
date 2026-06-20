@@ -16,6 +16,7 @@ import {
   FlatList,
 } from 'react-native';
 import apiClient from '../../api/client';
+import { parseUtcDate, timeAgo } from '../../utils/dateUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -57,26 +58,6 @@ function statusBg(status: Complaint['status']): string {
   }
 }
 
-/**
- * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
- * a timezone designator, which JavaScript would interpret as local time — causing
- * timestamps to appear shifted by the device UTC offset (e.g. +5:30h for IST).
- */
-function parseUtcDate(iso: string): Date {
-  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
-    return new Date(iso + 'Z');
-  }
-  return new Date(iso);
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - parseUtcDate(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 function recipientLabel(c: Complaint): string {
   switch (c.recipient_type) {

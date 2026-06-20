@@ -319,13 +319,14 @@ router.get('/students/template', requireRole('superadmin', 'schooladmin'), templ
     'Division',
     'Parent Name',
     'Parent Phone',
+    'Student Phone (Optional)',
     'Parent Email (Optional)',
     'Date of Birth (DD/MM/YYYY)',
   ]);
 
   // Example rows
-  ws.addRow(['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', 'jane@example.com', '15/08/2010']);
-  ws.addRow(['Alice Smith', '', '10', 'B', 'Bob Smith', '9876543211', '', '22/03/2011']);
+  ws.addRow(['John Doe', 'R001', '10', 'A', 'Jane Doe', '9876543210', '', 'jane@example.com', '15/08/2010']);
+  ws.addRow(['Alice Smith', '', '10', 'B', 'Bob Smith', '9876543211', '9988776655', '', '22/03/2011']);
 
   const buffer = await wb.xlsx.writeBuffer();
 
@@ -405,15 +406,16 @@ router.post(
       const row = dataRows[i];
       const rowNumber = i + 2; // Excel row number (header is row 1)
 
-      // Columns: Student Name | Roll No (Optional) | Class | Division | Parent Name | Parent Phone | Parent Email (Optional) | Date of Birth
-      const studentName = cellToString(row[0]);
-      const rollNumber  = cellToString(row[1]);
-      const className   = cellToString(row[2]);
-      const division    = cellToString(row[3]);
-      const parentName  = cellToString(row[4]);
-      const parentPhone = cellToString(row[5]);
-      const parentEmail = cellToString(row[6]);
-      const dateOfBirth = cellToString(row[7]);
+      // Columns: Student Name | Roll No (Optional) | Class | Division | Parent Name | Parent Phone | Student Phone (Optional) | Parent Email (Optional) | Date of Birth
+      const studentName  = cellToString(row[0]);
+      const rollNumber   = cellToString(row[1]);
+      const className    = cellToString(row[2]);
+      const division     = cellToString(row[3]);
+      const parentName   = cellToString(row[4]);
+      const parentPhone  = cellToString(row[5]);
+      const studentPhone = cellToString(row[6]);
+      const parentEmail  = cellToString(row[7]);
+      const dateOfBirth  = cellToString(row[8]);
 
       const errors: string[] = [];
 
@@ -434,9 +436,22 @@ router.post(
       const parentNameErr = validateParentName(parentName);
       if (parentNameErr) errors.push(parentNameErr);
 
-      // Parent Phone is REQUIRED (login phone)
+      // Parent Phone is REQUIRED (always used for WhatsApp notifications; also login if no student phone)
       const phoneErr = validateLoginPhone(parentPhone);
       if (phoneErr) errors.push(phoneErr);
+
+      // Student Phone is OPTIONAL — if provided, used as login instead of parent phone
+      const studentPhoneStr = studentPhone.trim();
+      if (studentPhoneStr) {
+        const studentPhoneErr = (() => {
+          if (!/^\d{10}$/.test(studentPhoneStr)) return 'Student Phone must be exactly 10 digits';
+          return null;
+        })();
+        if (studentPhoneErr) errors.push(studentPhoneErr);
+      }
+
+      // Login phone = student_phone if provided, else parent_phone
+      const loginPhone = studentPhoneStr || parentPhone.trim();
 
       // Parent Email is OPTIONAL
       const parentEmailErr = validateParentEmail(parentEmail);
@@ -446,26 +461,23 @@ router.post(
       const { error: dobErr, parsed: parsedDob } = validateDateOfBirth(dateOfBirth);
       if (dobErr) errors.push(dobErr);
 
-      // Duplicate detection: phone warning only (non-blocking)
-      const phoneStr = parentPhone.trim();
+      // Duplicate detection: login phone warning only (non-blocking)
+      const parentPhoneStr = parentPhone.trim();
+      const loginPhoneStr  = studentPhoneStr || parentPhoneStr;
 
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
       let warning: string | null = null;
 
-      if (status === 'valid' && errors.length > 0) {
+      if (errors.length > 0) {
         status = 'invalid';
       }
 
-      // Phone warning (non-blocking): only for rows that are valid
-      if (status === 'valid' && phoneStr && /^\d{10}$/.test(phoneStr)) {
-        const existingOwner = existingPhoneMap.get(phoneStr);
+      // Phone warning (non-blocking): warn if login phone already linked to another student
+      if (status === 'valid' && loginPhoneStr && /^\d{10}$/.test(loginPhoneStr)) {
+        const existingOwner = existingPhoneMap.get(loginPhoneStr);
         if (existingOwner) {
-          warning = `Phone ${phoneStr} already linked to ${existingOwner}. Import anyway?`;
+          warning = `Phone ${loginPhoneStr} already linked to ${existingOwner}. Import anyway?`;
         }
-      }
-
-      if (status === 'valid') {
-        // nothing to track — no duplicate key checks on name
       }
 
       previewRows.push({
@@ -476,7 +488,9 @@ router.post(
           class:         className.trim(),
           division:      division.trim().toUpperCase(),
           parent_name:   parentName.trim(),
-          parent_phone:  phoneStr,
+          parent_phone:  parentPhoneStr,
+          student_phone: studentPhoneStr || null,
+          login_phone:   loginPhoneStr,
           parent_email:  parentEmail.trim(),
           date_of_birth: parsedDob ?? dateOfBirth.trim(), // ISO if valid, raw if not
         },
@@ -580,15 +594,17 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
       class:         string;
       division:      string;
       parent_phone:  string;
+      student_phone: string | null;
+      login_phone:   string;
       parent_email:  string;
       date_of_birth: string; // YYYY-MM-DD (already parsed in preview)
     };
 
-    const studentId = uuidv4();
-    const phone     = data.parent_phone;
+    const studentId  = uuidv4();
+    const loginPhone = data.login_phone || data.parent_phone; // fallback safety
 
-    // Default password = last 5 digits of phone number
-    const defaultPassword = phone.slice(-5);
+    // Default password = last 5 digits of login phone number
+    const defaultPassword = loginPhone.slice(-5);
     let passwordHash: string;
     try {
       passwordHash = await bcrypt.hash(defaultPassword, 12);
@@ -600,15 +616,16 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
     const { error: insertErr } = await supabaseAdmin.from('students').insert({
       id:             studentId,
       full_name:      data.name,
-      name:           data.name,      // keep legacy name column in sync
+      name:           data.name,           // keep legacy name column in sync
       school_id:      cached.school_id,
       class_name:     data.class,
-      class:          data.class,     // legacy NOT NULL column in live DB
+      class:          data.class,          // legacy NOT NULL column in live DB
       section:        data.division,
-      roll_number:    data.roll_number || null,  // null if not provided
-      phone_number:   phone,
-      phone:          phone,          // keep legacy phone column in sync
-      date_of_birth:  data.date_of_birth || null, // optional — null if not provided
+      roll_number:    data.roll_number || null,
+      phone_number:   loginPhone,
+      phone:          loginPhone,          // keep legacy phone column in sync
+      parent_phone:   data.parent_phone,   // always stored separately for WhatsApp
+      date_of_birth:  data.date_of_birth || null,
       password_hash:  passwordHash,
       is_first_login: true,
       qr_code:        studentId,
@@ -624,16 +641,17 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
 
     importedCount++;
 
-    // ── Send welcome SMS (best-effort — never fail the import) ────────────────
+    // ── Send welcome SMS to parent_phone (best-effort — never fail the import) ──
     const smsMessage =
       `Welcome to Eduvo! Your child ${data.name} has been added to ${schoolName}. ` +
-      `Download Eduvo app and login with: Phone: ${phone} Password: ${defaultPassword} ` +
+      `Download Eduvo app and login with: Phone: ${loginPhone} Password: ${defaultPassword} ` +
       `Please change your password after first login.`;
 
     try {
-      const smsSent = await sendSMS(phone, smsMessage);
+      // Always send to parent_phone so the parent gets the credentials
+      const smsSent = await sendSMS(data.parent_phone, smsMessage);
       if (!smsSent) {
-        console.warn(`[bulkImport] SMS not sent for student "${data.name}" (phone: ...${phone.slice(-4)})`);
+        console.warn(`[bulkImport] SMS not sent for student "${data.name}" (parent phone: ...${data.parent_phone.slice(-4)})`);
       }
     } catch (smsErr) {
       // Log but never fail the import

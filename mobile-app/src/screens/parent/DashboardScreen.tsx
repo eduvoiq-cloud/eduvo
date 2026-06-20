@@ -15,6 +15,7 @@ import { useChildStore } from '../../store/childStore';
 import apiClient from '../../api/client';
 import { ParentTabParamList } from '../../navigation/AppNavigator';
 import StreakWidget from '../../components/StreakWidget';
+import { parseUtcDate } from '../../utils/dateUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -61,8 +62,7 @@ function todayISO(): string {
 }
 
 function formatTime(iso: string): string {
-  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
-    ? new Date(iso + 'Z') : new Date(iso);
+  const d = parseUtcDate(iso);
   return d.toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
@@ -70,8 +70,7 @@ function formatTime(iso: string): string {
 }
 
 function formatNotifDate(iso: string): string {
-  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
-    ? new Date(iso + 'Z') : new Date(iso);
+  const d = parseUtcDate(iso);
   return d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',

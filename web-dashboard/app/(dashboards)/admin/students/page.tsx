@@ -37,13 +37,14 @@ interface StudentForm {
   section: string;
   roll_number: string;
   parent_email: string;
-  phone: string;
+  parent_phone: string;
+  student_phone: string;
   photo_url: string;
 }
 
 const EMPTY_FORM: StudentForm = {
   name: '', class: '', section: '', roll_number: '',
-  parent_email: '', phone: '', photo_url: '',
+  parent_email: '', parent_phone: '', student_phone: '', photo_url: '',
 };
 
 // ── Skeleton loader ───────────────────────────────────────────────────────────
@@ -283,11 +284,33 @@ function StudentFormFields({
           value={form.parent_email} onChange={(e) => setForm((f) => ({ ...f, parent_email: e.target.value }))} />
         <p className="mt-1 text-xs text-gray-400">An invite will be sent automatically if the parent has no account.</p>
       </FormField>
-      <FormField label="Student Phone (used for mobile app login)" htmlFor="sf-pphone">
-        <input id="sf-pphone" type="tel" className={inputClass} placeholder="10-digit mobile number e.g. 9812345678"
-          value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
-        <p className="mt-1 text-xs text-gray-400">Student logs into the mobile app with this number. Default password = last 5 digits.</p>
-      </FormField>
+
+      {/* Phone fields */}
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+        <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Login & Contact Numbers</p>
+        <FormField label="Parent Phone" htmlFor="sf-parent-phone" required>
+          <input id="sf-parent-phone" type="tel" className={inputClass}
+            placeholder="10-digit number e.g. 9812345678"
+            value={form.parent_phone}
+            onChange={(e) => setForm((f) => ({ ...f, parent_phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+            maxLength={10} required />
+          <p className="mt-1 text-xs text-gray-400">
+            Required. Used for WhatsApp notifications. Also used as login if no student phone is entered.
+          </p>
+        </FormField>
+        <FormField label="Student Phone (optional)" htmlFor="sf-student-phone">
+          <input id="sf-student-phone" type="tel" className={inputClass}
+            placeholder="10-digit student mobile number (optional)"
+            value={form.student_phone}
+            onChange={(e) => setForm((f) => ({ ...f, student_phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+            maxLength={10} />
+          <p className="mt-1 text-xs text-gray-400">
+            If entered, the student logs in with this number. Default password = last 5 digits.
+            If left blank, parent phone is used for login.
+          </p>
+        </FormField>
+      </div>
+
       <div className="flex justify-end gap-3 pt-2">
         <button type="button" onClick={onCancel}
           className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
@@ -470,16 +493,27 @@ function StudentsPageInner() {
       setFormError('Full name, class, and section are required.');
       return;
     }
+    if (!form.parent_phone.trim() || !/^\d{10}$/.test(form.parent_phone.trim())) {
+      setFormError('Parent phone is required and must be exactly 10 digits.');
+      return;
+    }
+    if (form.student_phone.trim() && !/^\d{10}$/.test(form.student_phone.trim())) {
+      setFormError('Student phone must be exactly 10 digits.');
+      return;
+    }
     const token = getToken();
     if (!token) return;
     setSubmitting(true);
     try {
       await adminApi.createStudent(token, {
-        name: form.name.trim(), class: form.class.trim(), section: form.section.trim(),
-        roll_number: form.roll_number.trim() || undefined,
-        parent_email: form.parent_email.trim() || undefined,
-        parent_phone: form.phone.trim() || undefined,
-        photo_url: form.photo_url || undefined,
+        name:          form.name.trim(),
+        class:         form.class.trim(),
+        section:       form.section.trim(),
+        roll_number:   form.roll_number.trim() || undefined,
+        parent_email:  form.parent_email.trim() || undefined,
+        parent_phone:  form.parent_phone.trim(),
+        student_phone: form.student_phone.trim() || undefined,
+        photo_url:     form.photo_url || undefined,
       });
       setShowAdd(false);
       setForm(EMPTY_FORM);
@@ -496,9 +530,17 @@ function StudentsPageInner() {
 
   function openEdit(s: AdminStudent) {
     setEditTarget(s);
-    setForm({ name: s.full_name, class: s.class_name, section: s.section ?? '',
-      roll_number: s.roll_number ?? '', parent_email: '', phone: s.phone ?? '',
-      photo_url: s.photo_url ?? '' });
+    setForm({
+      name:          s.full_name,
+      class:         s.class_name,
+      section:       s.section ?? '',
+      roll_number:   s.roll_number ?? '',
+      parent_email:  '',
+      parent_phone:  s.parent_phone ?? '',
+      // If login phone differs from parent_phone, it's the student's own phone
+      student_phone: (s.phone && s.phone !== s.parent_phone) ? (s.phone ?? '') : '',
+      photo_url:     s.photo_url ?? '',
+    });
     setPhotoPreview(s.photo_url ?? '');
     setFormError('');
   }
@@ -511,16 +553,27 @@ function StudentsPageInner() {
       setFormError('Full name, class, and section are required.');
       return;
     }
+    if (form.parent_phone.trim() && !/^\d{10}$/.test(form.parent_phone.trim())) {
+      setFormError('Parent phone must be exactly 10 digits.');
+      return;
+    }
+    if (form.student_phone.trim() && !/^\d{10}$/.test(form.student_phone.trim())) {
+      setFormError('Student phone must be exactly 10 digits.');
+      return;
+    }
     const token = getToken();
     if (!token) return;
     setSubmitting(true);
     try {
       await adminApi.updateStudent(token, editTarget.id, {
-        name: form.name.trim(), class: form.class.trim(), section: form.section.trim(),
-        roll_number: form.roll_number.trim() || undefined,
-        parent_email: form.parent_email.trim() || undefined,
-        parent_phone: form.phone.trim() || undefined,
-        photo_url: form.photo_url || undefined,
+        name:          form.name.trim(),
+        class:         form.class.trim(),
+        section:       form.section.trim(),
+        roll_number:   form.roll_number.trim() || undefined,
+        parent_email:  form.parent_email.trim() || undefined,
+        parent_phone:  form.parent_phone.trim() || undefined,
+        student_phone: form.student_phone.trim() || undefined,
+        photo_url:     form.photo_url || undefined,
       });
       setEditTarget(null);
       setForm(EMPTY_FORM);

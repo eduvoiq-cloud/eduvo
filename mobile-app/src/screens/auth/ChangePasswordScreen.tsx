@@ -101,9 +101,9 @@ export default function ChangePasswordScreen() {
           },
         ]);
       }
-    } catch (error: any) {
-      const message =
-        error.response?.data?.message ?? 'Failed to change password. Please try again.';
+    } catch (error: unknown) {
+      const axiosError = error as { response?: { data?: { message?: string } } };
+      const message = axiosError.response?.data?.message ?? 'Failed to change password. Please try again.';
       setErrorMessage(message);
     } finally {
       setLoading(false);

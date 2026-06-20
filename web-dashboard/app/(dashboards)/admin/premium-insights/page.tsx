@@ -3,7 +3,7 @@
 /**
  * /admin/premium-insights
  *
- * Admin view: per-student weak topics + latest AI weekly report.
+ * Admin view: per-student weak topics + latest AI monthly report.
  * Accessible to schooladmin and superadmin.
  */
 
@@ -22,47 +22,26 @@ interface StudentSub {
   section: string;
 }
 
-interface WeakTopic {
-  subject: string;
-  topic: string;
-  weakness_score: number;
-  last_calculated_at: string;
-}
-
-interface MarksSummary {
-  subject: string;
-  average: number;
-  count: number;
-  latest: number | null;
-}
-
-interface Streak {
-  current_streak: number;
-  longest_streak: number;
-  total_active_days: number;
-}
-
-interface WeeklyReport {
-  week_start_date: string;
+interface MonthlyReport {
+  month_start_date: string;
   report_text: string;
   generated_at: string;
 }
 
+interface Streak {
+  current: number;
+  longest: number;
+}
+
 interface InsightsData {
-  latest_report: WeeklyReport | null;
-  weak_topics: WeakTopic[];
+  latest_report: MonthlyReport | null;
+  past_reports: MonthlyReport[];
+  weak_topics: string[];
   streak: Streak | null;
-  marks_summary: MarksSummary[];
+  marks_summary: Record<string, number>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function topicBadge(score: number): { label: string; cls: string } {
-  if (score >= 80) return { label: 'Urgent',        cls: 'bg-red-100 text-red-700' };
-  if (score >= 60) return { label: 'Needs Practice', cls: 'bg-yellow-100 text-yellow-700' };
-  if (score >= 40) return { label: 'Okay',           cls: 'bg-orange-100 text-orange-700' };
-  return              { label: 'Strong',            cls: 'bg-green-100 text-green-700' };
-}
 
 function avgBarColor(avg: number): string {
   if (avg >= 75) return 'bg-green-500';
@@ -76,6 +55,12 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString('en-IN', {
     day: '2-digit', month: 'short', year: 'numeric',
   });
+}
+
+function formatMonthYear(iso: string): string {
+  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
+    ? new Date(iso + 'Z') : new Date(iso);
+  return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 }
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
@@ -92,6 +77,37 @@ function InsightsSkeleton() {
       <div className="space-y-2">
         {[1, 2].map((i) => <div key={i} className="h-10 bg-gray-100 rounded" />)}
       </div>
+    </div>
+  );
+}
+
+// ── Collapsible Past Report Card ──────────────────────────────────────────────
+
+function PastReportCard({ report }: { report: MonthlyReport }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setExpanded((prev) => !prev)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50 transition-colors text-left"
+      >
+        <span className="text-sm font-medium text-gray-800">
+          Month of {formatMonthYear(report.month_start_date)}
+        </span>
+        <span className="text-gray-400 text-sm">{expanded ? '▲' : '▼'}</span>
+      </button>
+
+      {expanded && (
+        <div className="bg-blue-50 border-t border-blue-100 p-4">
+          <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">
+            {report.report_text}
+          </p>
+          <p className="text-xs text-gray-400 mt-3">
+            Generated: {formatDate(report.generated_at)}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -153,7 +169,7 @@ export default function PremiumInsightsPage() {
     setInsightsError(null);
     try {
       const res = await fetch(
-        `${BASE_URL}/api/weekly-analysis/insights/${studentId}`,
+        `${BASE_URL}/api/monthly-analysis/insights/${studentId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const json = await res.json();
@@ -183,12 +199,12 @@ export default function PremiumInsightsPage() {
     setRecalcMsg(null);
     try {
       const res = await fetch(
-        `${BASE_URL}/api/weekly-analysis/recalculate/${selectedId}`,
+        `${BASE_URL}/api/monthly-analysis/recalculate/${selectedId}`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` } }
       );
       const json = await res.json();
       if (!res.ok) throw new Error(json.message ?? 'Failed');
-      setRecalcMsg(`Recalculated! ${json.data?.weak_topics_calculated ?? 0} weak topics updated.`);
+      setRecalcMsg('Recalculation complete. Report updated.');
       // Reload insights
       await loadInsights(selectedId);
     } catch (e) {
@@ -219,7 +235,7 @@ export default function PremiumInsightsPage() {
     <div className="space-y-6">
       <PageHeader
         title="✨ AI Insights"
-        description="View AI-generated weekly reports and weak topic analysis for students."
+        description="Monthly AI-powered student performance reports, delivered on the 1st of each month"
         action={
           selectedId ? (
             <button
@@ -324,23 +340,23 @@ export default function PremiumInsightsPage() {
                 </div>
 
                 {/* Streak badge */}
-                {insights.streak && insights.streak.current_streak > 0 && (
+                {insights.streak && insights.streak.current > 0 && (
                   <div className="ml-auto flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-full px-4 py-1.5">
                     <span className="text-lg">🔥</span>
                     <span className="text-sm font-bold text-amber-700">
-                      {insights.streak.current_streak} day streak
+                      {insights.streak.current} day streak
                     </span>
                   </div>
                 )}
               </div>
 
-              {/* AI Weekly Report */}
+              {/* AI Monthly Report */}
               <div className="bg-white rounded-2xl border border-gray-200 p-6">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-semibold text-gray-900">📝 Latest AI Weekly Report</h3>
+                  <h3 className="text-sm font-semibold text-gray-900">📝 Latest AI Monthly Report</h3>
                   {insights.latest_report && (
                     <span className="text-xs text-gray-400">
-                      Week of {formatDate(insights.latest_report.week_start_date)}
+                      Month of {formatMonthYear(insights.latest_report.month_start_date)}
                     </span>
                   )}
                 </div>
@@ -357,77 +373,69 @@ export default function PremiumInsightsPage() {
                 ) : (
                   <div className="bg-gray-50 rounded-xl p-6 text-center">
                     <p className="text-sm text-gray-400">
-                      No report generated yet. Reports are created every Sunday, or you can trigger a manual recalculation above.
+                      No report generated yet. Reports are created on the 1st of each month, or you can trigger a manual recalculation above.
                     </p>
                   </div>
                 )}
               </div>
+
+              {/* Previous Monthly Reports */}
+              {insights.past_reports.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-200 p-6">
+                  <h3 className="text-sm font-semibold text-gray-900 mb-4">📅 Previous Monthly Reports</h3>
+                  <div className="space-y-2">
+                    {insights.past_reports.map((report, i) => (
+                      <PastReportCard key={i} report={report} />
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Weak Topics */}
               {insights.weak_topics.length > 0 && (
                 <div className="bg-white rounded-2xl border border-gray-200 p-6">
                   <h3 className="text-sm font-semibold text-gray-900 mb-4">🎯 Weak Topics</h3>
                   <div className="space-y-2">
-                    {insights.weak_topics.map((t, i) => {
-                      const { label, cls } = topicBadge(t.weakness_score);
-                      return (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between px-4 py-3 rounded-xl bg-gray-50 border border-gray-100"
-                        >
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{t.topic}</p>
-                            <p className="text-xs text-gray-500 mt-0.5">{t.subject}</p>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <div className="text-right">
-                              <p className="text-xs text-gray-400">Mastery</p>
-                              <p className="text-sm font-bold text-gray-800">
-                                {Math.round(100 - t.weakness_score)}%
-                              </p>
-                            </div>
-                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${cls}`}>
-                              {label}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {insights.weak_topics.map((topic, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center px-4 py-3 rounded-xl bg-gray-50 border border-gray-100"
+                      >
+                        <p className="text-sm font-medium text-gray-900">{topic}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
 
               {/* Subject Performance Chart */}
-              {insights.marks_summary.length > 0 && (
+              {Object.keys(insights.marks_summary).length > 0 && (
                 <div className="bg-white rounded-2xl border border-gray-200 p-6">
                   <h3 className="text-sm font-semibold text-gray-900 mb-4">📊 Subject Performance</h3>
                   <div className="space-y-3">
-                    {[...insights.marks_summary]
-                      .sort((a, b) => b.average - a.average)
-                      .map((item) => (
-                        <div key={item.subject} className="flex items-center gap-3">
+                    {Object.entries(insights.marks_summary)
+                      .sort(([, a], [, b]) => b - a)
+                      .map(([subject, avg]) => (
+                        <div key={subject} className="flex items-center gap-3">
                           <span className="text-sm text-gray-700 w-28 shrink-0 truncate">
-                            {item.subject}
+                            {subject}
                           </span>
                           <div className="flex-1 h-3 bg-gray-100 rounded-full overflow-hidden">
                             <div
-                              className={`h-3 rounded-full transition-all ${avgBarColor(item.average)}`}
-                              style={{ width: `${Math.min(item.average, 100)}%` }}
+                              className={`h-3 rounded-full transition-all ${avgBarColor(avg)}`}
+                              style={{ width: `${Math.min(avg, 100)}%` }}
                             />
                           </div>
                           <span
                             className={`text-sm font-bold w-12 text-right ${
-                              item.average >= 75
+                              avg >= 75
                                 ? 'text-green-600'
-                                : item.average >= 50
+                                : avg >= 50
                                 ? 'text-yellow-600'
                                 : 'text-red-600'
                             }`}
                           >
-                            {item.average}%
-                          </span>
-                          <span className="text-xs text-gray-400 w-16 text-right">
-                            {item.count} test{item.count !== 1 ? 's' : ''}
+                            {avg}%
                           </span>
                         </div>
                       ))}
@@ -439,11 +447,10 @@ export default function PremiumInsightsPage() {
               {insights.streak && (
                 <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6">
                   <h3 className="text-sm font-semibold text-gray-900 mb-3">🔥 Study Streak</h3>
-                  <div className="grid grid-cols-3 gap-4 text-center">
+                  <div className="grid grid-cols-2 gap-4 text-center">
                     {[
-                      { label: 'Current', value: insights.streak.current_streak, unit: 'days', color: 'text-amber-600' },
-                      { label: 'Best', value: insights.streak.longest_streak, unit: 'days', color: 'text-amber-700' },
-                      { label: 'Total Active', value: insights.streak.total_active_days, unit: 'days', color: 'text-gray-700' },
+                      { label: 'Current', value: insights.streak.current, unit: 'days', color: 'text-amber-600' },
+                      { label: 'Best', value: insights.streak.longest, unit: 'days', color: 'text-amber-700' },
                     ].map(({ label, value, unit, color }) => (
                       <div key={label}>
                         <p className={`text-3xl font-extrabold ${color}`}>{value}</p>

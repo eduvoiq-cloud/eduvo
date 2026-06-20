@@ -20,6 +20,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
+import { toMinutes, formatHHMM } from '../../utils/dateUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -390,27 +391,15 @@ function useCountdown(
   return { secondsLeft, setSecondsLeft };
 }
 
-function formatTime(seconds: number): string {
+// formatTime here formats seconds as MM:SS for the test countdown timer
+// (distinct from the ISO timestamp formatTime in dateUtils)
+function formatCountdownTime(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function formatHHMM(hhmm: string): string {
-  const [hStr, mStr] = hhmm.split(':');
-  const h = parseInt(hStr, 10);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  const h12 = h % 12 || 12;
-  return `${h12}:${mStr} ${ampm}`;
-}
-
 type WindowState = 'before' | 'open' | 'closed' | 'no_window';
-
-/** Converts "HH:MM" to minutes-since-midnight for arithmetic comparison. */
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + m;
-}
 
 /**
  * Returns the window state for the attempt screen.
@@ -745,12 +734,6 @@ function QuestionPills({
   answers: Answer[];
   onJump: (idx: number) => void;
 }) {
-  const answeredSet = new Set(
-    answers
-      .filter((a) => a.selected_option || (a.theory_answer && a.theory_answer.trim().length > 0))
-      .map((a) => a.question_id)
-  );
-
   return (
     <ScrollView
       horizontal
@@ -815,7 +798,6 @@ const pillStyles = StyleSheet.create({
 
 // ── MCQ question view ─────────────────────────────────────────────────────────
 
-const OPTION_LABELS: OptionKey[] = ['a', 'b', 'c', 'd'];
 const OPTION_DISPLAY: Record<OptionKey, string> = { a: 'A', b: 'B', c: 'C', d: 'D' };
 
 function MCQQuestion({
@@ -2006,7 +1988,7 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
                 activeStyles.timerText,
                 timerWarning && activeStyles.timerTextWarn,
               ]}>
-                ⏱ {formatTime(secondsLeft)}
+                ⏱ {formatCountdownTime(secondsLeft)}
               </Text>
             </View>
           )}

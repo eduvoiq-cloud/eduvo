@@ -193,20 +193,4 @@ export const schoolListRateLimit = rateLimit({
   },
 });
 
-/**
- * Legacy alias kept for any routes that still import authRateLimit.
- * Points to loginRateLimit behaviour (10/hour per IP).
- * @deprecated Use loginRateLimit or registerRateLimit instead.
- */
-export const authRateLimit = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  validate: false,
-  store: makeStore('auth_legacy'),
-  message: {
-    success: false,
-    message: 'Too many authentication attempts. Please try again later.',
-  },
-});
+

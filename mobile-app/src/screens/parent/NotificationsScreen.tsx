@@ -10,6 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import apiClient from '../../api/client';
+import { timeAgo } from '../../utils/dateUtils';
 
 // Notification types returned by the backend
 // Keep this permissive so new backend notification types (e.g. 'test') don't
@@ -49,31 +50,7 @@ const TYPE_ICON: Record<NotificationType, string> = {
   complaint: '📋',
 };
 
-/**
- * Parse an ISO timestamp as UTC. Supabase may return timestamptz values without
- * a timezone designator, which JavaScript would interpret as local time — causing
- * timestamps to appear shifted by the device UTC offset (e.g. +5:30h for IST).
- */
-function parseUtcDate(iso: string): Date {
-  if (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso)) {
-    return new Date(iso + 'Z');
-  }
-  return new Date(iso);
-}
 
-// ── Time-ago helper ───────────────────────────────────────────────────────────
-function timeAgo(iso: string): string {
-  const diffMs = Date.now() - parseUtcDate(iso).getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin} minute${diffMin === 1 ? '' : 's'} ago`;
-  const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? '' : 's'} ago`;
-  const diffDay = Math.floor(diffHr / 24);
-  if (diffDay < 7) return `${diffDay} day${diffDay === 1 ? '' : 's'} ago`;
-  return parseUtcDate(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -91,8 +68,8 @@ export default function ParentNotificationsScreen() {
     try {
       const response = await apiClient.get('/api/notifications');
       setNotifications(response.data.data?.data ?? []);
-    } catch (error: any) {
-      console.warn('[ParentNotifications] Failed to fetch:', error.message);
+    } catch (error: unknown) {
+      console.warn('[ParentNotifications] Failed to fetch:', error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -111,8 +88,8 @@ export default function ParentNotificationsScreen() {
       setNotifications((prev) =>
         prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
       );
-    } catch (error: any) {
-      console.warn('[ParentNotifications] Failed to mark as read:', error.message);
+    } catch (error: unknown) {
+      console.warn('[ParentNotifications] Failed to mark as read:', error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -127,9 +104,9 @@ export default function ParentNotificationsScreen() {
         unread.map((n) => apiClient.patch(`/api/notifications/${n.id}/read`))
       );
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    } catch (error: any) {
+    } catch (error: unknown) {
       Alert.alert('Error', 'Could not mark all notifications as read. Please try again.');
-      console.warn('[ParentNotifications] Failed to mark all as read:', error.message);
+      console.warn('[ParentNotifications] Failed to mark all as read:', error instanceof Error ? error.message : String(error));
     } finally {
       setMarkingAll(false);
     }

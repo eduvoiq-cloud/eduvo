@@ -13,6 +13,20 @@ ALTER TABLE public.students ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
 ALTER TABLE public.students ADD COLUMN IF NOT EXISTS phone text;
 ALTER TABLE public.students ADD COLUMN IF NOT EXISTS date_of_birth date;
 
+-- students: parent_phone — stores parent's WhatsApp/contact number separately from login phone
+-- WhatsApp notifications always go to parent_phone.
+-- login phone (phone_number) = student_phone if set, otherwise parent_phone.
+ALTER TABLE public.students ADD COLUMN IF NOT EXISTS parent_phone text;
+
+-- Backfill: existing students get parent_phone = phone_number (they were the same before)
+UPDATE public.students
+  SET parent_phone = phone_number
+  WHERE parent_phone IS NULL AND phone_number IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_students_parent_phone
+  ON public.students (parent_phone)
+  WHERE parent_phone IS NOT NULL;
+
 -- teacher_assignments: add class_name (actual DB uses "class")
 ALTER TABLE public.teacher_assignments ADD COLUMN IF NOT EXISTS class_name text;
 UPDATE public.teacher_assignments SET class_name = "class" WHERE class_name IS NULL;
@@ -1064,3 +1078,43 @@ NOTIFY pgrst, 'reload schema';
 --   Public: true (so file_url links work directly without signed URLs)
 -- Or via the management API / supabase CLI:
 --   supabase storage buckets create homework-uploads --public
+
+-- ── monthly_reports: AI-generated monthly performance report per student ───────
+CREATE TABLE IF NOT EXISTS public.monthly_reports (
+  id                uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  student_id        uuid NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
+  month_start_date  date NOT NULL,
+  report_text       text NOT NULL,
+  whatsapp_message  text,
+  generated_at      timestamptz NOT NULL DEFAULT now(),
+  whatsapp_sent_at  timestamptz,
+  batch_job_id      text,
+  UNIQUE (student_id, month_start_date)
+);
+
+ALTER TABLE public.monthly_reports ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "deny_all_monthly_reports" ON public.monthly_reports FOR ALL USING (false);
+
+CREATE INDEX IF NOT EXISTS idx_monthly_reports_student
+  ON public.monthly_reports(student_id, month_start_date DESC);
+
+NOTIFY pgrst, 'reload schema';
+
+-- ── monthly_report_batches: batch job tracker for monthly report generation ────
+CREATE TABLE IF NOT EXISTS public.monthly_report_batches (
+  id                 uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  batch_job_id       text UNIQUE,
+  month_start_date   date NOT NULL,
+  status             text NOT NULL DEFAULT 'submitted'
+                     CHECK (status IN ('submitted', 'processing', 'completed', 'failed')),
+  total_students     integer NOT NULL DEFAULT 0,
+  processed_students integer NOT NULL DEFAULT 0,
+  submitted_at       timestamptz NOT NULL DEFAULT now(),
+  completed_at       timestamptz
+);
+
+ALTER TABLE public.monthly_report_batches ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "deny_all_monthly_report_batches"
+  ON public.monthly_report_batches FOR ALL USING (false);
+
+NOTIFY pgrst, 'reload schema';

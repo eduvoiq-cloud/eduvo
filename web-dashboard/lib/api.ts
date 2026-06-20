@@ -1227,7 +1227,9 @@ export interface AdminStudent {
   class_name: string;
   section: string;
   roll_number?: string;
-  phone?: string;
+  phone?: string;           // login phone (student_phone if set, else parent_phone)
+  phone_number?: string;    // same as phone (kept in sync)
+  parent_phone?: string;    // parent's WhatsApp/contact number — always stored separately
   photo_url?: string;
   parent_id?: string | null;
   school_id: string;
@@ -1269,7 +1271,8 @@ export const adminApi = {
       section: string;
       roll_number?: string;
       parent_email?: string;
-      parent_phone?: string;
+      parent_phone: string;    // required — used for WhatsApp & login fallback
+      student_phone?: string;  // optional — if set, used as login instead of parent_phone
       photo_url?: string;
     }
   ) =>
@@ -1288,7 +1291,8 @@ export const adminApi = {
       section?: string;
       roll_number?: string;
       parent_email?: string;
-      parent_phone?: string;
+      parent_phone?: string;   // updates WhatsApp contact number
+      student_phone?: string;  // updates login phone
       photo_url?: string;
     }
   ) =>

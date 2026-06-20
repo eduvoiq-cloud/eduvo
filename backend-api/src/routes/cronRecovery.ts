@@ -419,7 +419,7 @@ async function notifyTeacher(teacherId: string, title: string, message: string):
  *
  * Railway cron schedule: 0 *\/2 * * *  (every 2 hours)
  */
-router.post('/check-batch-jobs', async (req: Request, res: Response) => {
+router.all('/check-batch-jobs', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
   const startedAt = new Date().toISOString();
@@ -590,15 +590,6 @@ router.post('/check-batch-jobs', async (req: Request, res: Response) => {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
-});
-
-// Also accept GET for cron-job.org free plan
-router.get('/check-batch-jobs', async (req: Request, res: Response) => {
-  if (!verifyCronSecret(req, res)) return;
-
-  // Delegate to the same POST handler logic by forwarding internally
-  req.method = 'POST';
-  return router.handle(req, res, () => {});
 });
 
 // ── GET|POST /api/cron/recovery/activate-tests ───────────────────────────────

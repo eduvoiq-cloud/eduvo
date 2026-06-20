@@ -16,6 +16,7 @@ import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/authStore';
 import { ParentTabParamList } from '../../navigation/AppNavigator';
+import { formatTime } from '../../utils/dateUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,23 +67,6 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function formatTime(iso: string): string {
-  const d = (iso && !iso.endsWith('Z') && !iso.includes('+') && !/\d{2}:\d{2}$/.test(iso))
-    ? new Date(iso + 'Z') : new Date(iso);
-  return d.toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function isoDate(year: number, month: number, day: number): string {
-  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month, 0).getDate();
-}
 
 function formatDisplayDate(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number);
