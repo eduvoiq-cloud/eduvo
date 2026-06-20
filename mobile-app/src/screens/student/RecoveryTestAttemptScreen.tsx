@@ -178,9 +178,8 @@ export default function RecoveryTestAttemptScreen({ route, navigation }: Props) 
       setTimeLimitMinutes(payload.time_limit_minutes ?? null);
       setAnswers(payload.questions.map((_, i) => ({ question_index: i, selected_option: null })));
       await AsyncStorage.removeItem(progressKey(testId));
-      if (payload.time_limit_minutes && payload.time_limit_minutes > 0) {
-        setSecondsLeft(payload.time_limit_minutes * 60);
-      }
+      // NOTE: timer starts in handleIntegrityConfirm, NOT here, so the countdown
+      // doesn't run while the student is reading the integrity warning.
       setPhase('integrity_warning');
       testStartWall.current = Date.now();
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -189,7 +188,7 @@ export default function RecoveryTestAttemptScreen({ route, navigation }: Props) 
     } finally {
       setStarting(false);
     }
-  }, [testId, setSecondsLeft]);
+  }, [testId]);
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
@@ -236,7 +235,17 @@ export default function RecoveryTestAttemptScreen({ route, navigation }: Props) 
   if (phase === 'integrity_warning') {
     return (
       <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}>
-        <IntegrityWarningModal visible onConfirm={() => { startTracking(); setPhase('active'); }} />
+        <IntegrityWarningModal
+          visible
+          onConfirm={() => {
+            // Start timer and tracking together, only after student dismisses warning
+            if (timeLimitMinutes && timeLimitMinutes > 0) {
+              setSecondsLeft(timeLimitMinutes * 60);
+            }
+            startTracking();
+            setPhase('active');
+          }}
+        />
       </View>
     );
   }

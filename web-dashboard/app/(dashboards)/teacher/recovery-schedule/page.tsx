@@ -14,7 +14,7 @@ interface RecoveryCycle {
   id: string;
   class: string;
   section: string;
-  status: 'generating_pack' | 'pack_ready' | 'generating_tests' | 'tests_ready' | 'completed';
+  status: 'generating_pack' | 'pack_ready' | 'generating_tests' | 'tests_ready' | 'completed' | 'pack_failed';
   pack_generated_at: string | null;
   test_generated_at: string | null;
   lockout_until: string | null;
@@ -268,8 +268,14 @@ export default function RecoverySchedulePage() {
     })
       .then((r) => r.json())
       .then((j) => {
-        const all: TeacherAssignment[] = Array.isArray(j.data) ? j.data : [];
-        setAssignments(all.filter((a: TeacherAssignment & { teacher_id?: string }) => a.teacher_id === user.id || true));
+        const raw: Array<Record<string, string>> = Array.isArray(j.data) ? j.data : [];
+        // Normalise: DB column is `class`, interface expects `class_name`
+        const all: TeacherAssignment[] = raw.map((a) => ({
+          class_name: a.class_name ?? a.class ?? '',
+          section: a.section ?? '',
+          subject: a.subject ?? '',
+        }));
+        setAssignments(all);
       })
       .catch(() => {});
   }, [user]);
@@ -305,16 +311,24 @@ export default function RecoverySchedulePage() {
     void fetchCycleStatus();
   }, [fetchCycleStatus]);
 
-  // Poll while generating
+  // Poll while generating — use a ref for fetchCycleStatus to avoid recreating the interval
+  const fetchCycleStatusRef = useRef(fetchCycleStatus);
+  useEffect(() => { fetchCycleStatusRef.current = fetchCycleStatus; }, [fetchCycleStatus]);
+
   useEffect(() => {
     const status = cycleStatus?.cycle?.status;
-    if (status === 'generating_pack' || status === 'generating_tests') {
-      pollRef.current = setInterval(() => void fetchCycleStatus(), 5000);
+    const isGenerating = status === 'generating_pack' || status === 'generating_tests';
+
+    if (isGenerating) {
+      // Only create a new interval if one isn't already running
+      if (!pollRef.current) {
+        pollRef.current = setInterval(() => void fetchCycleStatusRef.current(), 5000);
+      }
     } else {
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
     }
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [cycleStatus?.cycle?.status, fetchCycleStatus]);
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, [cycleStatus?.cycle?.status]);
 
   // ── Generate pack ───────────────────────────────────────────────────────────
 
@@ -396,11 +410,18 @@ export default function RecoverySchedulePage() {
     }
   }, [cycleStatus?.cycle?.status, subjectsForClassSection, resultSubject]);
 
-  // ── Remind student (fire and forget) ───────────────────────────────────────
+  // ── Remind student (fire and forget) with per-student cooldown ──────────────
+
+  const remindedStudents = useRef<Set<string>>(new Set());
 
   async function handleRemind(studentId: string) {
+    if (remindedStudents.current.has(studentId)) {
+      showToast('Already reminded this student recently', 'error');
+      return;
+    }
     const token = getToken();
     if (!token) return;
+    remindedStudents.current.add(studentId);
     await fetch(`${BASE_URL}/api/notifications/send`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -409,7 +430,7 @@ export default function RecoverySchedulePage() {
         title: 'Recovery Test Reminder',
         body: 'You have a recovery test waiting. Open Eduvo to attempt it!',
       }),
-    }).catch(() => {});
+    }).catch(() => { remindedStudents.current.delete(studentId); });
     showToast('Reminder sent');
   }
 
@@ -417,8 +438,8 @@ export default function RecoverySchedulePage() {
 
   const cycle = cycleStatus?.cycle;
   const isLocked = cycleStatus?.is_locked ?? false;
-  const packTotal = cycleStatus?.pack_progress.total ?? 0;
-  const packDone = cycleStatus?.pack_progress.completed ?? 0;
+  const packTotal = cycleStatus?.pack_progress?.total ?? 0;
+  const packDone = cycleStatus?.pack_progress?.completed ?? 0;
 
   return (
     <>
@@ -519,6 +540,25 @@ export default function RecoverySchedulePage() {
               </div>
             )}
 
+            {cycle?.status === 'pack_failed' && (
+              <div className="flex flex-col items-center gap-4 py-6">
+                <span className="text-4xl">⚠️</span>
+                <div className="text-center">
+                  <p className="text-base font-semibold text-red-700">Pack generation failed</p>
+                  <p className="text-sm text-gray-500 mt-1">Something went wrong generating the recovery packs. You can try again.</p>
+                </div>
+                <button
+                  onClick={handleGeneratePack}
+                  disabled={generatingPack}
+                  className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-sm font-semibold rounded-xl transition-colors"
+                >
+                  {generatingPack
+                    ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Retrying…</>
+                    : '↺ Retry Pack Generation'}
+                </button>
+              </div>
+            )}
+
             {cycle?.status === 'pack_ready' && (
               <div className="flex items-center justify-between flex-wrap gap-4">
                 <div className="flex items-center gap-3">
@@ -543,9 +583,20 @@ export default function RecoverySchedulePage() {
                   <span className="text-sm font-medium text-gray-700">Generating tests…</span>
                 </div>
                 <div className="w-full bg-gray-100 rounded-full h-2">
-                  <div className="bg-purple-400 h-2 rounded-full" style={{ width: '40%' }} />
+                  <div
+                    className="bg-purple-400 h-2 rounded-full transition-all"
+                    style={{
+                      width: cycleStatus && cycleStatus.test_progress.total > 0
+                        ? `${Math.round((cycleStatus.test_progress.completed / cycleStatus.test_progress.total) * 100)}%`
+                        : '10%'
+                    }}
+                  />
                 </div>
-                <p className="text-xs text-gray-500">This may take a few minutes</p>
+                <p className="text-xs text-gray-500">
+                  {cycleStatus && cycleStatus.test_progress.total > 0
+                    ? `${cycleStatus.test_progress.completed} / ${cycleStatus.test_progress.total} tests done`
+                    : 'This may take a few minutes'}
+                </p>
               </div>
             )}
 

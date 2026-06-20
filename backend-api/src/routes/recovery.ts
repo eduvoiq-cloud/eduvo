@@ -342,6 +342,12 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
       await supabaseAdmin.from('recovery_cycles').update({ status: 'pack_ready', updated_at: new Date().toISOString() }).eq('id', cycleId);
     } catch (err) {
       console.error('[recovery/start-pack] Fatal:', err instanceof Error ? err.message : err);
+      // Mark cycle as failed so teacher isn't locked out indefinitely
+      await supabaseAdmin.from('recovery_cycles').update({
+        status: 'pack_failed' as unknown as string,
+        lockout_until: null,
+        updated_at: new Date().toISOString(),
+      }).eq('id', cycleId).catch(() => {});
     }
   });
 });
@@ -471,6 +477,11 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
       }).eq('id', cycleId);
     } catch (err) {
       console.error('[recovery/start-tests] Fatal:', err instanceof Error ? err.message : err);
+      // Revert to pack_ready so teacher can retry test generation
+      await supabaseAdmin.from('recovery_cycles').update({
+        status: 'pack_ready',
+        updated_at: new Date().toISOString(),
+      }).eq('id', cycleId).catch(() => {});
     }
   });
 });
@@ -500,7 +511,14 @@ router.get('/cycle-status', ...teacherAuth, async (req: Request, res: Response) 
     .maybeSingle();
 
   if (!cycle) {
-    sendSuccess(res, { cycle: null, lockout_until: null, days_remaining: 0 });
+    sendSuccess(res, {
+      cycle: null,
+      pack_progress: { total: 0, completed: 0, failed: 0 },
+      test_progress: { total: 0, completed: 0, failed: 0 },
+      lockout_until: null,
+      days_remaining: 0,
+      is_locked: false,
+    });
     return;
   }
 
@@ -700,20 +718,39 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     attemptId = (inserted as { id: string }).id;
   }
 
-  // Strip correct_index; optionally shuffle
-  let questions = (t.questions ?? []).map(({ correct_index: _ci, ...q }) => q);
-  if (t.shuffle_questions) questions = questions.sort(() => Math.random() - 0.5);
-  if (t.shuffle_options) {
-    questions = questions.map((q) => {
-      const shuffled = [...q.options].sort(() => Math.random() - 0.5);
-      return { ...q, options: shuffled };
-    });
-  }
+  // Build original questions with their DB indices
+  const originalQuestions = (t.questions ?? []).map((q, i) => ({ ...q, _db_index: i }));
+
+  // Shuffle question order (track mapping: display_position → db_index)
+  let orderedQuestions = [...originalQuestions];
+  if (t.shuffle_questions) orderedQuestions = orderedQuestions.sort(() => Math.random() - 0.5);
+
+  // For each question, optionally shuffle options (track mapping: display_option_pos → original_pos)
+  // option_maps[display_pos_i][display_option_j] = original_option_index
+  const optionMaps: number[][] = [];
+  const clientQuestions = orderedQuestions.map((q, displayIdx) => {
+    const { correct_index: _ci, _db_index, ...rest } = q;
+    if (t.shuffle_options) {
+      const optionOrder = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+      optionMaps[displayIdx] = optionOrder;
+      return { ...rest, options: optionOrder.map((oi) => q.options[oi]) };
+    }
+    optionMaps[displayIdx] = [0, 1, 2, 3]; // identity mapping
+    return rest;
+  });
+
+  // Persist the shuffle maps into the attempt row so submit can grade correctly
+  const questionDbIndices = orderedQuestions.map((q) => q._db_index);
+  await supabaseAdmin.from('recovery_test_attempts').update({
+    answers: {
+      _shuffle_meta: { question_db_indices: questionDbIndices, option_maps: optionMaps },
+    },
+  }).eq('id', attemptId);
 
   sendSuccess(res, {
     attempt_id: attemptId,
     time_limit_minutes: t.time_limit_minutes,
-    questions,
+    questions: clientQuestions,
   });
 });
 
@@ -760,16 +797,39 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
   };
 
   const questions = t.questions ?? [];
-  const optionMap: Record<string, number> = { a: 0, b: 1, c: 2, d: 3 };
 
-  // Score: map answers by index (questions are ordered)
+  // Retrieve the shuffle maps stored when the attempt was started
+  const { data: attemptMeta } = await supabaseAdmin
+    .from('recovery_test_attempts')
+    .select('answers')
+    .eq('id', attemptId)
+    .maybeSingle();
+
+  type ShuffleMeta = { question_db_indices: number[]; option_maps: number[][] };
+  const storedAnswers = (attemptMeta as { answers?: { _shuffle_meta?: ShuffleMeta } } | null)?.answers;
+  const shuffleMeta: ShuffleMeta | undefined = storedAnswers?._shuffle_meta;
+
+  const optionKeyToIndex: Record<string, number> = { a: 0, b: 1, c: 2, d: 3 };
+
+  // Grade each answer using the shuffle maps so shuffled questions/options score correctly
   let score = 0;
-  const answersPayload = questions.map((q, i) => {
-    const ans = answers[i];
-    const selectedIndex = ans?.selected_option ? optionMap[ans.selected_option] : null;
-    const isCorrect = selectedIndex !== null && selectedIndex === q.correct_index;
+  const answersPayload = answers.map((ans, displayPos) => {
+    // Which DB question does this display position correspond to?
+    const dbIndex = shuffleMeta ? (shuffleMeta.question_db_indices[displayPos] ?? displayPos) : displayPos;
+    const q = questions[dbIndex];
+    if (!q) return { question_index: dbIndex, selected_option: ans.selected_option ?? null, is_correct: false };
+
+    let selectedDbOptionIndex: number | null = null;
+    if (ans.selected_option) {
+      const displayOptionIndex = optionKeyToIndex[ans.selected_option]; // 0-3 in shuffled order
+      // Map display option index back to the original DB option index
+      const optionMap = shuffleMeta ? shuffleMeta.option_maps[displayPos] : null;
+      selectedDbOptionIndex = optionMap ? (optionMap[displayOptionIndex] ?? displayOptionIndex) : displayOptionIndex;
+    }
+
+    const isCorrect = selectedDbOptionIndex !== null && selectedDbOptionIndex === q.correct_index;
     if (isCorrect) score++;
-    return { question_index: i, selected_option: ans?.selected_option ?? null, is_correct: isCorrect };
+    return { question_index: dbIndex, selected_option: ans.selected_option ?? null, is_correct: isCorrect };
   });
 
   const total = questions.length;
