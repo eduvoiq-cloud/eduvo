@@ -55,6 +55,26 @@ interface ReadinessResult {
   all_uploaded: boolean;
 }
 
+interface ExistingCardEntry {
+  id: string;
+  student_id: string;
+  student_name: string;
+  roll_number: string | null;
+  grand_total: number;
+  grand_max: number;
+  percentage: number;
+  grade: string;
+  generated_at: string;
+}
+
+interface ExistingCardsResult {
+  exists: boolean;
+  count: number;
+  generated_at: string | null;
+  generated_by_name: string | null;
+  cards: ExistingCardEntry[];
+}
+
 type PageState = 'idle' | 'checking' | 'ready' | 'generating' | 'done';
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -75,6 +95,7 @@ export default function ReportCardsPage() {
   // ── Page state ──────────────────────────────────────────────────────────────
   const [pageState, setPageState] = useState<PageState>('idle');
   const [readiness, setReadiness] = useState<ReadinessResult | null>(null);
+  const [existingCards, setExistingCards] = useState<ExistingCardsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // ── Fetch class admin classes ────────────────────────────────────────────────
@@ -122,6 +143,7 @@ export default function ReportCardsPage() {
 
   function resetReadiness() {
     setReadiness(null);
+    setExistingCards(null);
     setPageState('idle');
     setError(null);
   }
@@ -135,6 +157,7 @@ export default function ReportCardsPage() {
 
     setError(null);
     setReadiness(null);
+    setExistingCards(null);
     setPageState('checking');
 
     const token = getToken();
@@ -152,19 +175,30 @@ export default function ReportCardsPage() {
         exam_type:  examType,
       });
 
-      const res = await fetch(`${BASE_URL}/api/report-cards/readiness?${params.toString()}`, {
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      });
+      const [readinessRes, existingRes] = await Promise.all([
+        fetch(`${BASE_URL}/api/report-cards/readiness?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        }),
+        fetch(`${BASE_URL}/api/report-cards/class?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        }),
+      ]);
 
-      const json = await res.json();
+      const readinessJson = await readinessRes.json();
 
-      if (!res.ok) {
-        setError(json?.message ?? 'Failed to check readiness.');
+      if (!readinessRes.ok) {
+        setError(readinessJson?.message ?? 'Failed to check readiness.');
         setPageState('idle');
         return;
       }
 
-      setReadiness(json.data as ReadinessResult);
+      setReadiness(readinessJson.data as ReadinessResult);
+
+      if (existingRes.ok) {
+        const existingJson = await existingRes.json();
+        setExistingCards(existingJson.data as ExistingCardsResult);
+      }
+
       setPageState('ready');
     } catch {
       setError('Network error. Please try again.');
@@ -372,6 +406,71 @@ export default function ReportCardsPage() {
       {(pageState === 'ready' || pageState === 'generating' || pageState === 'done') && readiness && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
 
+          {/* ── Already generated banner ──────────────────────────────────── */}
+          {existingCards?.exists && (
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-5">
+              <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-amber-800">
+                  Report cards already generated for this selection
+                </p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  {existingCards.count} report card{existingCards.count !== 1 ? 's' : ''} were generated
+                  {existingCards.generated_by_name ? ` by ${existingCards.generated_by_name}` : ''}
+                  {existingCards.generated_at
+                    ? ` on ${new Date(existingCards.generated_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                    : ''}.
+                  Generating again will overwrite them.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Previously generated cards table ─────────────────────────── */}
+          {existingCards?.exists && existingCards.cards.length > 0 && (
+            <div className="mb-5">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Previously generated — {existingCards.count} student{existingCards.count !== 1 ? 's' : ''}
+              </p>
+              <div className="border border-gray-100 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-left">
+                      <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Student</th>
+                      <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Roll No</th>
+                      <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</th>
+                      <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">%</th>
+                      <th className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">Grade</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {existingCards.cards.map((card) => (
+                      <tr key={card.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-2.5 font-medium text-gray-900">{card.student_name}</td>
+                        <td className="px-4 py-2.5 text-gray-500">{card.roll_number ?? '—'}</td>
+                        <td className="px-4 py-2.5 text-gray-700">{card.grand_total} / {card.grand_max}</td>
+                        <td className="px-4 py-2.5 text-gray-700">{card.percentage.toFixed(1)}%</td>
+                        <td className="px-4 py-2.5">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${
+                            card.grade === 'A+' || card.grade === 'A' ? 'bg-green-100 text-green-800' :
+                            card.grade === 'B' ? 'bg-blue-100 text-blue-800' :
+                            card.grade === 'C' ? 'bg-yellow-100 text-yellow-800' :
+                            card.grade === 'D' ? 'bg-orange-100 text-orange-800' :
+                            'bg-red-100 text-red-800'
+                          }`}>
+                            {card.grade}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* All uploaded banner */}
           {readiness.all_uploaded ? (
             <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3 mb-5">
@@ -456,7 +555,7 @@ export default function ReportCardsPage() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
-                  Generate Report Cards
+                  {existingCards?.exists ? 'Regenerate Report Cards' : 'Generate Report Cards'}
                 </button>
               ) : (
                 <>
@@ -468,11 +567,11 @@ export default function ReportCardsPage() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                     </svg>
-                    Generate Anyway
+                    {existingCards?.exists ? 'Regenerate Anyway' : 'Generate Anyway'}
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setReadiness(null); setPageState('idle'); setError(null); }}
+                    onClick={() => { setReadiness(null); setExistingCards(null); setPageState('idle'); setError(null); }}
                     className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg transition-colors"
                   >
                     Wait for Teachers

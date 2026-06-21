@@ -233,6 +233,116 @@ router.get(
   }
 );
 
+// ── GET /api/report-cards/class ──────────────────────────────────────────────
+// Teacher-facing: check if report cards already exist for a given
+// class+section+term+exam_type, and return a summary.
+
+router.get(
+  '/class',
+  requireRole('teacher'),
+  async (req: Request, res: Response) => {
+    const parsed = reportCardSchema.safeParse(req.query);
+    if (!parsed.success) {
+      sendValidationError(res, parsed.error.flatten());
+      return;
+    }
+
+    const { class_name, section, term, exam_type } = parsed.data;
+    const teacherId = req.user!.id;
+    const schoolId  = req.user!.school_id;
+
+    if (!schoolId) {
+      sendError(res, 'Your account is not linked to a school', 403);
+      return;
+    }
+
+    // ── Class admin gate ──────────────────────────────────────────────────────
+    const admin = await isClassAdmin(teacherId, schoolId, class_name, section);
+    if (!admin) {
+      sendError(res, 'Only the class admin can view class report cards', 403);
+      return;
+    }
+
+    // Fetch existing report cards for this class+section+term+exam_type
+    // Join with students to filter by school_id and class/section
+    const { data, error } = await supabaseAdmin
+      .from('student_report_cards')
+      .select(`
+        id,
+        student_id,
+        class_name,
+        section,
+        term,
+        exam_type,
+        grand_total,
+        grand_max,
+        percentage,
+        grade,
+        session_year,
+        generated_at,
+        generated_by,
+        students!inner(full_name, roll_number, school_id, class_name, section)
+      `)
+      .eq('school_id', schoolId)
+      .ilike('class_name', class_name.trim())
+      .ilike('section', section.trim())
+      .eq('term', term.trim())
+      .ilike('exam_type', exam_type.trim())
+      .order('generated_at', { ascending: false });
+
+    if (error) {
+      sendDbError(res, error, 'reportCards GET /class');
+      return;
+    }
+
+    const cards = data ?? [];
+
+    // Get the generator's name if cards exist
+    let generatedByName: string | null = null;
+    if (cards.length > 0) {
+      const firstCard = cards[0] as { generated_by: string | null };
+      if (firstCard.generated_by) {
+        const { data: userRow } = await supabaseAdmin
+          .from('users')
+          .select('name')
+          .eq('id', firstCard.generated_by)
+          .single();
+        generatedByName = (userRow as { name: string } | null)?.name ?? null;
+      }
+    }
+
+    sendSuccess(res, {
+      exists: cards.length > 0,
+      count: cards.length,
+      generated_at: cards.length > 0 ? (cards[0] as { generated_at: string }).generated_at : null,
+      generated_by_name: generatedByName,
+      cards: cards.map((c) => {
+        const card = c as {
+          id: string;
+          student_id: string;
+          grand_total: number;
+          grand_max: number;
+          percentage: number;
+          grade: string;
+          generated_at: string;
+          students: { full_name: string; roll_number: string | null };
+        };
+        return {
+          id: card.id,
+          student_id: card.student_id,
+          student_name: card.students?.full_name ?? 'Unknown',
+          roll_number: card.students?.roll_number ?? null,
+          grand_total: card.grand_total,
+          grand_max: card.grand_max,
+          percentage: card.percentage,
+          grade: card.grade,
+          generated_at: card.generated_at,
+        };
+      }),
+    });
+  }
+);
+
 // ── POST /api/report-cards/generate ──────────────────────────────────────────
 
 router.post(
