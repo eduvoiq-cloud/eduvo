@@ -812,6 +812,14 @@ router.post(
 
           if (!notifError) {
             notifiedCount = students.length;
+
+            // FCM push — fire-and-forget
+            const studentIds = students.map((s: { id: string }) => s.id);
+            const { getTokensForStudents, sendPushMulticast } = await import('../services/fcmService');
+            const tokens = await getTokensForStudents(studentIds);
+            if (tokens.length > 0) {
+              sendPushMulticast(tokens, notifTitle, `Timetable for class ${className}-${section} has been updated.`).catch(() => {});
+            }
           } else {
             console.error('[timetable/upload] Failed to send notifications:', notifError.message);
           }

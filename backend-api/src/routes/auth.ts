@@ -15,10 +15,13 @@
  *   POST /api/auth/staff/change-password    — staff sets new password (clears must_reset_password)
  *   POST /api/auth/staff/forgot-password    — send password-reset email via Resend
  *   POST /api/auth/staff/reset-password     — verify token and set new password
- *   POST /api/auth/student/change-password  — student changes own password
- *   POST /api/auth/student/reset-password   — school_admin resets a student's password
- *   GET  /api/auth/me                       — restore any session
- *   POST /api/auth/logout                   — sign out
+ *   POST /api/auth/student/change-password        — student changes own password
+ *   POST /api/auth/student/reset-password          — school_admin resets a student's password
+ *   POST /api/auth/student/forgot-password         — send OTP via WhatsApp for self-service reset
+ *   POST /api/auth/student/verify-otp              — verify OTP, receive short-lived reset token
+ *   POST /api/auth/student/reset-password-otp      — set new password using reset token
+ *   GET  /api/auth/me                              — restore any session
+ *   POST /api/auth/logout                          — sign out
  */
 
 import { Router, Request, Response } from 'express';
@@ -28,7 +31,8 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Resend } from 'resend';
 import { supabase, supabaseAdmin } from '../config/supabase';
-import { loginRateLimit, studentLoginRateLimit, forgotPasswordRateLimit, deleteAccountRequestRateLimit } from '../middleware/rateLimit';
+import redis from '../config/redis';
+import { loginRateLimit, studentLoginRateLimit, forgotPasswordRateLimit, deleteAccountRequestRateLimit, studentOtpRateLimit } from '../middleware/rateLimit';
 import {
   authenticate,
   authenticateStudent,
@@ -39,6 +43,7 @@ import {
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
+import { sendWhatsAppMessage } from '../services/whatsappService';
 
 const router = Router();
 
@@ -993,6 +998,255 @@ router.post('/delete-account-request', deleteAccountRequestRateLimit, async (req
   });
 
   sendSuccess(res, null, 'Your request has been received. We will process it within 7 days.');
+});
+
+// ── OTP helpers ───────────────────────────────────────────────────────────────
+
+const OTP_TTL_SECONDS   = 5 * 60;        // OTP expires in 5 minutes
+const RESET_TTL_SECONDS = 10 * 60;       // reset token expires in 10 minutes
+
+/** Redis key for the OTP bound to a phone number */
+const otpKey   = (phone: string) => `otp:student:${phone}`;
+/** Redis key for the password-reset token issued after OTP verification */
+const resetKey = (token: string) => `otp:reset:${token}`;
+
+// ── POST /api/auth/student/forgot-password ────────────────────────────────────
+
+/**
+ * Self-service password reset — step 1.
+ * Accepts the student's phone number, looks them up, generates a 6-digit OTP,
+ * stores a bcrypt hash of it in Redis (5-minute TTL), and sends it via WhatsApp
+ * to the student's parent_phone (preferred) or their own phone_number.
+ *
+ * Always returns 200 to prevent phone-number enumeration.
+ * Public route. Rate-limited to 3 requests per hour per IP.
+ */
+const studentForgotPasswordSchema = z.object({
+  phone_number: z.string().min(5).max(20),
+});
+
+router.post(
+  '/student/forgot-password',
+  studentOtpRateLimit,
+  async (req: Request, res: Response) => {
+    const parsed = studentForgotPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendValidationError(res, parsed.error.flatten());
+      return;
+    }
+
+    const { phone_number } = parsed.data;
+    const genericOk = () =>
+      sendSuccess(
+        res,
+        null,
+        'If an account with that number exists, an OTP has been sent via WhatsApp.'
+      );
+
+    try {
+      // 1. Look up student
+      const { data: student, error } = await supabaseAdmin
+        .from('students')
+        .select('id, full_name, phone_number, parent_phone')
+        .or(`phone_number.eq.${phone_number},phone.eq.${phone_number}`)
+        .eq('is_deleted', false)
+        .maybeSingle();
+
+      if (error || !student) {
+        await logAudit(null, 'STUDENT_OTP_REQUESTED', {
+          phone_number,
+          found: false,
+        });
+        genericOk();
+        return;
+      }
+
+      // 2. Generate 6-digit OTP
+      const otp = String(Math.floor(100000 + Math.random() * 900000));
+
+      // 3. Hash and store in Redis
+      const otpHash = crypto.createHash('sha256').update(otp).digest('hex');
+
+      if (redis) {
+        await redis.setex(otpKey(phone_number), OTP_TTL_SECONDS, otpHash);
+      } else {
+        // Redis unavailable — cannot safely proceed
+        console.error('[auth] Redis unavailable — cannot store OTP');
+        genericOk();
+        return;
+      }
+
+      // 4. Determine delivery number (parent phone preferred)
+      const deliveryPhone = (student.parent_phone as string | null) ?? student.phone_number;
+
+      // 5. Send via WhatsApp
+      const message =
+        `Your Eduvo password reset OTP is: *${otp}*\n\nThis code is valid for 5 minutes. Do not share it with anyone.`;
+
+      const result = await sendWhatsAppMessage(deliveryPhone, message);
+
+      if (!result.sent) {
+        console.warn(
+          `[auth] OTP WhatsApp send failed for student ${student.id}: ${result.reason}`
+        );
+      }
+
+      await logAudit(student.id, 'STUDENT_OTP_REQUESTED', {
+        phone_number,
+        found: true,
+        whatsapp_sent: result.sent,
+      });
+    } catch (err) {
+      console.error('[auth] student/forgot-password error:', err);
+    }
+
+    genericOk();
+  }
+);
+
+// ── POST /api/auth/student/verify-otp ────────────────────────────────────────
+
+/**
+ * Self-service password reset — step 2.
+ * Verifies the 6-digit OTP and, if valid, issues a short-lived reset token
+ * (stored in Redis, 10-minute TTL) that step 3 will consume.
+ *
+ * Public route.
+ */
+const studentVerifyOtpSchema = z.object({
+  phone_number: z.string().min(5).max(20),
+  otp: z.string().length(6).regex(/^\d{6}$/),
+});
+
+router.post('/student/verify-otp', async (req: Request, res: Response) => {
+  const parsed = studentVerifyOtpSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { phone_number, otp } = parsed.data;
+
+  if (!redis) {
+    sendError(res, 'Service temporarily unavailable. Please try again later.', 503);
+    return;
+  }
+
+  // 1. Fetch stored OTP hash
+  const storedHash = await redis.get(otpKey(phone_number));
+  if (!storedHash) {
+    sendError(res, 'OTP expired or not found. Please request a new one.', 400);
+    return;
+  }
+
+  // 2. Verify
+  const incomingHash = crypto.createHash('sha256').update(otp).digest('hex');
+  const isValid = crypto.timingSafeEqual(
+    Buffer.from(storedHash, 'hex'),
+    Buffer.from(incomingHash, 'hex')
+  );
+
+  if (!isValid) {
+    sendError(res, 'Incorrect OTP. Please check and try again.', 400);
+    return;
+  }
+
+  // 3. Consume OTP — delete it so it can only be used once
+  await redis.del(otpKey(phone_number));
+
+  // 4. Issue a short-lived reset token (32 random bytes)
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+
+  // Store: hash → phone_number so step 3 can look up the student
+  await redis.setex(resetKey(resetTokenHash), RESET_TTL_SECONDS, phone_number);
+
+  await logAudit(null, 'STUDENT_OTP_VERIFIED', { phone_number });
+
+  sendSuccess(res, { reset_token: resetToken }, 'OTP verified successfully.');
+});
+
+// ── POST /api/auth/student/reset-password-otp ────────────────────────────────
+
+/**
+ * Self-service password reset — step 3.
+ * Consumes the reset token issued by verify-otp, hashes the new password,
+ * and updates the student's record.
+ *
+ * Public route.
+ */
+const studentResetPasswordOtpSchema = z.object({
+  reset_token: z.string().min(1),
+  new_password: z.string().min(6).max(128),
+});
+
+router.post('/student/reset-password-otp', async (req: Request, res: Response) => {
+  const parsed = studentResetPasswordOtpSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const { reset_token, new_password } = parsed.data;
+
+  if (!redis) {
+    sendError(res, 'Service temporarily unavailable. Please try again later.', 503);
+    return;
+  }
+
+  // 1. Look up the phone number bound to this reset token
+  const tokenHash = crypto.createHash('sha256').update(reset_token).digest('hex');
+  const phone_number = await redis.get(resetKey(tokenHash));
+
+  if (!phone_number) {
+    sendError(res, 'Reset link expired or already used. Please request a new OTP.', 400);
+    return;
+  }
+
+  // 2. Fetch student
+  const { data: student, error } = await supabaseAdmin
+    .from('students')
+    .select('id, phone_number, password_hash')
+    .or(`phone_number.eq.${phone_number},phone.eq.${phone_number}`)
+    .eq('is_deleted', false)
+    .maybeSingle();
+
+  if (error || !student) {
+    sendError(res, 'Student not found.', 404);
+    return;
+  }
+
+  // 3. New password cannot be the last 5 digits of phone (the default password)
+  const digits = phone_number.replace(/\D/g, '');
+  const last5 = digits.slice(-5);
+  if (last5.length === 5 && new_password === last5) {
+    sendError(
+      res,
+      'Password cannot be the last 5 digits of your phone number. Please choose a different password.',
+      400
+    );
+    return;
+  }
+
+  // 4. Hash and save
+  const newHash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
+
+  const { error: updateError } = await supabaseAdmin
+    .from('students')
+    .update({ password_hash: newHash, is_first_login: false })
+    .eq('id', student.id);
+
+  if (updateError) {
+    sendError(res, 'Failed to reset password. Please try again.', 500);
+    return;
+  }
+
+  // 5. Consume the reset token — one-time use
+  await redis.del(resetKey(tokenHash));
+
+  await logAudit(student.id, 'STUDENT_PASSWORD_RESET_OTP', { student_id: student.id });
+
+  sendSuccess(res, null, 'Password reset successfully. You can now log in.');
 });
 
 export default router;

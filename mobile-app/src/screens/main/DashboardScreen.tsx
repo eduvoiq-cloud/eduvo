@@ -47,12 +47,18 @@ interface Announcement {
   created_at: string;
 }
 
+interface UpcomingTest {
+  title: string;
+  date: string;
+}
+
 interface DashboardData {
   attendance: AttendanceSummary | null;
   homework: HomeworkSummary;
   recentMark: RecentMark | null;
   announcements: Announcement[];
   worstSubject: string | null;
+  upcomingTest: UpcomingTest | null;
 }
 
 type MainNavProp = BottomTabNavigationProp<MainTabParamList>;
@@ -334,7 +340,7 @@ export default function DashboardScreen() {
           ? linkedChildren[activeChildIndex]?.token
           : null;
 
-      const [attHistRes, attTodayRes, hwRes, marksRes, annRes, notifCountRes] =
+      const [attHistRes, attTodayRes, hwRes, marksRes, annRes, notifCountRes, testsRes] =
         await Promise.allSettled([
           apiClient.get('/api/attendance/history', {
             params: { student_id: activeStudent?.id, start_date: yearStart, end_date: yearEnd },
@@ -352,6 +358,7 @@ export default function DashboardScreen() {
               : undefined,
           }),
           apiClient.get('/api/notifications', { params: { unread_only: 'true' } }),
+          apiClient.get('/api/tests/student'),
         ]);
 
       // Attendance summary
@@ -417,7 +424,24 @@ export default function DashboardScreen() {
         setNotifCount(unreadCount);
       }
 
-      setData({ attendance, homework, recentMark, announcements, worstSubject: deriveWorstSubject(allMarksForWorst) });    } catch (err) {
+      // Upcoming test — find the soonest test that hasn't been completed
+      let upcomingTest: UpcomingTest | null = null;
+      if (testsRes.status === 'fulfilled') {
+        const testsPayload = testsRes.value.data?.data;
+        const testsList: any[] = Array.isArray(testsPayload)
+          ? testsPayload
+          : (testsPayload?.data ?? testsPayload?.tests ?? []);
+        // Sort ascending by date so the soonest upcoming test is first
+        const upcoming = testsList
+          .filter((t: any) => t.attempt_status !== 'completed' && t.date >= today)
+          .sort((a: any, b: any) => (a.date < b.date ? -1 : 1));
+        if (upcoming.length > 0) {
+          upcomingTest = { title: upcoming[0].title, date: upcoming[0].date };
+        }
+      }
+
+      setData({ attendance, homework, recentMark, announcements, worstSubject: deriveWorstSubject(allMarksForWorst), upcomingTest });
+    } catch (err) {
       console.warn('[Dashboard] fetchAll error:', err);
     } finally {
       setLoading(false);
@@ -613,8 +637,8 @@ export default function DashboardScreen() {
               <DashCard
                 icon="📝"
                 title="Tests"
-                value="View"
-                sub="Upcoming & past tests"
+                value={data?.upcomingTest ? 'Upcoming' : 'View'}
+                sub={data?.upcomingTest ? data.upcomingTest.title : 'Upcoming & past tests'}
                 color="#8B5CF6"
                 onPress={() => navigation.navigate('Tests')}
               />
@@ -634,7 +658,7 @@ export default function DashboardScreen() {
         {!loading && data?.worstSubject && (
           <TouchableOpacity
             style={styles.focusBanner}
-            onPress={() => navigation.navigate('Marks')}
+            onPress={() => navigation.navigate('Marks', { initialSubject: data.worstSubject } as any)}
             activeOpacity={0.8}
             accessibilityRole="button"
             accessibilityLabel={`Focus area: ${data.worstSubject}. Tap to view performance.`}

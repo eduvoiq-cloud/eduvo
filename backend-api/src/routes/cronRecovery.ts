@@ -501,6 +501,38 @@ router.all('/check-batch-jobs', async (req: Request, res: Response) => {
               '✅ Recovery Packs Ready',
               `Recovery study packs for Class ${cycle.class}-${cycle.section} have been generated. You can now create recovery tests.`
             );
+
+            // Notify students that their recovery pack is ready
+            try {
+              const { data: packStudents } = await supabaseAdmin
+                .from('recovery_packs')
+                .select('student_id, subject')
+                .eq('cycle_id', cycle.id)
+                .eq('generation_status', 'completed');
+
+              if (packStudents && packStudents.length > 0) {
+                const now = new Date().toISOString();
+                const notifRows = packStudents.map((p: { student_id: string; subject: string }) => ({
+                  title: '📚 Recovery Pack Ready',
+                  message: `Your ${p.subject} recovery study pack is ready. Open it to start reviewing and boost your marks!`,
+                  type: 'announcement',
+                  recipient_id: p.student_id,
+                  sender_id: cycle.created_by,
+                  is_read: false,
+                  created_at: now,
+                }));
+                await supabaseAdmin.from('notifications').insert(notifRows);
+
+                const studentIds = packStudents.map((p: { student_id: string }) => p.student_id);
+                const { getTokensForStudents, sendPushMulticast: pushMulticast } = await import('../services/fcmService');
+                const tokens = await getTokensForStudents(studentIds);
+                if (tokens.length > 0) {
+                  await pushMulticast(tokens, '📚 Recovery Pack Ready', 'Your personalised recovery study pack is ready. Tap to review!');
+                }
+              }
+            } catch (notifErr) {
+              errors.push(`Pack student notify [cycle=${cycle.id}]: ${notifErr instanceof Error ? notifErr.message : String(notifErr)}`);
+            }
           }
         } catch (cycleErr) {
           errors.push(`Pack cycle [${cycle.id}]: ${cycleErr instanceof Error ? cycleErr.message : String(cycleErr)}`);
@@ -572,6 +604,38 @@ router.all('/check-batch-jobs', async (req: Request, res: Response) => {
               '⚡ Recovery Tests Ready',
               `Recovery tests for Class ${cycle.class}-${cycle.section} are live. Students can now attempt them.`
             );
+
+            // Notify students that their recovery test is ready
+            try {
+              const { data: testStudents } = await supabaseAdmin
+                .from('monthly_recovery_tests')
+                .select('student_id, subject')
+                .eq('cycle_id', cycle.id)
+                .eq('generation_status', 'completed');
+
+              if (testStudents && testStudents.length > 0) {
+                const now = new Date().toISOString();
+                const notifRows = testStudents.map((t: { student_id: string; subject: string }) => ({
+                  title: '📝 Recovery Test Ready',
+                  message: `Your ${t.subject} recovery test is ready. Go attempt it now!`,
+                  type: 'announcement',
+                  recipient_id: t.student_id,
+                  sender_id: cycle.created_by,
+                  is_read: false,
+                  created_at: now,
+                }));
+                await supabaseAdmin.from('notifications').insert(notifRows);
+
+                const studentIds = testStudents.map((t: { student_id: string }) => t.student_id);
+                const { getTokensForStudents, sendPushMulticast: pushMulticast } = await import('../services/fcmService');
+                const tokens = await getTokensForStudents(studentIds);
+                if (tokens.length > 0) {
+                  await pushMulticast(tokens, '📝 Recovery Test Ready', 'Your recovery test is live. Tap to attempt it now!');
+                }
+              }
+            } catch (notifErr) {
+              errors.push(`Test student notify [cycle=${cycle.id}]: ${notifErr instanceof Error ? notifErr.message : String(notifErr)}`);
+            }
           }
         } catch (cycleErr) {
           errors.push(`Test cycle [${cycle.id}]: ${cycleErr instanceof Error ? cycleErr.message : String(cycleErr)}`);

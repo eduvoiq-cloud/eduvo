@@ -10,6 +10,8 @@ import { useAuthStore } from '../store/authStore';
 // Auth screens
 import LoginScreen from '../screens/auth/LoginScreen';
 import ChangePasswordScreen from '../screens/auth/ChangePasswordScreen';
+import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
+import OTPVerificationScreen from '../screens/auth/OTPVerificationScreen';
 
 // Main screens (used by students)
 import DashboardScreen from '../screens/main/DashboardScreen';
@@ -57,6 +59,8 @@ import { useChildStore } from '../store/childStore';
 export type AuthStackParamList = {
   Login: undefined;
   ChangePassword: undefined;
+  ForgotPassword: undefined;
+  OTPVerification: { phone: string };
 };
 
 export type MainTabParamList = {
@@ -191,6 +195,8 @@ function AuthNavigator() {
     <AuthStack.Navigator screenOptions={{ headerShown: false }}>
       <AuthStack.Screen name="Login" component={LoginScreen} />
       <AuthStack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+      <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <AuthStack.Screen name="OTPVerification" component={OTPVerificationScreen} />
     </AuthStack.Navigator>
   );
 }

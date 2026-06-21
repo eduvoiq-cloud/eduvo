@@ -212,4 +212,22 @@ export const deleteAccountRequestRateLimit = rateLimit({
   },
 });
 
+/**
+ * Student OTP request rate limit — max 3 OTP sends per hour per IP.
+ * Prevents abuse of the WhatsApp OTP endpoint.
+ */
+export const studentOtpRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,
+  keyGenerator: (req: Request) => `student_otp:${req.ip ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  store: makeStore('student_otp'),
+  message: {
+    success: false,
+    message: 'Too many OTP requests. Please try again later.',
+  },
+});
+
 

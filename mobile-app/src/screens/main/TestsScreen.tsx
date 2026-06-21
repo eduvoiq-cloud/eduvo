@@ -101,6 +101,16 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
   const config = STATUS_CONFIG[status];
   const isFeeRestricted = test.is_restricted === true;
 
+  // Check if this is a past-dated test that was never started (missed)
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const testDay = parseLocalDate(test.date);
+  const isMissed = testDay && testDay < todayStart && status === 'not_started';
+
+  // Check if this is a future test (not yet available)
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+  const isFuture = testDay ? testDay >= tomorrowStart : false;
+
   return (
     <TouchableOpacity
       style={[
@@ -116,9 +126,22 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
         <View style={styles.cardLeft}>
           <Text style={styles.testTitle} numberOfLines={2}>{test.title}</Text>
         </View>
-        <View style={[styles.statusBadge, { backgroundColor: isFeeRestricted ? '#FEE2E2' : config.bg }]}>
-          <Text style={[styles.statusText, { color: isFeeRestricted ? '#DC2626' : config.color }]}>
-            {isFeeRestricted ? 'Locked' : config.label}
+        <View style={[styles.statusBadge, {
+          backgroundColor: isFeeRestricted ? '#FEE2E2'
+            : isMissed ? '#F3F4F6'
+            : isFuture ? '#EFF6FF'
+            : config.bg,
+        }]}>
+          <Text style={[styles.statusText, {
+            color: isFeeRestricted ? '#DC2626'
+              : isMissed ? '#9CA3AF'
+              : isFuture ? '#3B82F6'
+              : config.color,
+          }]}>
+            {isFeeRestricted ? 'Locked'
+              : isMissed ? 'Missed'
+              : isFuture ? 'Upcoming'
+              : config.label}
           </Text>
         </View>
       </View>
@@ -170,9 +193,15 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
           styles.ctaText,
           status === 'completed' && { color: '#15803D' },
           isFeeRestricted && { color: '#DC2626' },
+          isMissed && { color: '#9CA3AF' },
+          isFuture && { color: '#3B82F6' },
         ]}>
           {isFeeRestricted
             ? '🔒 Pay fees to unlock'
+            : isMissed
+            ? 'Not attempted'
+            : isFuture
+            ? `Scheduled for ${formatDate(test.date)}`
             : status === 'completed'
             ? 'View Results →'
             : status === 'in_progress'
@@ -226,21 +255,26 @@ function parseLocalDate(iso: string | null | undefined): Date | null {
 function filterTests(tests: TestRecord[], tab: TabKey): TestRecord[] {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
 
   return tests.filter((t) => {
     const testDay = parseLocalDate(t.date);
-    const isFuture = testDay ? testDay > todayStart : false;
-    const status = t.attempt_status ?? 'not_started';
+    const isToday   = testDay ? testDay >= todayStart && testDay < tomorrowStart : false;
+    const isFuture  = testDay ? testDay >= tomorrowStart : false;
+    const isPast    = testDay ? testDay < todayStart : false;
+    const status    = t.attempt_status ?? 'not_started';
 
     switch (tab) {
       case 'current':
-        // Today or past tests that are not yet completed (not_started or in_progress)
-        return !isFuture && (status === 'not_started' || status === 'in_progress');
+        // Only tests scheduled FOR TODAY that are not yet completed.
+        // Also include in_progress tests from any date (so student can resume).
+        return (isToday && status !== 'completed') || status === 'in_progress';
       case 'upcoming':
-        // Future-dated tests that haven't been completed
+        // Future-dated tests that haven't been started/completed
         return isFuture && status !== 'completed';
       case 'completed':
-        return status === 'completed';
+        // Completed tests, plus past-dated tests that were never started (missed)
+        return status === 'completed' || (isPast && status === 'not_started');
       default:
         return true;
     }
@@ -306,6 +340,56 @@ export default function TestsScreen() {
       );
       return;
     }
+
+    // Date enforcement: only allow starting on the scheduled date.
+    // Allow resuming in_progress tests from any date (crash/reconnect safety).
+    if (test.attempt_status !== 'in_progress' && test.attempt_status !== 'completed') {
+      const now = new Date();
+      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      if (test.date && test.date !== todayISO) {
+        const testDateFormatted = formatDate(test.date);
+        if (test.date > todayISO) {
+          Alert.alert(
+            'Test Not Available Yet',
+            `This test is scheduled for ${testDateFormatted}. You can only start it on that day.`,
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert(
+            'Test Expired',
+            `This test was scheduled for ${testDateFormatted} and can no longer be started.`,
+            [{ text: 'OK' }]
+          );
+        }
+        return;
+      }
+
+      // Time window enforcement (client-side, for immediate UX feedback)
+      if (test.available_from || test.available_until) {
+        const currentMins = now.getHours() * 60 + now.getMinutes();
+        const toMins = (hhmm: string) => {
+          const [h, m] = hhmm.split(':').map(Number);
+          return h * 60 + m;
+        };
+        if (test.available_from && currentMins < toMins(test.available_from)) {
+          Alert.alert(
+            'Test Not Open Yet',
+            `This test opens at ${formatHHMM(test.available_from)}. Please come back then.`,
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+        if (test.available_until && currentMins > toMins(test.available_until)) {
+          Alert.alert(
+            'Test Window Closed',
+            `The test window closed at ${formatHHMM(test.available_until)}. You can no longer start this test.`,
+            [{ text: 'OK' }]
+          );
+          return;
+        }
+      }
+    }
+
     navigation.navigate('TestAttempt', {
       test: {
         id: test.id,

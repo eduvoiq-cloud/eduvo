@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import Svg, { Polyline, Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import apiClient from '../../api/client';
 import { MainStackParamList } from '../../navigation/AppNavigator';
@@ -549,13 +549,16 @@ const testCardStyles = StyleSheet.create({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function MarksScreen() {
+  const route = useRoute<any>();
+  const initialSubject: string | null = route.params?.initialSubject ?? null;
+
   const [marks, setMarks] = useState<MarkRecord[]>([]);
   const [completedTests, setCompletedTests] = useState<TestRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [termFilter, setTermFilter] = useState<TermFilter>('All');
-  const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
+  const [expandedSubject, setExpandedSubject] = useState<string | null>(initialSubject);
   const [showTests, setShowTests] = useState(true);
 
   const navigation = useNavigation<StackNavigationProp<MainStackParamList>>();

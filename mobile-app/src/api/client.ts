@@ -31,7 +31,13 @@ apiClient.interceptors.request.use(
 // ── Response interceptor: auto-logout on 401, subscription block on 402 ──────
 // Only auto-logout on 401 from authenticated routes, NOT from login/change-password
 // endpoints — those should let the screen handle the error and show it to the user.
-const AUTH_ENDPOINTS = ['/api/auth/login/student', '/api/auth/student/change-password'];
+const AUTH_ENDPOINTS = [
+  '/api/auth/login/student',
+  '/api/auth/student/change-password',
+  '/api/auth/student/forgot-password',
+  '/api/auth/student/verify-otp',
+  '/api/auth/student/reset-password-otp',
+];
 
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => response,

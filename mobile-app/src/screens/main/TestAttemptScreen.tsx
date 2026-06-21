@@ -15,7 +15,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Animated,
-  Linking,
+  Share,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
@@ -440,19 +440,35 @@ function getWindowState(
 
 function PlatformChoiceModal({
   visible,
+  testId,
   onPhone,
-  onWeb,
+  onDismiss,
 }: {
   visible: boolean;
+  testId: string;
   onPhone: () => void;
-  onWeb: () => void;
+  onDismiss: () => void;
 }) {
+  const webUrl = `https://eduvo.vercel.app/student/tests/${testId}`;
+
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `Open this link on your computer to take the test:\n${webUrl}`,
+        url: webUrl, // iOS only
+      });
+    } catch {
+      Alert.alert('Share failed', `Copy this link manually:\n${webUrl}`);
+    }
+  };
+
   return (
     <Modal
       visible={visible}
       transparent
       animationType="slide"
       accessibilityViewIsModal
+      onRequestClose={onDismiss}
     >
       <View style={platformModalStyles.overlay}>
         <View style={platformModalStyles.card}>
@@ -475,19 +491,37 @@ function PlatformChoiceModal({
             </View>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[platformModalStyles.optionBtn, platformModalStyles.optionBtnWeb]}
-            onPress={onWeb}
-            accessibilityRole="button"
-            accessibilityLabel="Continue on web"
-          >
+          {/* Web option — shows a copyable link, no redirect */}
+          <View style={[platformModalStyles.optionBtn, platformModalStyles.optionBtnWeb]}>
             <Text style={platformModalStyles.optionIcon}>💻</Text>
-            <View style={platformModalStyles.optionText}>
+            <View style={{ flex: 1 }}>
               <Text style={platformModalStyles.optionTitle}>Continue on Web</Text>
               <Text style={platformModalStyles.optionDesc}>
-                Opens eduvo.vercel.app in your browser — log in and the test will be there
+                Open this link on your computer or laptop:
               </Text>
+              <View style={platformModalStyles.urlBox}>
+                <Text style={platformModalStyles.urlText} numberOfLines={3} selectable>
+                  {webUrl}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={platformModalStyles.copyBtn}
+                onPress={handleShare}
+                accessibilityRole="button"
+                accessibilityLabel="Share web test link"
+              >
+                <Text style={platformModalStyles.copyBtnText}>📤 Share / Copy Link</Text>
+              </TouchableOpacity>
             </View>
+          </View>
+
+          <TouchableOpacity
+            style={platformModalStyles.cancelBtn}
+            onPress={onDismiss}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={platformModalStyles.cancelText}>Cancel</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -546,6 +580,31 @@ const platformModalStyles = StyleSheet.create({
   optionText: { flex: 1 },
   optionTitle: { fontSize: 15, fontWeight: '700', color: '#111827', marginBottom: 2 },
   optionDesc: { fontSize: 12, color: '#6B7280', lineHeight: 18 },
+  urlBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    padding: 10,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  urlText: { fontSize: 12, color: '#1D4ED8', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },
+  copyBtn: {
+    backgroundColor: '#1D4ED8',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  copyBtnText: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
+  cancelBtn: {
+    marginTop: 4,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  cancelText: { fontSize: 14, color: '#9CA3AF', fontWeight: '500' },
 });
 
 // ── Pre-test screen ───────────────────────────────────────────────────────────
@@ -1914,16 +1973,12 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
         />
         <PlatformChoiceModal
           visible={showPlatformModal}
+          testId={test.id}
           onPhone={() => {
             setShowPlatformModal(false);
             handleStart('mobile');
           }}
-          onWeb={() => {
-            setShowPlatformModal(false);
-            Linking.openURL('https://eduvo.vercel.app/student/login').catch(() =>
-              Alert.alert('Could not open browser', 'Please open https://eduvo.vercel.app/student/login manually.')
-            );
-          }}
+          onDismiss={() => setShowPlatformModal(false)}
         />
       </>
     );

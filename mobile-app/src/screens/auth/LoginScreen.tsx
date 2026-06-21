@@ -11,8 +11,11 @@ import {
   Platform,
   Linking,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
 import { useAuthStore } from '../../store/authStore';
 import apiClient from '../../api/client';
+import { AuthStackParamList } from '../../navigation/AppNavigator';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -54,6 +57,7 @@ export default function LoginScreen() {
   const lockoutUntil = useRef<number | null>(null);
 
   const login = useAuthStore((state) => state.login);
+  const navigation = useNavigation<StackNavigationProp<AuthStackParamList>>();
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -218,10 +222,15 @@ export default function LoginScreen() {
           )}
         </TouchableOpacity>
 
-        {/* Forgot password hint */}
-        <Text style={styles.forgotText}>
-          Forgot password? Contact your school.
-        </Text>
+        {/* Forgot password link */}
+        <TouchableOpacity
+          style={styles.forgotButton}
+          onPress={() => navigation.navigate('ForgotPassword')}
+          accessibilityRole="button"
+          accessibilityLabel="Forgot password"
+        >
+          <Text style={styles.forgotText}>Forgot password?</Text>
+        </TouchableOpacity>
 
         {/* Privacy policy link */}
         <TouchableOpacity
@@ -321,11 +330,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  forgotButton: {
+    alignSelf: 'center',
+    marginTop: 20,
+  },
   forgotText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: PRIMARY,
+    fontWeight: '500',
     textAlign: 'center',
-    marginTop: 20,
   },
   privacyLink: {
     alignSelf: 'center',

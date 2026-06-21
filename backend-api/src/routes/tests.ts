@@ -875,11 +875,79 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     return;
   }
 
-  // Enforce scheduled time window if set
-  // NOTE: available_from / available_until are stored as HH:MM in the school's
-  // local time. The server cannot reliably know the school's timezone, so
-  // window enforcement is done client-side. We skip it here to avoid
-  // incorrect UTC-vs-local mismatches on the server.
+  // ── Date enforcement ────────────────────────────────────────────────────────
+  // A student can only START a new attempt on the exact date the teacher scheduled.
+  // Resuming an already in-progress attempt is always allowed (so a page refresh
+  // or crash doesn't lock the student out on the same day).
+  const testDate = (test as Record<string, unknown>).date as string | null;
+  if (testDate) {
+    const todayISO = new Date().toISOString().slice(0, 10); // YYYY-MM-DD in UTC
+
+    // Check for an existing in-progress attempt before enforcing date
+    const { data: dateCheckAttempt } = await supabaseAdmin
+      .from('test_attempts')
+      .select('id, is_submitted')
+      .eq('test_id', test_id)
+      .eq('student_id', studentRecord.id)
+      .maybeSingle();
+
+    const isResume = dateCheckAttempt && !dateCheckAttempt.is_submitted;
+
+    if (!isResume && testDate !== todayISO) {
+      const testDateFormatted = (() => {
+        const [y, m, d] = testDate.split('-').map(Number);
+        return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      })();
+      if (testDate > todayISO) {
+        sendError(res, `This test is scheduled for ${testDateFormatted}. You can only start it on that day.`, 403);
+      } else {
+        sendError(res, `This test was scheduled for ${testDateFormatted} and can no longer be started.`, 403);
+      }
+      return;
+    }
+  }
+
+  // ── Time window enforcement ─────────────────────────────────────────────────
+  // available_from / available_until are HH:MM in IST (UTC+5:30).
+  // Only enforce if the student is starting a new attempt (not resuming).
+  {
+    const available_from  = (test as Record<string, unknown>).available_from  as string | null;
+    const available_until = (test as Record<string, unknown>).available_until as string | null;
+
+    if (available_from || available_until) {
+      // Check if there's already an in-progress attempt (allow resume regardless of window)
+      const { data: windowCheckAttempt } = await supabaseAdmin
+        .from('test_attempts')
+        .select('id, is_submitted')
+        .eq('test_id', test_id)
+        .eq('student_id', studentRecord.id)
+        .maybeSingle();
+
+      const isResuming = windowCheckAttempt && !windowCheckAttempt.is_submitted;
+
+      if (!isResuming) {
+        // IST offset: UTC+5:30 = 330 minutes
+        const nowUTC = new Date();
+        const istOffsetMs = 5.5 * 60 * 60 * 1000;
+        const nowIST = new Date(nowUTC.getTime() + istOffsetMs);
+        const currentMins = nowIST.getUTCHours() * 60 + nowIST.getUTCMinutes();
+
+        const toMins = (hhmm: string) => {
+          const [h, m] = hhmm.split(':').map(Number);
+          return h * 60 + m;
+        };
+
+        if (available_from && currentMins < toMins(available_from)) {
+          sendError(res, `This test opens at ${available_from}. Please wait until then to start.`, 403);
+          return;
+        }
+        if (available_until && currentMins > toMins(available_until)) {
+          sendError(res, `The test window closed at ${available_until}. You can no longer start this test.`, 403);
+          return;
+        }
+      }
+    }
+  }
 
   // Prevent duplicate active attempts
   const { data: existingAttempt } = await supabaseAdmin
