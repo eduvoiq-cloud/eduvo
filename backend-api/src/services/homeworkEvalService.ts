@@ -707,6 +707,64 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
     schoolCosts.set(schoolId, entry);
   };
 
+  // ── Per-school spend cap + feature flag ───────────────────────────────────
+  // Loaded once per school on first access, cached in-memory for the batch run.
+  interface SchoolCapEntry {
+    aiEnabled: boolean;
+    cap: number | null;    // null = unlimited
+    spentToday: number;    // INR already logged in ai_cost_log for today
+  }
+  const schoolCapCache = new Map<string, SchoolCapEntry>();
+
+  async function loadSchoolCap(schoolId: string): Promise<SchoolCapEntry> {
+    if (schoolCapCache.has(schoolId)) return schoolCapCache.get(schoolId)!;
+
+    const { data: school } = await supabaseAdmin
+      .from('schools')
+      .select('ai_homework_enabled, daily_ai_spend_cap_inr')
+      .eq('id', schoolId)
+      .maybeSingle();
+
+    const row = school as { ai_homework_enabled: boolean; daily_ai_spend_cap_inr: number | null } | null;
+    // If the column doesn't exist yet (migration not run), default to enabled/unlimited
+    const aiEnabled = row?.ai_homework_enabled ?? true;
+    const cap = row?.daily_ai_spend_cap_inr ?? null;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: costRow } = await supabaseAdmin
+      .from('ai_cost_log')
+      .select('estimated_cost_inr')
+      .eq('school_id', schoolId)
+      .eq('date', today)
+      .maybeSingle();
+
+    const spentToday = Number(
+      (costRow as { estimated_cost_inr: number } | null)?.estimated_cost_inr ?? 0
+    );
+
+    const entry: SchoolCapEntry = { aiEnabled, cap, spentToday };
+    schoolCapCache.set(schoolId, entry);
+    return entry;
+  }
+
+  /**
+   * Returns true if this school has AI disabled OR has hit its daily spend cap.
+   * Cache hits and numerical evals (zero cost) are allowed even when over cap.
+   */
+  async function isSchoolAiBlocked(schoolId: string): Promise<boolean> {
+    const entry = await loadSchoolCap(schoolId);
+    if (!entry.aiEnabled) return true;
+    if (entry.cap === null) return false;
+
+    // Add spend accumulated so far in this batch run (not yet flushed to DB)
+    const batchCosts = schoolCosts.get(schoolId);
+    const batchSpend = batchCosts
+      ? batchCosts.text * COST_PER_TEXT_CALL_INR + batchCosts.vision * COST_PER_VISION_CALL_INR
+      : 0;
+
+    return (entry.spentToday + batchSpend) >= entry.cap;
+  }
+
   // Track which student submissions changed to 'checked' or 'flagged_for_review'
   // so we can send notifications after the loop
   const checkedStudentIds: string[] = [];
@@ -733,6 +791,13 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
       );
       continue;
     }
+
+    // ── School AI feature flag + daily spend cap ──────────────────────────────
+    // Skip expensive AI calls if the school has disabled AI homework or has
+    // reached its daily spend cap. Free paths (cache hits, numerical) are
+    // unaffected — they run regardless. We check this AFTER the per-student
+    // rate limit so overflow accounting still happens correctly.
+    const schoolBlocked = await isSchoolAiBlocked(hw.school_id);
 
     const question = hw.title; // homework title is the question prompt
     const subjectName = (hw.subjects as unknown as { name: string } | null)?.name ?? 'Unknown';
@@ -761,6 +826,17 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
 
       // ── Photo-only submissions → skip cache, go straight to vision ──────────
       if (isPhotoOnly) {
+        // If school is blocked (feature off or cap reached), skip vision eval
+        // and revert to submitted so it can be retried if the cap resets.
+        if (schoolBlocked) {
+          await supabaseAdmin
+            .from('homework_submissions')
+            .update({ status: 'submitted' })
+            .eq('id', row.id);
+          console.log(`[homeworkEval] School ${hw.school_id} AI blocked — skipping vision eval for ${row.id}`);
+          stats.overflow_skipped++;
+          continue;
+        }
         stats.photo_ai++;
         evalResult = await evaluatePhotoAnswer(
           hw.class_name,
@@ -777,7 +853,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
       } else if (hasText) {
         const text = row.submission_text!.trim();
 
-        // ── Numerical shortcut ─────────────────────────────────────────────────
+        // ── Numerical shortcut (zero cost — always runs even when blocked) ─────
         if (
           hw.subject_type === 'numerical' &&
           hw.reference_answer?.trim() &&
@@ -787,7 +863,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
           stats.numerical++;
           evalResult = evaluateNumerical(text, hw.reference_answer!);
         } else {
-          // ── Cache check ──────────────────────────────────────────────────────
+          // ── Cache check (zero cost — always runs even when blocked) ──────────
           const qHash = buildQuestionHash(question, hw.reference_answer);
           const aHash = buildAnswerHash(text);
 
@@ -804,7 +880,16 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
             await recordCacheHit(qHash, aHash);
             addCost(hw.school_id, 'cache');
           } else {
-            // ── AI evaluation ────────────────────────────────────────────────
+            // ── AI evaluation — only if school is not blocked ────────────────
+            if (schoolBlocked) {
+              await supabaseAdmin
+                .from('homework_submissions')
+                .update({ status: 'submitted' })
+                .eq('id', row.id);
+              console.log(`[homeworkEval] School ${hw.school_id} AI blocked — skipping text eval for ${row.id}`);
+              stats.overflow_skipped++;
+              continue;
+            }
             stats.typed_ai++;
             evalResult = await evaluateTypedAnswer(
               hw.class_name,

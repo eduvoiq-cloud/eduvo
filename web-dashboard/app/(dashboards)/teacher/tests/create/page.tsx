@@ -114,7 +114,6 @@ const EXAM_TYPE_LABELS: Record<ExamTypeValue, string> = {
   project: 'Project',
 };
 
-const BOARDS = ['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE'] as const;
 const LANGUAGES = ['English', 'Gujarati', 'Hindi', 'Marathi', 'Bengali', 'Tamil', 'Telugu', 'Kannada', 'Punjabi', 'Sanskrit'] as const;
 
 function getTodayDateString() {
@@ -445,7 +444,6 @@ const LS_TERM_KEY        = 'eduvo_last_term';
 const LS_EXAM_TYPE_KEY   = 'eduvo_last_exam_type';
 const LS_START_TIME_KEY  = 'eduvo_last_start_time';
 const LS_END_TIME_KEY    = 'eduvo_last_end_time';
-const LS_BOARD_KEY       = 'eduvo_last_board';
 
 function readLS(key: string): string {
   try { return localStorage.getItem(key) ?? ''; } catch { return ''; }
@@ -513,7 +511,9 @@ function fuzzyMatchSubject(assignedName: string, librarySubjects: string[]): str
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function CreateTestPage() {
-  const { user } = useAuth();
+  const { user, schools, activeSchoolId } = useAuth();
+  const activeSchool = schools?.find((s) => s.id === activeSchoolId);
+  const schoolBoard = activeSchool?.board ?? 'GSEB';
   const router = useRouter();
 
   // Step state
@@ -525,7 +525,6 @@ export default function CreateTestPage() {
     const lastExamType  = readLS(LS_EXAM_TYPE_KEY) as ExamTypeValue | '';
     const lastStartTime = readLS(LS_START_TIME_KEY);
     const lastEndTime   = readLS(LS_END_TIME_KEY);
-    const lastBoard     = readLS(LS_BOARD_KEY);
     return {
       ...EMPTY_DETAILS,
       term:       lastTerm     || EMPTY_DETAILS.term,
@@ -534,9 +533,6 @@ export default function CreateTestPage() {
                     : EMPTY_DETAILS.exam_type,
       start_time: lastStartTime || EMPTY_DETAILS.start_time,
       end_time:   lastEndTime   || EMPTY_DETAILS.end_time,
-      board:      (lastBoard && (BOARDS as readonly string[]).includes(lastBoard))
-                    ? lastBoard
-                    : EMPTY_DETAILS.board,
     };
   });
   const [detailsError, setDetailsError] = useState('');
@@ -546,7 +542,13 @@ export default function CreateTestPage() {
   useEffect(() => { if (details.exam_type)  writeLS(LS_EXAM_TYPE_KEY,  details.exam_type); }, [details.exam_type]);
   useEffect(() => {                          writeLS(LS_START_TIME_KEY, details.start_time); }, [details.start_time]);
   useEffect(() => {                          writeLS(LS_END_TIME_KEY,   details.end_time);   }, [details.end_time]);
-  useEffect(() => { if (details.board)      writeLS(LS_BOARD_KEY,      details.board);      }, [details.board]);
+
+  // Set board from the active school's board setting
+  useEffect(() => {
+    if (schoolBoard) {
+      setDetails((prev) => ({ ...prev, board: schoolBoard }));
+    }
+  }, [schoolBoard]);
 
   // Step 2 — questions
   const [questions, setQuestions] = useState<QuestionDraft[]>([]);
@@ -1385,32 +1387,7 @@ export default function CreateTestPage() {
               {/* ── Extra metadata ───────────────────────────────────────── */}
               <div className="border-t border-gray-100 pt-3 mt-1">
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Curriculum &amp; Language</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <FormField label="Board" htmlFor="d-board">
-                    <select id="d-board" className={inputClass} value={details.board}
-                      onChange={(e) => {
-                        const b = e.target.value;
-                        setDetails((d) => ({ ...d, board: b }));
-                        // Keep the chapter library board in sync so chapters
-                        // are fetched for the correct board.
-                        setLibSelection({
-                          board: b,
-                          subject: '',
-                          chapterId: '',
-                          chapterNumber: 0,
-                          chapterName: '',
-                          allTopics: [],
-                          checkedTopics: new Set(),
-                          customTopicChecked: false,
-                          customTopicText: '',
-                        });
-                        setLibSubjects([]);
-                        setLibChapters([]);
-                        if (details.class_name) fetchLibSubjects(b, details.class_name);
-                      }}>
-                      {BOARDS.map((b) => <option key={b} value={b}>{b}</option>)}
-                    </select>
-                  </FormField>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField label="Chapter / Unit" htmlFor="d-chapter">
                     <input id="d-chapter" type="text" className={inputClass} placeholder="e.g. Chapter 3 (optional)"
                       value={details.chapter} onChange={(e) => setDetails((d) => ({ ...d, chapter: e.target.value }))} />

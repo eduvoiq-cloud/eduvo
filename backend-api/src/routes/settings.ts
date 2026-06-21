@@ -4,6 +4,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
+import { logAudit } from '../utils/audit';
 
 const router = Router();
 
@@ -18,11 +19,19 @@ const upsertSettingsSchema = z.object({
   academic_year: z.string().max(20).optional(),
 });
 
+const profileSchema = z.object({
+  board: z.enum(['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE']).optional(),
+  result_template: z.enum(['percentage', 'grade', 'gseb', 'cbse']).optional(),
+  display_name: z.string().min(1).max(200).optional(),
+  display_address: z.string().max(500).optional(),
+});
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 /**
  * GET /api/settings
- * Returns settings for the authenticated user's school.
+ * Returns settings for the authenticated user's school,
+ * including board, result_template, name, and address from the schools table.
  */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const school_id = req.user!.school_id;
@@ -32,24 +41,53 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
     return;
   }
 
-  const { data, error } = await supabaseAdmin
+  // Fetch school_settings row (may not exist yet)
+  const { data: settingsData, error: settingsError } = await supabaseAdmin
     .from('school_settings')
     .select('*')
     .eq('school_id', school_id)
     .single();
 
-  if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
-    sendError(res, error.message, 500);
+  if (settingsError && settingsError.code !== 'PGRST116') { // PGRST116 = no rows found
+    sendError(res, settingsError.message, 500);
     return;
   }
 
-  // Return defaults if no settings row exists yet
-  sendSuccess(res, data ?? {
+  // Fetch board, result_template, name, address from schools table
+  const { data: schoolData, error: schoolError } = await supabaseAdmin
+    .from('schools')
+    .select('board, result_template, name, address')
+    .eq('id', school_id)
+    .single();
+
+  if (schoolError) {
+    sendError(res, schoolError.message, 500);
+    return;
+  }
+
+  // Return defaults if no settings row exists yet, merged with school profile fields
+  const baseSettings = settingsData ?? {
     school_id,
     attendance_cutoff_time: '09:00',
     timezone: 'UTC',
     term_name: '',
     academic_year: '',
+  };
+
+  // display_name / display_address (in school_settings) take precedence over
+  // schools.name / schools.address, so a school admin's edits are always
+  // reflected back in the GET response.
+  const resolvedName    = (settingsData as Record<string, unknown> | null)?.display_name    as string | null
+                          ?? schoolData?.name    ?? null;
+  const resolvedAddress = (settingsData as Record<string, unknown> | null)?.display_address as string | null
+                          ?? schoolData?.address ?? null;
+
+  sendSuccess(res, {
+    ...baseSettings,
+    board:           schoolData?.board           ?? null,
+    result_template: schoolData?.result_template ?? null,
+    name:            resolvedName,
+    address:         resolvedAddress,
   });
 });
 
@@ -195,6 +233,69 @@ router.post('/add-medium', requireRole('schooladmin'), async (req: Request, res:
   });
 
   sendSuccess(res, newSchool, `${newMedium.charAt(0).toUpperCase() + newMedium.slice(1)} medium account created successfully`, 201);
+});
+
+// ── PUT /api/settings/profile ─────────────────────────────────────────────────
+/**
+ * Updates the school profile fields (board, result_template, display_name, display_address).
+ * - board and result_template are stored on the schools table
+ * - display_name and display_address are stored on the school_settings table
+ */
+router.put('/profile', requireRole('schooladmin'), async (req: Request, res: Response) => {
+  const parsed = profileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendValidationError(res, parsed.error.flatten());
+    return;
+  }
+
+  const activeSchoolId = req.user!.school_id;
+  if (!activeSchoolId) {
+    sendError(res, 'No school associated with this account', 400);
+    return;
+  }
+
+  const { board, result_template, display_name, display_address } = parsed.data;
+  const changedFields: Record<string, unknown> = {};
+
+  // ── Update schools table if board or result_template provided ──────────────
+  if (board !== undefined || result_template !== undefined) {
+    const schoolUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (board !== undefined)            { schoolUpdate.board = board;                       changedFields.board = board; }
+    if (result_template !== undefined)  { schoolUpdate.result_template = result_template;   changedFields.result_template = result_template; }
+
+    const { error: schoolErr } = await supabaseAdmin
+      .from('schools')
+      .update(schoolUpdate)
+      .eq('id', activeSchoolId);
+
+    if (schoolErr) {
+      sendError(res, schoolErr.message, 500);
+      return;
+    }
+  }
+
+  // ── Upsert school_settings if display_name or display_address provided ─────
+  if (display_name !== undefined || display_address !== undefined) {
+    const settingsUpsert: Record<string, unknown> = { school_id: activeSchoolId };
+    if (display_name !== undefined)    { settingsUpsert.display_name = display_name;       changedFields.display_name = display_name; }
+    if (display_address !== undefined) { settingsUpsert.display_address = display_address; changedFields.display_address = display_address; }
+
+    const { error: settingsErr } = await supabaseAdmin
+      .from('school_settings')
+      .upsert(settingsUpsert, { onConflict: 'school_id' });
+
+    if (settingsErr) {
+      sendError(res, settingsErr.message, 500);
+      return;
+    }
+  }
+
+  await logAudit(req.user!.id, 'SCHOOL_PROFILE_UPDATED', {
+    school_id:      activeSchoolId,
+    changed_fields: changedFields,
+  });
+
+  sendSuccess(res, changedFields, 'School profile updated');
 });
 
 export default router;

@@ -834,24 +834,25 @@ router.get('/me', authenticateAny, async (req: Request, res: Response) => {
   // ── Fetch accessible schools (for medium switcher) ────────────────────────
   // schooladmin: look up all schools they can access via school_admin_access.
   // Other roles: return single-item array with their own school (or empty if none).
-  let schools: { id: string; name: string; medium: string }[] = [];
+  let schools: { id: string; name: string; medium: string; board?: string | null }[] = [];
 
   if (p.role === 'schooladmin' && p.school_id) {
     const { data: accessRows } = await supabaseAdmin
       .from('school_admin_access')
-      .select('school_id, schools(id, name, medium)')
+      .select('school_id, schools(id, name, medium, board)')
       .eq('admin_id', p.id as string);
 
     if (accessRows && accessRows.length > 0) {
       schools = (accessRows as unknown as Array<{
         school_id: string;
-        schools: { id: string; name: string; medium: string } | null;
+        schools: { id: string; name: string; medium: string; board?: string | null } | null;
       }>)
         .filter((r) => r.schools)
         .map((r) => ({
           id: r.schools!.id,
           name: r.schools!.name,
           medium: r.schools!.medium ?? 'english',
+          board: (r.schools! as { board?: string | null }).board ?? null,
         }));
     }
 
@@ -859,7 +860,7 @@ router.get('/me', authenticateAny, async (req: Request, res: Response) => {
     if (schools.length === 0) {
       const { data: primarySchool } = await supabaseAdmin
         .from('schools')
-        .select('id, name, medium')
+        .select('id, name, medium, board')
         .eq('id', p.school_id as string)
         .maybeSingle();
       if (primarySchool) {
@@ -867,6 +868,7 @@ router.get('/me', authenticateAny, async (req: Request, res: Response) => {
           id: primarySchool.id,
           name: primarySchool.name,
           medium: (primarySchool as Record<string, unknown>).medium as string ?? 'english',
+          board: (primarySchool as Record<string, unknown>).board as string | null ?? null,
         }];
       }
     }

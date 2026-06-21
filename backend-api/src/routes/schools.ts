@@ -11,11 +11,16 @@ const router = Router();
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
 
+const BOARD_VALUES = ['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE'] as const;
+const RESULT_TEMPLATE_VALUES = ['percentage', 'grade', 'gseb', 'cbse'] as const;
+
 const createSchoolSchema = z.object({
   name: z.string().min(1).max(200),
   address: z.string().min(1).max(500),
   phone: z.string().regex(/^\+?[\d\s\-()]{7,20}$/, 'Invalid phone number format').optional(),
   email: z.string().email().max(254).optional(),
+  board: z.enum(BOARD_VALUES).optional().default('GSEB'),
+  result_template: z.enum(RESULT_TEMPLATE_VALUES).optional().default('percentage'),
 });
 
 const updateSchoolSchema = createSchoolSchema.partial().extend({

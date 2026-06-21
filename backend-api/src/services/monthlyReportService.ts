@@ -29,8 +29,9 @@ export interface StudentMonthlyData {
   weakTopics: string[];
   bestSubject: string | null;
   bestScore: number | null;
-  weakSubject: string | null;
+  weakSubject: string | null;   // single worst subject (for backward compat)
   weakScore: number | null;
+  weakSubjects: Array<{ subject: string; score: number }>; // ALL subjects below 70%, sorted worst-first
   // Homework
   homeworkAssigned: number;
   homeworkSubmitted: number;
@@ -50,8 +51,9 @@ export interface MonthlyReportContent {
     overall: string;
     best_subject: string | null;
     best_score: number | null;
-    weak_subject: string | null;
+    weak_subject: string | null;   // single worst subject (backward compat)
     weak_score: number | null;
+    weak_subjects: Array<{ subject: string; score: number }> | null; // ALL subjects below 70%
     attendance_pct: number;
     attendance_present: number;
     attendance_total: number;
@@ -199,6 +201,7 @@ export async function getStudentMonthlyData(
   let bestScore: number | null   = null;
   let weakSubject: string | null = null;
   let weakScore: number | null   = null;
+  const weakSubjects: Array<{ subject: string; score: number }> = [];
 
   for (const [subject, scores] of subjectScores.entries()) {
     if (scores.length < 2) continue;
@@ -211,14 +214,19 @@ export async function getStudentMonthlyData(
       bestSubject = subject;
     }
 
-    // Weak: lowest average below 70%
+    // Collect ALL subjects below 70%
     if (avg < 70) {
+      weakSubjects.push({ subject, score: avg });
+      // Weak (single worst): lowest average below 70%
       if (weakScore === null || avg < weakScore) {
         weakScore   = avg;
         weakSubject = subject;
       }
     }
   }
+
+  // Sort weak subjects worst-first
+  weakSubjects.sort((a, b) => a.score - b.score);
 
   // ── Attendance ────────────────────────────────────────────────────────────
   const attRows     = (attendanceRes.data ?? []) as Array<Record<string, unknown>>;
@@ -304,6 +312,7 @@ export async function getStudentMonthlyData(
     bestScore:  bestScore !== null ? Math.round(bestScore * 10) / 10 : null,
     weakSubject,
     weakScore:  weakScore !== null ? Math.round(weakScore * 10) / 10 : null,
+    weakSubjects: weakSubjects.map((w) => ({ subject: w.subject, score: Math.round(w.score * 10) / 10 })),
     homeworkAssigned,
     homeworkSubmitted,
     homeworkNotSubmitted,
@@ -343,6 +352,11 @@ export async function generateMonthlyReport(
       ? `${data.weakSubject} (${data.weakScore}%)`
       : 'null (all subjects above 70%)';
 
+  const allWeakSubjectsStr =
+    data.weakSubjects.length > 0
+      ? data.weakSubjects.map((w) => `${w.subject} (${w.score}%)`).join(', ')
+      : 'none (all subjects ≥ 70%)';
+
   const suspiciousStr =
     data.suspiciousTestCount > 0
       ? `${data.suspiciousTestCount} test(s) flagged (reasons: ${data.suspiciousReasons.join(', ') || 'unspecified'})`
@@ -356,7 +370,8 @@ Month: ${monthLabel}
 Academic Data:
 - Subject scores: ${JSON.stringify(data.marksBySubject)}
 - Best subject: ${bestSubjectStr}
-- Weak subject: ${weakSubjectStr}
+- Worst subject: ${weakSubjectStr}
+- ALL subjects below 70% (need attention): ${allWeakSubjectsStr}
 - Attendance: ${data.attendancePresent}/${data.attendanceTotal} days (${data.attendancePct}%)
 - Study streak: ${data.currentStreak} days
 - Weak topics: ${weakTopicsStr}
@@ -372,6 +387,7 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
     "best_score": ${data.bestScore ?? 'null'},
     "weak_subject": "${data.weakSubject ?? 'null'}",
     "weak_score": ${data.weakScore ?? 'null'},
+    "weak_subjects": ${JSON.stringify(data.weakSubjects)},
     "attendance_pct": ${data.attendancePct},
     "attendance_present": ${data.attendancePresent},
     "attendance_total": ${data.attendanceTotal},
@@ -382,13 +398,15 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
     "suspicious_test_count": ${data.suspiciousTestCount},
     "tip": "one specific actionable tip for the parent (max 15 words)"
   },
-  "summary_en": "2-3 sentences in English covering marks, attendance, homework, tests, and any concerns. Warm but direct.",
+  "summary_en": "3-4 sentences in English. Cover overall performance, mention ALL subjects below 70% by name with their scores, attendance, homework completion, and any other concerns. Warm but direct.",
   "summary_hi": "same in Hindi (Devanagari script)",
   "summary_gu": "same in Gujarati (Gujarati script)"
 }
 
 Rules:
 - Be specific, not generic
+- ALWAYS mention every subject below 70% by name in summary_en/hi/gu — do not omit any weak subject
+- The overall field should reference the biggest concern (lowest scoring subject or most critical issue)
 - Mention homework non-submission if homeworkNotSubmitted > 0
 - Mention missed tests if testsMissed > 0
 - Mention suspicious activity if suspiciousTestCount > 0 — use the word "integrity concern" not "cheating"
@@ -407,6 +425,16 @@ Rules:
           best_score:           { type: 'number' as const },
           weak_subject:         { type: 'string' as const },
           weak_score:           { type: 'number' as const },
+          weak_subjects: {
+            type: 'array' as const,
+            items: {
+              type: 'object' as const,
+              properties: {
+                subject: { type: 'string' as const },
+                score:   { type: 'number' as const },
+              },
+            },
+          },
           attendance_pct:       { type: 'number' as const },
           attendance_present:   { type: 'number' as const },
           attendance_total:     { type: 'number' as const },
@@ -460,6 +488,8 @@ Rules:
     sl.weak_subject = null as unknown as string;
   if ((sl.best_score as unknown) === 'null') sl.best_score = null;
   if ((sl.weak_score as unknown) === 'null') sl.weak_score = null;
+  // Ensure weak_subjects is always an array
+  if (!Array.isArray(sl.weak_subjects)) sl.weak_subjects = null;
 
   return parsed;
 }
@@ -483,9 +513,18 @@ export function assembleWhatsAppMessage(
     `📚 Best Subject: ${sl.best_subject ?? 'N/A'} — ${sl.best_score ?? 'N/A'}%`,
   ];
 
-  // ⚠️ weak subject only if present
-  if (sl.weak_subject !== null && sl.weak_subject !== undefined) {
-    lines.push(`⚠️ Needs Attention: ${sl.weak_subject} — ${sl.weak_score}%`);
+  // ⚠️ List ALL weak subjects if available, fallback to single weak_subject
+  const weakList = sl.weak_subjects && sl.weak_subjects.length > 0
+    ? sl.weak_subjects
+    : (sl.weak_subject ? [{ subject: sl.weak_subject, score: sl.weak_score ?? 0 }] : []);
+
+  if (weakList.length === 1) {
+    lines.push(`⚠️ Needs Attention: ${weakList[0].subject} — ${weakList[0].score}%`);
+  } else if (weakList.length > 1) {
+    lines.push(`⚠️ Needs Attention (${weakList.length} subjects):`);
+    for (const w of weakList) {
+      lines.push(`   • ${w.subject} — ${w.score}%`);
+    }
   }
 
   lines.push(
@@ -629,6 +668,11 @@ function buildMonthlyPrompt(data: StudentMonthlyData, monthLabel: string): strin
       ? `${data.weakSubject} (${data.weakScore}%)`
       : 'null (all subjects above 70%)';
 
+  const allWeakSubjectsStr =
+    data.weakSubjects.length > 0
+      ? data.weakSubjects.map((w) => `${w.subject} (${w.score}%)`).join(', ')
+      : 'none (all subjects ≥ 70%)';
+
   const suspiciousStr =
     data.suspiciousTestCount > 0
       ? `${data.suspiciousTestCount} test(s) flagged (reasons: ${data.suspiciousReasons.join(', ') || 'unspecified'})`
@@ -642,7 +686,8 @@ Month: ${monthLabel}
 Academic Data:
 - Subject scores: ${JSON.stringify(data.marksBySubject)}
 - Best subject: ${bestSubjectStr}
-- Weak subject: ${weakSubjectStr}
+- Worst subject: ${weakSubjectStr}
+- ALL subjects below 70% (need attention): ${allWeakSubjectsStr}
 - Attendance: ${data.attendancePresent}/${data.attendanceTotal} days (${data.attendancePct}%)
 - Study streak: ${data.currentStreak} days
 - Weak topics: ${weakTopicsStr}
@@ -658,6 +703,7 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
     "best_score": ${data.bestScore ?? 'null'},
     "weak_subject": "${data.weakSubject ?? 'null'}",
     "weak_score": ${data.weakScore ?? 'null'},
+    "weak_subjects": ${JSON.stringify(data.weakSubjects)},
     "attendance_pct": ${data.attendancePct},
     "attendance_present": ${data.attendancePresent},
     "attendance_total": ${data.attendanceTotal},
@@ -668,13 +714,15 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
     "suspicious_test_count": ${data.suspiciousTestCount},
     "tip": "one specific actionable tip for the parent (max 15 words)"
   },
-  "summary_en": "2-3 sentences in English covering marks, attendance, homework, tests, and any concerns. Warm but direct.",
+  "summary_en": "3-4 sentences in English. Cover overall performance, mention ALL subjects below 70% by name with their scores, attendance, homework completion, and any other concerns. Warm but direct.",
   "summary_hi": "same in Hindi (Devanagari script)",
   "summary_gu": "same in Gujarati (Gujarati script)"
 }
 
 Rules:
 - Be specific, not generic
+- ALWAYS mention every subject below 70% by name in summary_en/hi/gu — do not omit any weak subject
+- The overall field should reference the biggest concern (lowest scoring subject or most critical issue)
 - Mention homework non-submission if homeworkNotSubmitted > 0
 - Mention missed tests if testsMissed > 0
 - Mention suspicious activity if suspiciousTestCount > 0 — use the word "integrity concern" not "cheating"
@@ -851,6 +899,7 @@ export async function checkGeminiBatch(batchJobId: string): Promise<{
           sl.weak_subject = null as unknown as string;
         if ((sl.best_score as unknown) === 'null') sl.best_score = null;
         if ((sl.weak_score as unknown) === 'null') sl.weak_score = null;
+        if (!Array.isArray(sl.weak_subjects)) sl.weak_subjects = null;
 
         results.push({ studentId, content: parsed });
       } catch (parseErr) {

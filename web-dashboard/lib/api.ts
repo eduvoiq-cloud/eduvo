@@ -48,6 +48,8 @@ export interface MediumSchool {
   id: string;
   name: string;
   medium: 'english' | 'gujarati';
+  /** Education board — available after Session 4 type update */
+  board?: string | null;
 }
 
 export interface LoginResponse {
@@ -145,6 +147,10 @@ export interface School {
   last_active_date?: string | null;
   created_at: string;
   updated_at?: string;
+  /** Education board the school follows (e.g. GSEB, CBSE, ICSE) */
+  board?: string;
+  /** Template used to generate result cards (e.g. percentage, grade, gseb, cbse) */
+  result_template?: string;
 }
 
 export interface SchoolAdmin {
@@ -194,6 +200,11 @@ export interface SchoolSettings {
   timezone: string;
   term_name: string;
   academic_year: string;
+  /** School profile fields — returned by GET /api/settings (joined from schools table) */
+  name?: string | null;
+  address?: string | null;
+  board?: string | null;
+  result_template?: string | null;
 }
 
 export interface Notification {
@@ -765,6 +776,22 @@ export const settingsApi = {
     request<{ id: string; name: string; medium: string; parent_school_id: string }>(
       '/api/settings/add-medium',
       { method: 'POST' },
+      token
+    ),
+
+  /** Update school profile: board, result_template, display_name, display_address */
+  updateProfile: (
+    token: string,
+    payload: {
+      board?: string;
+      result_template?: string;
+      display_name?: string;
+      display_address?: string;
+    }
+  ) =>
+    request<{ success: boolean }>(
+      '/api/settings/profile',
+      { method: 'PUT', body: JSON.stringify(payload) },
       token
     ),
 };

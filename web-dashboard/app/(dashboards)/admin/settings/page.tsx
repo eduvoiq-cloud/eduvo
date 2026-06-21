@@ -8,6 +8,29 @@ import { useAuth } from '@/context/AuthContext';
 import PageHeader from '@/components/PageHeader';
 import FormField, { inputClass } from '@/components/FormField';
 
+// ── School Profile constants ──────────────────────────────────────────────────
+
+const BOARDS = ['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE'] as const;
+
+const RESULT_FORMATS = [
+  { value: 'percentage', label: 'Percentage' },
+  { value: 'grade',      label: 'Grade'      },
+  { value: 'gseb',       label: 'GSEB'       },
+  { value: 'cbse',       label: 'CBSE'       },
+] as const;
+
+/** Maps a board to its recommended result template */
+function suggestTemplate(board: string): string | null {
+  switch (board) {
+    case 'GSEB':    return 'gseb';
+    case 'CBSE':    return 'cbse';
+    case 'ICSE':    return 'percentage';
+    case 'IB':
+    case 'IGCSE':   return 'grade';
+    default:        return 'percentage';
+  }
+}
+
 const TIMEZONES = [
   'UTC', 'Africa/Lagos', 'Africa/Nairobi', 'Africa/Accra', 'Africa/Cairo',
   'America/New_York', 'America/Chicago', 'America/Los_Angeles',
@@ -26,6 +49,9 @@ export default function SettingsPage() {
     return found?.name ?? '';
   })();
 
+  // ── Active school's board (from useAuth) for medium section conditional ──
+  const activeSchool = schools.find((s) => s.id === (activeSchoolId ?? user?.school_id));
+
   const [settings, setSettings] = useState<Partial<SchoolSettings>>({
     attendance_cutoff_time: '09:00',
     timezone: 'UTC',
@@ -36,6 +62,15 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+
+  // ── School Profile ────────────────────────────────────────────────────────
+  const [profileSchoolName, setProfileSchoolName] = useState('');
+  const [profileAddress, setProfileAddress] = useState('');
+  const [profileBoard, setProfileBoard] = useState('GSEB');
+  const [profileResultTemplate, setProfileResultTemplate] = useState('percentage');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState('');
+  const [profileError, setProfileError] = useState('');
 
   // ── Data export ───────────────────────────────────────────────────────────
   const [exporting, setExporting] = useState(false);
@@ -64,6 +99,11 @@ export default function SettingsPage() {
     try {
       const res = await settingsApi.get(token);
       setSettings(res.data);
+      // Pre-fill School Profile fields from the response
+      setProfileSchoolName(res.data.name ?? '');
+      setProfileAddress(res.data.address ?? '');
+      setProfileBoard(res.data.board ?? 'GSEB');
+      setProfileResultTemplate(res.data.result_template ?? 'percentage');
     } catch {
       // Use defaults if no settings exist yet
     } finally {
@@ -111,6 +151,30 @@ export default function SettingsPage() {
   function update(key: keyof SchoolSettings, value: string) {
     setSettings((s) => ({ ...s, [key]: value }));
     setSuccess('');
+  }
+
+  // ── Save Profile ──────────────────────────────────────────────────────────
+
+  async function handleSaveProfile(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileError('');
+    setProfileSuccess('');
+    const token = getToken();
+    if (!token) return;
+    setProfileSaving(true);
+    try {
+      await settingsApi.updateProfile(token, {
+        board: profileBoard,
+        result_template: profileResultTemplate,
+        display_name: profileSchoolName,
+        display_address: profileAddress || undefined,
+      });
+      setProfileSuccess('School profile saved successfully.');
+    } catch (e: unknown) {
+      setProfileError(e instanceof Error ? e.message : 'Failed to save profile');
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   // ── Export ────────────────────────────────────────────────────────────────
@@ -197,6 +261,15 @@ export default function SettingsPage() {
     }
   }
 
+  // Derive board for medium section conditional:
+  // prefer the active school's board from useAuth; fall back to settings.board
+  const activeBoardForMedium = activeSchool?.board ?? settings.board ?? null;
+  const isGsebSchool = activeBoardForMedium === 'GSEB';
+
+  // Suggestion for result template based on selected board
+  const templateSuggestion = suggestTemplate(profileBoard);
+  const showSuggestion = templateSuggestion !== null && templateSuggestion !== profileResultTemplate;
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -212,6 +285,133 @@ export default function SettingsPage() {
         </div>
       ) : (
         <>
+        {/* ── School Profile Section ─────────────────────────────────────── */}
+        <form onSubmit={handleSaveProfile} className="max-w-xl space-y-6 mb-8">
+
+          {/* Profile Feedback */}
+          {profileSuccess && (
+            <div className="px-4 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700 flex items-center gap-2">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              {profileSuccess}
+            </div>
+          )}
+          {profileError && (
+            <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{profileError}</div>
+          )}
+
+          <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-7 h-7 bg-emerald-50 rounded-lg flex items-center justify-center text-emerald-600">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                </svg>
+              </div>
+              <h2 className="text-sm font-semibold text-gray-900">School Profile</h2>
+            </div>
+
+            {/* Field 1: School Name */}
+            <FormField label="School Name" htmlFor="profile-name" required>
+              <input
+                id="profile-name"
+                type="text"
+                className={inputClass}
+                placeholder="e.g. Sunrise International School"
+                value={profileSchoolName}
+                onChange={(e) => { setProfileSchoolName(e.target.value); setProfileSuccess(''); }}
+                required
+              />
+            </FormField>
+
+            {/* Field 2: School Address */}
+            <FormField label="School Address" htmlFor="profile-address">
+              <textarea
+                id="profile-address"
+                className={`${inputClass} resize-none`}
+                rows={3}
+                placeholder="e.g. 123 Main Street, Ahmedabad, Gujarat 380001"
+                value={profileAddress}
+                onChange={(e) => { setProfileAddress(e.target.value); setProfileSuccess(''); }}
+              />
+            </FormField>
+
+            {/* Field 3: Board */}
+            <FormField label="Board" htmlFor="profile-board" required>
+              <select
+                id="profile-board"
+                className={inputClass}
+                value={profileBoard}
+                onChange={(e) => { setProfileBoard(e.target.value); setProfileSuccess(''); }}
+              >
+                {BOARDS.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+            </FormField>
+
+            {/* Field 4: Result Format */}
+            <FormField label="Result Format" htmlFor="profile-result-format" required>
+              <select
+                id="profile-result-format"
+                className={inputClass}
+                value={profileResultTemplate}
+                onChange={(e) => { setProfileResultTemplate(e.target.value); setProfileSuccess(''); }}
+              >
+                {RESULT_FORMATS.map((rf) => (
+                  <option key={rf.value} value={rf.value}>{rf.label}</option>
+                ))}
+              </select>
+              {/* Suggestion helper text */}
+              {showSuggestion && (
+                <div className="mt-2 flex items-center gap-3">
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 flex-1">
+                    Recommended for {profileBoard}: <strong>{RESULT_FORMATS.find((r) => r.value === templateSuggestion)?.label ?? templateSuggestion}</strong>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setProfileResultTemplate(templateSuggestion!); setProfileSuccess(''); }}
+                    className="text-xs text-amber-700 hover:text-amber-900 font-medium underline underline-offset-2 shrink-0"
+                  >
+                    Apply suggestion
+                  </button>
+                </div>
+              )}
+            </FormField>
+          </section>
+
+          {/* Save Profile button */}
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              disabled={profileSaving}
+              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {profileSaving ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Save Profile
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Medium info line */}
+          <p className="text-xs text-gray-500 -mt-2">
+            {isGsebSchool
+              ? 'Medium management is available for GSEB schools.'
+              : 'This board uses English medium only. Medium management is not applicable.'}
+          </p>
+        </form>
+
         <form onSubmit={handleSave} className="max-w-xl space-y-6">
 
           {/* Feedback */}
@@ -333,6 +533,7 @@ export default function SettingsPage() {
         </form>
 
         <div className="max-w-xl mt-8 space-y-4">
+          {isGsebSchool && (
           <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
             <div className="flex items-center gap-2 mb-1">
               <div className="w-7 h-7 bg-indigo-50 rounded-lg flex items-center justify-center text-indigo-600">
@@ -401,6 +602,7 @@ export default function SettingsPage() {
               </div>
             )}
           </section>
+          )} {/* end isGsebSchool conditional */}
 
           <section className="bg-white rounded-xl border border-gray-200 p-6 space-y-5">
             <div className="flex items-center gap-2 mb-1">

@@ -9,6 +9,7 @@ import {
   usersApi,
   studentsApi,
   assignmentsApi,
+  settingsApi,
   type OnboardingProgress,
   type Teacher,
   type TeacherAssignment,
@@ -32,10 +33,42 @@ const EMPTY_ASSIGN: AssignForm = {
   subject: '',
 };
 
+type BoardOption =
+  | 'GSEB' | 'CBSE' | 'ICSE' | 'MSBSHSE'
+  | 'RBSE' | 'BSEB' | 'MPBSE' | 'IB' | 'IGCSE';
+
+type MediumOption = 'english_only' | 'gujarati_only' | 'both';
+type ResultTemplate = 'percentage' | 'grade' | 'gseb' | 'cbse';
+
+const BOARD_OPTIONS: { value: BoardOption; label: string }[] = [
+  { value: 'GSEB',    label: 'GSEB (Gujarat State Board)' },
+  { value: 'CBSE',    label: 'CBSE (Central Board)' },
+  { value: 'ICSE',    label: 'ICSE' },
+  { value: 'MSBSHSE', label: 'MSBSHSE (Maharashtra Board)' },
+  { value: 'RBSE',    label: 'RBSE (Rajasthan Board)' },
+  { value: 'BSEB',    label: 'BSEB (Bihar Board)' },
+  { value: 'MPBSE',   label: 'MPBSE (MP Board)' },
+  { value: 'IB',      label: 'IB (International Baccalaureate)' },
+  { value: 'IGCSE',   label: 'IGCSE (Cambridge)' },
+];
+
+const RESULT_TEMPLATE_OPTIONS: { value: ResultTemplate; label: string }[] = [
+  { value: 'percentage', label: 'Percentage (0-100%)' },
+  { value: 'grade',      label: 'Grade (A/B/C/D)' },
+  { value: 'gseb',       label: 'GSEB Style (AA/A/B+/B/C/D)' },
+  { value: 'cbse',       label: 'CBSE Style (A1/A2/B1/B2...)' },
+];
+
+function suggestResultTemplate(board: BoardOption): ResultTemplate {
+  if (board === 'GSEB') return 'gseb';
+  if (board === 'CBSE') return 'cbse';
+  return 'percentage';
+}
+
 // ── Step config ───────────────────────────────────────────────────────────────
 
 const STEPS = [
-  { key: 'school_created', label: 'School Created ✓' },
+  { key: 'school_created', label: 'School Profile' },
   { key: 'teachers_imported', label: 'Import Your Teachers' },
   { key: 'students_imported', label: 'Import Your Students' },
   { key: 'teachers_assigned', label: 'Assign Teachers to Classes' },
@@ -45,7 +78,7 @@ const STEPS = [
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function OnboardingPage() {
-  const { user } = useAuth();
+  const { user, schools, activeSchoolId, refreshSchools } = useAuth();
   const router = useRouter();
 
   const [progress, setProgress] = useState<OnboardingProgress | null>(null);
@@ -65,6 +98,35 @@ export default function OnboardingPage() {
 
   // Mark-complete loading state
   const [markingComplete, setMarkingComplete] = useState(false);
+
+  // ── Step 1 — School Profile form state ───────────────────────────────────
+
+  const activeSchool = schools.find((s) => s.id === activeSchoolId) ?? schools[0] ?? null;
+
+  const [profileBoard, setProfileBoard] = useState<BoardOption>('GSEB');
+  const [profileMedium, setProfileMedium] = useState<MediumOption>('english_only');
+  const [profileResultTemplate, setProfileResultTemplate] = useState<ResultTemplate>('gseb');
+  const [profileSchoolName, setProfileSchoolName] = useState('');
+  const [profileAddress, setProfileAddress] = useState('');
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileFieldErrors, setProfileFieldErrors] = useState<{ board?: string; schoolName?: string }>({});
+
+  // Pre-fill school name from auth context once available
+  useEffect(() => {
+    if (activeSchool && !profileSchoolName) {
+      setProfileSchoolName(activeSchool.name ?? '');
+    }
+  }, [activeSchool]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-suggest result template when board changes
+  useEffect(() => {
+    setProfileResultTemplate(suggestResultTemplate(profileBoard));
+    // Reset medium to default when switching away from GSEB
+    if (profileBoard !== 'GSEB') {
+      setProfileMedium('english_only');
+    }
+  }, [profileBoard]);
 
   // ── Fetch onboarding status ───────────────────────────────────────────────
 
@@ -164,6 +226,51 @@ export default function OnboardingPage() {
     if (!progress.students_imported) return 2;
     if (!progress.teachers_assigned) return 3;
     return 4;
+  }
+
+  // ── Submit School Profile (Step 1) ───────────────────────────────────────
+
+  async function handleProfileSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileError('');
+    const fieldErrors: typeof profileFieldErrors = {};
+
+    if (!profileBoard) fieldErrors.board = 'Board is required.';
+    if (!profileSchoolName.trim()) fieldErrors.schoolName = 'School name is required.';
+
+    if (Object.keys(fieldErrors).length > 0) {
+      setProfileFieldErrors(fieldErrors);
+      return;
+    }
+    setProfileFieldErrors({});
+
+    const token = getToken();
+    if (!token) return;
+
+    setProfileSubmitting(true);
+    try {
+      // 1. Update school profile
+      await settingsApi.updateProfile(token, {
+        board: profileBoard,
+        result_template: profileResultTemplate,
+        display_name: profileSchoolName.trim(),
+        display_address: profileAddress.trim() || undefined,
+      });
+
+      // 2. If GSEB + both mediums, create the sibling school
+      if (profileBoard === 'GSEB' && profileMedium === 'both') {
+        await settingsApi.addMedium(token);
+        await refreshSchools();
+      }
+
+      // 3. Mark step complete
+      const stepRes = await onboardingApi.updateStep(token, 'school_created', true);
+      setProgress(stepRes.data);
+    } catch (err: unknown) {
+      setProfileError(err instanceof Error ? err.message : 'Failed to save school profile. Please try again.');
+    } finally {
+      setProfileSubmitting(false);
+    }
   }
 
   // ── Add assignment (Step 4 inline form) ───────────────────────────────────
@@ -297,11 +404,136 @@ export default function OnboardingPage() {
                 isCurrent={isCurrent}
                 isFuture={isFuture}
               >
-                {/* Step 1 — School Created */}
+                {/* Step 1 — School Profile */}
                 {step.key === 'school_created' && (
-                  <p className="text-sm text-green-700 font-medium">
-                    Your school account is active and ready.
-                  </p>
+                  <div>
+                    {isCompleted ? (
+                      <p className="text-sm text-green-700 font-medium">
+                        School profile saved.
+                      </p>
+                    ) : (
+                      <form onSubmit={handleProfileSubmit} className="space-y-4">
+                        {profileError && (
+                          <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                            {profileError}
+                          </div>
+                        )}
+
+                        {/* Board */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Board <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            className={inputClass}
+                            value={profileBoard}
+                            onChange={(e) => setProfileBoard(e.target.value as BoardOption)}
+                          >
+                            {BOARD_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                          {profileFieldErrors.board && (
+                            <p className="mt-1 text-xs text-red-600">{profileFieldErrors.board}</p>
+                          )}
+                        </div>
+
+                        {/* Medium — GSEB only */}
+                        {profileBoard === 'GSEB' && (
+                          <div>
+                            <label className="block text-xs font-medium text-gray-700 mb-2">
+                              Medium
+                            </label>
+                            <div className="space-y-2">
+                              {(
+                                [
+                                  { value: 'english_only',  label: 'English Medium Only' },
+                                  { value: 'gujarati_only', label: 'Gujarati Medium Only' },
+                                  { value: 'both',          label: 'Both English & Gujarati Medium' },
+                                ] as { value: MediumOption; label: string }[]
+                              ).map((opt) => (
+                                <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="radio"
+                                    name="medium"
+                                    value={opt.value}
+                                    checked={profileMedium === opt.value}
+                                    onChange={() => setProfileMedium(opt.value)}
+                                    className="text-blue-600"
+                                  />
+                                  <span className="text-sm text-gray-700">{opt.label}</span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Result Format */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            Result Format
+                          </label>
+                          <select
+                            className={inputClass}
+                            value={profileResultTemplate}
+                            onChange={(e) =>
+                              setProfileResultTemplate(e.target.value as ResultTemplate)
+                            }
+                          >
+                            {RESULT_TEMPLATE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* School Name */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            School Name <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            className={inputClass}
+                            value={profileSchoolName}
+                            onChange={(e) => setProfileSchoolName(e.target.value)}
+                            placeholder="e.g. Sunrise Public School"
+                          />
+                          {profileFieldErrors.schoolName && (
+                            <p className="mt-1 text-xs text-red-600">
+                              {profileFieldErrors.schoolName}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Address */}
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">
+                            School Address
+                          </label>
+                          <textarea
+                            className={`${inputClass} resize-none`}
+                            rows={3}
+                            value={profileAddress}
+                            onChange={(e) => setProfileAddress(e.target.value)}
+                            placeholder="e.g. 123 Main Road, Ahmedabad, Gujarat"
+                          />
+                        </div>
+
+                        {/* Submit */}
+                        <button
+                          type="submit"
+                          disabled={profileSubmitting}
+                          className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-sm font-medium rounded-lg transition-colors"
+                        >
+                          {profileSubmitting ? 'Saving…' : 'Save & Continue'}
+                        </button>
+                      </form>
+                    )}
+                  </div>
                 )}
 
                 {/* Step 2 — Import Teachers */}

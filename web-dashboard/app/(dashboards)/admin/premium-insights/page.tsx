@@ -26,8 +26,9 @@ interface ReportStructuredLines {
   overall: string;
   best_subject: string | null;
   best_score: number | null;
-  weak_subject: string | null;
+  weak_subject: string | null;   // single worst subject (backward compat)
   weak_score: number | null;
+  weak_subjects: Array<{ subject: string; score: number }> | null; // ALL subjects below 70%
   attendance_pct: number;
   attendance_present: number;
   attendance_total: number;
@@ -141,9 +142,37 @@ function PastReportCard({ report }: { report: MonthlyReport }) {
               <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
                 <span>📅 Attendance: <strong>{sl.attendance_pct}%</strong> ({sl.attendance_present}/{sl.attendance_total})</span>
                 {sl.best_subject && <span>🏆 Best: <strong>{sl.best_subject} ({sl.best_score}%)</strong></span>}
-                {sl.weak_subject && <span>⚠️ Weak: <strong>{sl.weak_subject} ({sl.weak_score}%)</strong></span>}
+                {sl.homework_assigned > 0 && (
+                  <span>
+                    📝 Homework: <strong>{sl.homework_submitted}/{sl.homework_assigned}</strong>
+                    {sl.homework_assigned - sl.homework_submitted > 0 && (
+                      <span className="text-orange-500"> ({sl.homework_assigned - sl.homework_submitted} pending)</span>
+                    )}
+                  </span>
+                )}
+                {sl.tests_missed > 0 && <span>📋 Tests missed: <strong>{sl.tests_missed}</strong></span>}
                 {sl.streak_days > 0 && <span>🔥 Streak: <strong>{sl.streak_days} days</strong></span>}
               </div>
+              {/* Weak subjects */}
+              {(() => {
+                const weakList: Array<{ subject: string; score: number }> =
+                  sl.weak_subjects && sl.weak_subjects.length > 0
+                    ? sl.weak_subjects
+                    : sl.weak_subject
+                    ? [{ subject: sl.weak_subject, score: sl.weak_score ?? 0 }]
+                    : [];
+                if (weakList.length === 0) return null;
+                return (
+                  <div className="flex flex-wrap gap-1">
+                    <span className="text-xs text-red-500 font-medium mr-1">⚠️ Weak:</span>
+                    {weakList.map((w) => (
+                      <span key={w.subject} className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
+                        {w.subject} {w.score}%
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
             </>
           ) : (
             <p className="text-sm text-gray-500 italic">No report data available.</p>
@@ -443,15 +472,47 @@ export default function PremiumInsightsPage() {
                           </div>
                         )}
 
-                        {sl.weak_subject && (
-                          <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3">
-                            <p className="text-xs text-red-500 mb-1">⚠️ Needs Attention</p>
-                            <p className="text-lg font-bold text-red-700">{sl.weak_subject}</p>
-                            <p className="text-xs text-red-400">{sl.weak_score}%</p>
-                          </div>
-                        )}
+                        {(() => {
+                          // Show ALL weak subjects — use weak_subjects array if available, fallback to single
+                          const weakList: Array<{ subject: string; score: number }> =
+                            sl.weak_subjects && sl.weak_subjects.length > 0
+                              ? sl.weak_subjects
+                              : sl.weak_subject
+                              ? [{ subject: sl.weak_subject, score: sl.weak_score ?? 0 }]
+                              : [];
 
-                        {sl.homework_assigned > 0 && (
+                          if (weakList.length === 0) return null;
+
+                          if (weakList.length === 1) {
+                            return (
+                              <div className="rounded-xl bg-red-50 border border-red-100 px-4 py-3">
+                                <p className="text-xs text-red-500 mb-1">⚠️ Needs Attention</p>
+                                <p className="text-lg font-bold text-red-700">{weakList[0].subject}</p>
+                                <p className="text-xs text-red-400">{weakList[0].score}%</p>
+                              </div>
+                            );
+                          }
+
+                          // Multiple weak subjects — render a wider combined card
+                          return (
+                            <div className="col-span-2 rounded-xl bg-red-50 border border-red-100 px-4 py-3">
+                              <p className="text-xs text-red-500 mb-2">⚠️ Needs Attention ({weakList.length} subjects below 70%)</p>
+                              <div className="flex flex-wrap gap-2">
+                                {weakList.map((w) => (
+                                  <span
+                                    key={w.subject}
+                                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-red-100 border border-red-200 text-sm font-bold text-red-700"
+                                  >
+                                    {w.subject}
+                                    <span className="text-xs font-normal text-red-500 ml-1">{w.score}%</span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {sl.homework_assigned > 0 ? (
                           <div className={`rounded-xl border px-4 py-3 ${
                             sl.homework_assigned - sl.homework_submitted > 0
                               ? 'bg-orange-50 border-orange-100'
@@ -468,6 +529,11 @@ export default function PremiumInsightsPage() {
                                 ? `${sl.homework_assigned - sl.homework_submitted} not submitted`
                                 : 'all submitted'}
                             </p>
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3">
+                            <p className="text-xs text-gray-400 mb-1">📝 Homework</p>
+                            <p className="text-sm font-medium text-gray-400">None assigned</p>
                           </div>
                         )}
 
