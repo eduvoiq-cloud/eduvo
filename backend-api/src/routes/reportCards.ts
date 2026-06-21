@@ -300,7 +300,7 @@ router.get(
     // Get the generator's name if cards exist
     let generatedByName: string | null = null;
     if (cards.length > 0) {
-      const firstCard = cards[0] as { generated_by: string | null };
+      const firstCard = cards[0] as unknown as { generated_by: string | null };
       if (firstCard.generated_by) {
         const { data: userRow } = await supabaseAdmin
           .from('users')
@@ -314,10 +314,10 @@ router.get(
     sendSuccess(res, {
       exists: cards.length > 0,
       count: cards.length,
-      generated_at: cards.length > 0 ? (cards[0] as { generated_at: string }).generated_at : null,
+      generated_at: cards.length > 0 ? (cards[0] as unknown as { generated_at: string }).generated_at : null,
       generated_by_name: generatedByName,
       cards: cards.map((c) => {
-        const card = c as {
+        const card = c as unknown as {
           id: string;
           student_id: string;
           grand_total: number;
@@ -325,7 +325,7 @@ router.get(
           percentage: number;
           grade: string;
           generated_at: string;
-          students: { full_name: string; roll_number: string | null };
+          students: { full_name: string; roll_number: string | null; school_id: string; class_name: string; section: string };
         };
         return {
           id: card.id,
@@ -382,7 +382,7 @@ router.post(
       sendDbError(res, schoolErr ?? new Error('School not found'), 'reportCards POST /generate school');
       return;
     }
-    const school = schoolData as SchoolRow;
+    const school = schoolData as unknown as SchoolRow;
 
     // ── Fetch class admin teacher name ────────────────────────────────────────
     const { data: teacherData } = await supabaseAdmin
@@ -408,7 +408,7 @@ router.post(
       return;
     }
 
-    const students = (studentsData ?? []) as StudentRow[];
+    const students = (studentsData ?? []) as unknown as StudentRow[];
 
     if (students.length === 0) {
       sendError(res, 'No students found for this class and section', 404);
@@ -439,7 +439,7 @@ router.post(
 
     // Group marks by student_id
     const marksByStudent = new Map<string, MarkRow[]>();
-    for (const mark of (allMarks ?? []) as (MarkRow & { student_id: string })[]) {
+    for (const mark of (allMarks ?? []) as unknown as (MarkRow & { student_id: string })[]) {
       const existing = marksByStudent.get(mark.student_id) ?? [];
       existing.push({ subject: mark.subject, score: mark.score, max_score: mark.max_score });
       marksByStudent.set(mark.student_id, existing);
@@ -567,7 +567,7 @@ router.post(
 
         const parentIds: string[] = [];
         if (parentRows) {
-          for (const row of parentRows as Array<{ id: string; full_name: string; parent_id: string | null }>) {
+          for (const row of parentRows as unknown as Array<{ id: string; full_name: string; parent_id: string | null }>) {
             // In-app notification for the parent
             if (row.parent_id) {
               parentIds.push(row.parent_id);
