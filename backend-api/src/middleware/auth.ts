@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { supabase, supabaseAdmin } from '../config/supabase';
 import { sendError } from '../utils/response';
 import redis from '../config/redis';
@@ -96,6 +97,47 @@ export async function invalidateAuthCache(token: string): Promise<void> {
     await redis.del(`${CACHE_PREFIX_STUDENT}${token}`);
   } catch {
     // Non-fatal
+  }
+}
+
+// ── Student token blocklist (revocation) ──────────────────────────────────────
+//
+// Student JWTs are stateless (no Supabase session to invalidate), so we
+// maintain a Redis blocklist. Blocked tokens are rejected by authenticateStudent
+// before profile lookup — effectively revoking them server-side.
+//
+// TTL matches the token lifetime (7 days) so the blocklist entry expires
+// automatically when the token itself would have expired anyway.
+
+const BLOCKLIST_PREFIX = 'auth:blocked:';
+const STUDENT_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+
+/**
+ * Add a student JWT to the revocation blocklist.
+ * No-op when Redis is unavailable (graceful degradation).
+ */
+export async function blockStudentToken(token: string): Promise<void> {
+  if (!redis) return;
+  try {
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    await redis.setex(`${BLOCKLIST_PREFIX}${hash}`, STUDENT_TOKEN_TTL_SECONDS, '1');
+  } catch {
+    // Non-fatal — token blocklist is defence-in-depth; worst case it expires naturally
+  }
+}
+
+/**
+ * Check whether a student JWT has been revoked.
+ * Returns false when Redis is unavailable (fails open — prefer availability).
+ */
+async function isStudentTokenBlocked(token: string): Promise<boolean> {
+  if (!redis) return false;
+  try {
+    const hash = crypto.createHash('sha256').update(token).digest('hex');
+    const val = await redis.get(`${BLOCKLIST_PREFIX}${hash}`);
+    return val === '1';
+  } catch {
+    return false;
   }
 }
 
@@ -390,6 +432,12 @@ export async function authenticateStudent(
 
   if (payload.type !== 'student') {
     sendError(res, 'Staff tokens cannot access student routes', 403);
+    return;
+  }
+
+  // Check revocation blocklist before hitting the DB/cache
+  if (await isStudentTokenBlocked(token)) {
+    sendError(res, 'Token has been revoked. Please log in again.', 401);
     return;
   }
 

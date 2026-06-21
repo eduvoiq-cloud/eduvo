@@ -93,7 +93,11 @@ router.get('/students', async (req: Request, res: Response) => {
   }
 
   if (search) {
-    query = query.or(`full_name.ilike.%${search}%,roll_number.ilike.%${search}%`);
+    // Escape PostgREST/LIKE special characters to prevent filter misparse.
+    // % and _ are LIKE wildcards; \ is the escape char; , and . can break
+    // PostgREST's or() argument parsing; () could inject extra filter clauses.
+    const safeSearch = search.replace(/[\\%_,.()']/g, (c) => `\\${c}`);
+    query = query.or(`full_name.ilike.%${safeSearch}%,roll_number.ilike.%${safeSearch}%`);
   }
   if (class_name) query = query.ilike('class_name', class_name.trim());
   if (section)    query = query.ilike('section', section.trim());
