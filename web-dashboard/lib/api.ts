@@ -149,6 +149,10 @@ export interface School {
   updated_at?: string;
   /** Education board the school follows (e.g. GSEB, CBSE, ICSE) */
   board?: string;
+  /** Medium of instruction */
+  medium?: 'english' | 'gujarati';
+  /** ID of parent school when this is a sibling medium school */
+  parent_school_id?: string | null;
   /** Template used to generate result cards (e.g. percentage, grade, gseb, cbse) */
   result_template?: string;
 }
@@ -494,8 +498,15 @@ export const superadminApi = {
     return request<PaginatedSchools>(`/api/superadmin/schools${query}`, { method: 'GET' }, token);
   },
 
-  createSchool: (token: string, payload: { name: string; address: string; phone: string; email: string }) =>
-    request<School>('/api/superadmin/schools', {
+  createSchool: (token: string, payload: {
+    name: string;
+    address: string;
+    phone?: string;
+    email?: string;
+    board: string;
+    medium: 'english' | 'gujarati' | 'both';
+  }) =>
+    request<School | { english: School; gujarati: School; dual_medium: true }>('/api/superadmin/schools', {
       method: 'POST',
       body: JSON.stringify(payload),
     }, token),
@@ -540,7 +551,7 @@ export const schoolsApi = {
   get: (token: string, id: string) =>
     request<School>(`/api/schools/${id}`, { method: 'GET' }, token),
 
-  create: (token: string, payload: { name: string; address: string; phone?: string; email?: string }) =>
+  create: (token: string, payload: { name: string; address: string; phone?: string; email?: string; board?: string; medium?: string }) =>
     request<School>('/api/schools', {
       method: 'POST',
       body: JSON.stringify(payload),

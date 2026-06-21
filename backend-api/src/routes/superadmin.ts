@@ -59,7 +59,7 @@ router.get('/schools', async (req: Request, res: Response) => {
   // Fetch schools with pagination
   const { data: schools, error: schoolsErr, count } = await supabaseAdmin
     .from('schools')
-    .select('id, name, address, phone, email, subscription_status, created_at, updated_at', { count: 'exact' })
+    .select('id, name, address, phone, email, subscription_status, board, medium, parent_school_id, created_at, updated_at', { count: 'exact' })
     .order('name')
     .range((page - 1) * limit, page * limit - 1);
 
@@ -292,13 +292,25 @@ router.delete('/schools/:id', async (req: Request, res: Response) => {
 /**
  * Create a new school.
  * subscription_status defaults to false (inactive) on creation.
+ *
+ * medium can be 'english', 'gujarati', or 'both'.
+ * - 'both' is only valid for GSEB schools.
+ * - When 'both' is passed, two schools are created (english + gujarati),
+ *   linked via parent_school_id, and the superadmin receives both in the response.
+ *
+ * Non-GSEB boards always use English medium; passing medium is optional for them.
  */
 router.post('/schools', async (req: Request, res: Response) => {
+  const GSEB_BOARDS = ['GSEB'];
+  const BOARD_VALUES = ['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE'] as const;
+
   const schema = z.object({
     name:    z.string().min(1),
     address: z.string().min(1),
-    phone:   z.string().min(1),
-    email:   z.string().email(),
+    phone:   z.string().optional(),
+    email:   z.string().email().optional(),
+    board:   z.enum(BOARD_VALUES).default('GSEB'),
+    medium:  z.enum(['english', 'gujarati', 'both']).default('english'),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -307,46 +319,129 @@ router.post('/schools', async (req: Request, res: Response) => {
     return;
   }
 
-  const { name, address, phone, email } = parsed.data;
+  const { name, address, phone, email, board, medium } = parsed.data;
   const adminId = req.user!.id;
 
-  // Check for duplicate school email
-  const { data: existing } = await supabaseAdmin
-    .from('schools')
-    .select('id')
-    .eq('email', email.toLowerCase())
-    .maybeSingle();
-
-  if (existing) {
-    sendError(res, 'A school with this email already exists', 409);
+  // medium='both' only makes sense for GSEB
+  if (medium === 'both' && !GSEB_BOARDS.includes(board)) {
+    sendError(res, `'Both' medium is only available for GSEB schools. ${board} always uses English medium.`, 400);
     return;
   }
 
-  const { data: school, error: insertErr } = await supabaseAdmin
+  // Non-GSEB always English — ignore whatever medium was passed
+  const effectiveMedium = GSEB_BOARDS.includes(board) ? medium : 'english';
+
+  // Check for duplicate school email (if provided)
+  if (email) {
+    const { data: existing } = await supabaseAdmin
+      .from('schools')
+      .select('id')
+      .eq('email', email.toLowerCase())
+      .maybeSingle();
+
+    if (existing) {
+      sendError(res, 'A school with this email already exists', 409);
+      return;
+    }
+  }
+
+  const now = new Date().toISOString();
+
+  // ── Single medium (english or gujarati) ────────────────────────────────────
+  if (effectiveMedium !== 'both') {
+    const { data: school, error: insertErr } = await supabaseAdmin
+      .from('schools')
+      .insert({
+        name,
+        address,
+        phone:               phone ?? null,
+        email:               email ? email.toLowerCase() : null,
+        board,
+        medium:              effectiveMedium,
+        subscription_status: false,
+        created_at:          now,
+      })
+      .select()
+      .single();
+
+    if (insertErr || !school) {
+      sendError(res, insertErr?.message ?? 'Failed to create school', 500);
+      return;
+    }
+
+    await logAudit(adminId, 'SCHOOL_CREATED', 'schools', {
+      school_id: (school as Record<string, unknown>).id,
+      name,
+      email: email ?? null,
+      board,
+      medium: effectiveMedium,
+    });
+
+    sendSuccess(res, school, 'School created successfully', 201);
+    return;
+  }
+
+  // ── Both mediums: create English school first, then Gujarati sibling ────────
+  const { data: englishSchool, error: engErr } = await supabaseAdmin
     .from('schools')
     .insert({
       name,
       address,
-      phone,
-      email: email.toLowerCase(),
+      phone:               phone ?? null,
+      email:               email ? email.toLowerCase() : null,
+      board,
+      medium:              'english',
       subscription_status: false,
-      created_at: new Date().toISOString(),
+      created_at:          now,
     })
     .select()
     .single();
 
-  if (insertErr || !school) {
-    sendError(res, insertErr?.message ?? 'Failed to create school', 500);
+  if (engErr || !englishSchool) {
+    sendError(res, engErr?.message ?? 'Failed to create English medium school', 500);
     return;
   }
 
-  await logAudit(adminId, 'SCHOOL_CREATED', 'schools', {
-    school_id: (school as Record<string, unknown>).id,
+  const englishId = (englishSchool as Record<string, unknown>).id as string;
+
+  const { data: gujaratiSchool, error: gujErr } = await supabaseAdmin
+    .from('schools')
+    .insert({
+      name,
+      address,
+      phone:               phone ?? null,
+      email:               null, // Only one school gets the email to avoid unique collision
+      board,
+      medium:              'gujarati',
+      parent_school_id:    englishId,
+      subscription_status: false,
+      created_at:          now,
+    })
+    .select()
+    .single();
+
+  if (gujErr || !gujaratiSchool) {
+    // Roll back the English school if Gujarati creation fails
+    await supabaseAdmin.from('schools').delete().eq('id', englishId);
+    sendError(res, gujErr?.message ?? 'Failed to create Gujarati medium school', 500);
+    return;
+  }
+
+  const gujaratiId = (gujaratiSchool as Record<string, unknown>).id as string;
+
+  await logAudit(adminId, 'SCHOOL_CREATED_DUAL_MEDIUM', 'schools', {
+    english_school_id:  englishId,
+    gujarati_school_id: gujaratiId,
     name,
-    email,
+    email: email ?? null,
+    board,
   });
 
-  sendSuccess(res, school, 'School created successfully', 201);
+  sendSuccess(res, {
+    english:  englishSchool,
+    gujarati: gujaratiSchool,
+    dual_medium: true,
+  }, 'School created with both mediums', 201);
 });
 
 // ── PUT /api/superadmin/schools/:id/subscription ──────────────────────────────
@@ -556,6 +651,34 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
     await supabaseAdmin.auth.admin.deleteUser(newUserId);
     sendError(res, 'Failed to create admin profile. Auth account rolled back.', 500);
     return;
+  }
+
+  // ── Grant school_admin_access for this school AND its sibling (dual medium) ─
+  // Look up the root school ID: if this school has a parent, use that; otherwise it IS the root.
+  const { data: schoolRow } = await supabaseAdmin
+    .from('schools')
+    .select('id, parent_school_id')
+    .eq('id', schoolId)
+    .single();
+
+  const rootSchoolId = (schoolRow as { id: string; parent_school_id: string | null } | null)?.parent_school_id ?? schoolId;
+
+  // Find all schools in this medium family (root + any siblings)
+  const { data: familySchools } = await supabaseAdmin
+    .from('schools')
+    .select('id')
+    .or(`id.eq.${rootSchoolId},parent_school_id.eq.${rootSchoolId}`);
+
+  const accessRows = (familySchools ?? []).map((s: { id: string }) => ({
+    admin_id:   newUserId,
+    school_id:  s.id,
+    created_at: new Date().toISOString(),
+  }));
+
+  if (accessRows.length > 0) {
+    await supabaseAdmin
+      .from('school_admin_access')
+      .upsert(accessRows, { onConflict: 'admin_id,school_id', ignoreDuplicates: true });
   }
 
   // Send welcome email via magic link (best-effort)

@@ -75,7 +75,7 @@ interface ExistingCardsResult {
   cards: ExistingCardEntry[];
 }
 
-type PageState = 'idle' | 'checking' | 'ready' | 'generating' | 'done';
+type PageState = 'idle' | 'checking' | 'ready' | 'generating' | 'done' | 'notifying' | 'notified';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -266,6 +266,51 @@ export default function ReportCardsPage() {
     }
   }
 
+  // ── Send Notifications (re-notify without regenerating) ───────────────────
+  async function handleNotify() {
+    setError(null);
+    setPageState('notifying');
+
+    const token = getToken();
+    if (!token) {
+      setError('Session expired. Please log in again.');
+      setPageState('ready');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/report-cards/notify`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          class_name: selectedClass,
+          section:    selectedSection,
+          term,
+          exam_type:  examType,
+        }),
+      });
+
+      if (!res.ok) {
+        let errMsg = 'Failed to send notifications.';
+        try {
+          const json = await res.json();
+          errMsg = json?.message ?? errMsg;
+        } catch { /* ignore */ }
+        setError(errMsg);
+        setPageState('ready');
+        return;
+      }
+
+      setPageState('notified');
+    } catch {
+      setError('Network error. Please try again.');
+      setPageState('ready');
+    }
+  }
+
   // ── Loading state (auth) ────────────────────────────────────────────────────
   if (isClassAdmin === null) {
     return (
@@ -281,7 +326,7 @@ export default function ReportCardsPage() {
       <>
         <PageHeader
           title="Generate Report Cards"
-          description="Generate and download PDF report cards for your class"
+          description="Generate, download and send PDF report cards to students &amp; parents"
         />
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-6 py-8 flex flex-col items-center text-center gap-3 mt-2">
           <span className="text-3xl">📄</span>
@@ -300,7 +345,7 @@ export default function ReportCardsPage() {
     <>
       <PageHeader
         title="Generate Report Cards"
-        description="Generate and download PDF report cards for your class"
+        description="Generate, download and send PDF report cards to students &amp; parents"
       />
 
       {/* ── Filters card ─────────────────────────────────────────────────── */}
@@ -523,26 +568,65 @@ export default function ReportCardsPage() {
 
           {/* Action buttons */}
           {pageState === 'done' ? (
-            <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
-              <svg className="w-5 h-5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            <div className="space-y-3">
+              <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
+                <svg className="w-5 h-5 text-green-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-green-800">Report cards downloaded &amp; notifications sent!</p>
+                  <p className="text-xs text-green-700 mt-0.5">
+                    ZIP downloaded to your folder. Students and parents have been notified via in-app notification and push alert.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setPageState('ready'); setError(null); }}
+                  className="ml-auto text-xs text-green-700 underline hover:no-underline shrink-0"
+                >
+                  Generate again
+                </button>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleNotify}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  Re-send Notifications
+                </button>
+                <span className="text-xs text-gray-400">Remind students &amp; parents again</span>
+              </div>
+            </div>
+          ) : pageState === 'notified' ? (
+            <div className="flex items-start gap-3 bg-purple-50 border border-purple-200 rounded-lg px-4 py-3">
+              <svg className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
               </svg>
-              <div>
-                <p className="text-sm font-semibold text-green-800">Report cards downloaded!</p>
-                <p className="text-xs text-green-700 mt-0.5">Your ZIP file should be in your downloads folder.</p>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-purple-800">Notifications sent!</p>
+                <p className="text-xs text-purple-700 mt-0.5">All students and parents have been notified about their report cards.</p>
               </div>
               <button
                 type="button"
                 onClick={() => { setPageState('ready'); setError(null); }}
-                className="ml-auto text-xs text-green-700 underline hover:no-underline"
+                className="ml-auto text-xs text-purple-700 underline hover:no-underline shrink-0"
               >
-                Generate again
+                Back
               </button>
             </div>
           ) : pageState === 'generating' ? (
             <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
               <span className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shrink-0" />
               <p className="text-sm font-medium text-blue-800">Generating report cards…</p>
+            </div>
+          ) : pageState === 'notifying' ? (
+            <div className="flex items-center gap-3 bg-purple-50 border border-purple-200 rounded-lg px-4 py-3">
+              <span className="w-5 h-5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin shrink-0" />
+              <p className="text-sm font-medium text-purple-800">Sending notifications to students &amp; parents…</p>
             </div>
           ) : (
             <div className="flex flex-wrap gap-3">
@@ -555,7 +639,7 @@ export default function ReportCardsPage() {
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
-                  {existingCards?.exists ? 'Regenerate Report Cards' : 'Generate Report Cards'}
+                  {existingCards?.exists ? 'Regenerate & Notify Students' : 'Generate & Notify Students'}
                 </button>
               ) : (
                 <>
@@ -567,7 +651,7 @@ export default function ReportCardsPage() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                     </svg>
-                    {existingCards?.exists ? 'Regenerate Anyway' : 'Generate Anyway'}
+                    {existingCards?.exists ? 'Regenerate Anyway & Notify' : 'Generate Anyway & Notify'}
                   </button>
                   <button
                     type="button"
@@ -577,6 +661,20 @@ export default function ReportCardsPage() {
                     Wait for Teachers
                   </button>
                 </>
+              )}
+
+              {/* Send notifications for already-generated cards */}
+              {existingCards?.exists && (
+                <button
+                  type="button"
+                  onClick={handleNotify}
+                  className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                  </svg>
+                  Send Notifications
+                </button>
               )}
 
               {/* Re-check option */}

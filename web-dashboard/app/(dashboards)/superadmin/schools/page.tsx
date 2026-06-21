@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { superadminApi, schoolsApi, type School } from '@/lib/api';
+import { superadminApi, type School } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import Modal from '@/components/Modal';
@@ -11,11 +11,23 @@ import FormField, { inputClass } from '@/components/FormField';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+const BOARDS = ['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE'] as const;
+type Board = typeof BOARDS[number];
+
+// Only GSEB supports Gujarati / both mediums. All other boards are always English.
+const GSEB_MEDIUM_OPTIONS = [
+  { value: 'english',  label: 'English Medium' },
+  { value: 'gujarati', label: 'Gujarati Medium' },
+  { value: 'both',     label: 'Both Mediums (English + Gujarati)' },
+] as const;
+
 interface AddSchoolForm {
   name: string;
   address: string;
   phone: string;
   email: string;
+  board: Board;
+  medium: 'english' | 'gujarati' | 'both';
 }
 
 interface AddAdminForm {
@@ -31,8 +43,11 @@ interface AdminCreatedResult {
   already_existed?: boolean;
 }
 
-const EMPTY_SCHOOL_FORM: AddSchoolForm = { name: '', address: '', phone: '', email: '' };
+const EMPTY_SCHOOL_FORM: AddSchoolForm = { name: '', address: '', phone: '', email: '', board: 'GSEB', medium: 'english' };
 const EMPTY_ADMIN_FORM: AddAdminForm = { name: '', email: '', phone: '' };
+
+/** True if the board supports medium selection (only GSEB) */
+const isGsebBoard = (board: string) => board === 'GSEB';
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
@@ -110,11 +125,17 @@ function SchoolsPageInner() {
     if (!token) return;
     setSubmitting(true);
     try {
-      await schoolsApi.create(token, {
-        name: schoolForm.name.trim(),
+      // For non-GSEB boards, medium is always english — the backend enforces this
+      // too, but we normalise here so the UI is consistent.
+      const medium = isGsebBoard(schoolForm.board) ? schoolForm.medium : 'english';
+
+      await superadminApi.createSchool(token, {
+        name:    schoolForm.name.trim(),
         address: schoolForm.address.trim(),
-        phone: schoolForm.phone.trim() || undefined,
-        email: schoolForm.email.trim() || undefined,
+        phone:   schoolForm.phone.trim()  || undefined,
+        email:   schoolForm.email.trim()  || undefined,
+        board:   schoolForm.board,
+        medium,
       });
       setShowAddSchool(false);
       setSchoolForm(EMPTY_SCHOOL_FORM);
@@ -246,7 +267,7 @@ function SchoolsPageInner() {
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50">
                   <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">School</th>
-                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Address</th>
+                  <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Board / Medium</th>
                   <th className="text-center px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Students</th>
                   <th className="text-center px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Status</th>
                   <th className="text-right px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
@@ -258,8 +279,30 @@ function SchoolsPageInner() {
                     <td className="px-6 py-4">
                       <p className="font-medium text-gray-900">{school.name}</p>
                       {school.email && <p className="text-xs text-gray-400 mt-0.5">{school.email}</p>}
+                      {school.parent_school_id && (
+                        <span className="inline-flex items-center mt-1 px-1.5 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-600">
+                          sibling school
+                        </span>
+                      )}
                     </td>
-                    <td className="px-6 py-4 text-gray-600 max-w-xs truncate">{school.address}</td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1.5">
+                        {school.board && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-700">
+                            {school.board}
+                          </span>
+                        )}
+                        {school.medium && (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                            school.medium === 'gujarati'
+                              ? 'bg-orange-50 text-orange-700'
+                              : 'bg-blue-50 text-blue-700'
+                          }`}>
+                            {school.medium === 'gujarati' ? 'Gujarati' : 'English'}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-6 py-4 text-center">
                       <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold">
                         {school.student_count ?? 0}
@@ -371,6 +414,55 @@ function SchoolsPageInner() {
               />
             </FormField>
           </div>
+
+          {/* Board */}
+          <FormField label="Board" htmlFor="school-board" required>
+            <select
+              id="school-board"
+              className={inputClass}
+              value={schoolForm.board}
+              onChange={(e) => {
+                const board = e.target.value as Board;
+                // Reset medium to 'english' when switching away from GSEB
+                setSchoolForm((f) => ({
+                  ...f,
+                  board,
+                  medium: board === 'GSEB' ? f.medium : 'english',
+                }));
+              }}
+              required
+            >
+              {BOARDS.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+            </select>
+          </FormField>
+
+          {/* Medium — only shown for GSEB */}
+          {isGsebBoard(schoolForm.board) ? (
+            <FormField label="Medium" htmlFor="school-medium" required>
+              <select
+                id="school-medium"
+                className={inputClass}
+                value={schoolForm.medium}
+                onChange={(e) => setSchoolForm((f) => ({ ...f, medium: e.target.value as AddSchoolForm['medium'] }))}
+                required
+              >
+                {GSEB_MEDIUM_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              {schoolForm.medium === 'both' && (
+                <p className="mt-1.5 text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-md px-2.5 py-1.5">
+                  Two separate schools will be created — one English, one Gujarati. The school admin can switch between them from the dashboard.
+                </p>
+              )}
+            </FormField>
+          ) : (
+            <p className="text-xs text-gray-400">
+              {schoolForm.board} always uses English medium.
+            </p>
+          )}
 
           <div className="flex justify-end gap-3 pt-2">
             <button
