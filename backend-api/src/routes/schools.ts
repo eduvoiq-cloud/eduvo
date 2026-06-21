@@ -72,6 +72,15 @@ router.get('/', requireRole('superadmin'), async (_req: Request, res: Response) 
 
 /** GET /api/schools/:id */
 router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  // Teachers and schooladmins can only fetch their own school — prevents
+  // cross-school data leakage (e.g. a teacher enumerating competitor schools).
+  if (req.user!.role === 'teacher' || req.user!.role === 'schooladmin') {
+    if (req.params.id !== req.user!.school_id) {
+      sendError(res, 'Access denied', 403);
+      return;
+    }
+  }
+
   const { data, error } = await supabaseAdmin
     .from('schools')
     .select('*')

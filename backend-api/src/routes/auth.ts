@@ -28,12 +28,13 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { Resend } from 'resend';
 import { supabase, supabaseAdmin } from '../config/supabase';
-import { loginRateLimit, studentLoginRateLimit, forgotPasswordRateLimit } from '../middleware/rateLimit';
+import { loginRateLimit, studentLoginRateLimit, forgotPasswordRateLimit, deleteAccountRequestRateLimit } from '../middleware/rateLimit';
 import {
   authenticate,
   authenticateStudent,
   authenticateAny,
   invalidateAuthCache,
+  blockStudentToken,
 } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
@@ -364,9 +365,13 @@ router.post(
       return;
     }
 
-    // Evict cached auth entry so the first_login gate lifts immediately
+    // Evict cached auth entry so the first_login gate lifts immediately,
+    // and revoke the old token so it cannot be reused after the password change.
     const token = req.headers.authorization?.split(' ')[1];
-    if (token) await invalidateAuthCache(token);
+    if (token) {
+      await invalidateAuthCache(token);
+      await blockStudentToken(token);
+    }
 
     await logAudit(studentId, 'STUDENT_PASSWORD_CHANGED', { student_id: studentId });
 
@@ -606,8 +611,11 @@ router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Reque
 
     if (insertError) {
       console.error('[auth] Failed to store reset token:', insertError.message, insertError.code);
-      // Table may not exist yet — still attempt to send the email so we can diagnose Resend separately
-      // DO NOT return here
+      // If we can't persist the token the reset link would be dead on arrival —
+      // don't send the email and instead silently return OK (prevents leaking info).
+      await logAudit(userRecord.id, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: true, token_stored: false });
+      genericOk();
+      return;
     } else {
       console.log(`[auth] forgot-password: token stored OK`);
     }
@@ -911,7 +919,11 @@ router.post('/logout', authenticateAny, async (req: Request, res: Response) => {
     }
     await logAudit(req.user!.id, 'STAFF_LOGOUT', { email: req.user!.email });
   } else {
-    // Student JWT is stateless — client discards it
+    // Revoke the student JWT server-side so it cannot be reused even if stolen
+    const token = req.headers.authorization!.split(' ')[1];
+    await blockStudentToken(token);
+    // Also evict the cached profile so any cached state is cleared immediately
+    await invalidateAuthCache(token);
     await logAudit(req.student!.id, 'STUDENT_LOGOUT', {
       student_id: req.student!.id,
     });
@@ -926,7 +938,7 @@ router.post('/logout', authenticateAny, async (req: Request, res: Response) => {
  * Public endpoint — no auth required.
  * Accepts an account deletion request and notifies all superadmins.
  */
-router.post('/delete-account-request', async (req: Request, res: Response) => {
+router.post('/delete-account-request', deleteAccountRequestRateLimit, async (req: Request, res: Response) => {
   const schema = z.object({
     email: z.string().email().max(254),
     reason: z.enum(['no_longer_using', 'privacy_concerns', 'other']),

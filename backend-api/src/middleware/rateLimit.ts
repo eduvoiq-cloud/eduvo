@@ -193,4 +193,23 @@ export const schoolListRateLimit = rateLimit({
   },
 });
 
+/**
+ * Account deletion request rate limit — max 3 per hour per IP.
+ * This is a public unauthenticated endpoint that creates notifications for all
+ * superadmins. Without a limit an attacker could flood the notification inbox.
+ */
+export const deleteAccountRequestRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 3,
+  keyGenerator: (req: Request) => `delete_acct:${req.ip ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  store: makeStore('delete_acct'),
+  message: {
+    success: false,
+    message: 'Too many requests. Please try again later.',
+  },
+});
+
 
