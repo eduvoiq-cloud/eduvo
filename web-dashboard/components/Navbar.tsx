@@ -92,6 +92,8 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
       children: [
         { label: 'Streak Board', href: '/teacher/streak-leaderboard' },
         { label: 'Announcements', href: '/teacher/announcements' },
+        { label: 'Report Cards', href: '/teacher/report-cards' },
+        { label: 'Class Recovery', href: '/teacher/recovery-schedule' },
       ],
     },
   ],

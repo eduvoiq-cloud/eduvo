@@ -508,6 +508,7 @@ async function getStudentsInClass(
 const startPackSchema = z.object({
   class: z.string().min(1),
   section: z.string().min(1),
+  skip_subjects: z.array(z.string()).optional().default([]),
 });
 
 router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) => {
@@ -517,7 +518,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
 
   const parsed = startPackSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
-  const { class: className, section } = parsed.data;
+  const { class: className, section, skip_subjects: skipSubjects } = parsed.data;
 
   // Check 30-day lockout
   const now = new Date();
@@ -565,11 +566,16 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
   // Submit Gemini Batch API job in background — teacher does not wait for this
   setImmediate(async () => {
     try {
-      const [subjects, students, board] = await Promise.all([
+      const [allSubjects, students, board] = await Promise.all([
         getTeacherSubjectsForClass(teacherId, schoolId, className, section),
         getStudentsInClass(schoolId, className, section),
         getSchoolBoard(schoolId),
       ]);
+
+      // Filter out any subjects the teacher chose to skip
+      const subjects = allSubjects.filter(
+        (s) => !skipSubjects.map((sk) => sk.toLowerCase()).includes(s.toLowerCase())
+      );
 
       if (students.length === 0 || subjects.length === 0) {
         // Nothing to generate — mark ready immediately
@@ -880,6 +886,64 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
       } catch { /* best-effort */ }
     }
   });
+});
+
+// ── GET /api/recovery/ready-packs ────────────────────────────────────────────
+/**
+ * Returns classes where the teacher is a class admin AND a recovery cycle has
+ * status 'pack_ready' — used by the teacher dashboard alert widget.
+ */
+router.get('/ready-packs', ...teacherAuth, async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id as string;
+  const userId   = req.user!.id as string;
+  if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
+
+  // 1. Get the classes this teacher administers
+  const { data: adminRows } = await supabaseAdmin
+    .from('class_admins')
+    .select('class_name, section')
+    .eq('school_id', schoolId)
+    .eq('teacher_id', userId);
+
+  if (!adminRows || adminRows.length === 0) {
+    sendSuccess(res, []);
+    return;
+  }
+
+  // 2. For each admin class, check if there is a pack_ready cycle
+  const results: Array<{ class_name: string; section: string; student_count: number }> = [];
+
+  await Promise.all(
+    (adminRows as Array<{ class_name: string; section: string }>).map(async (row) => {
+      const { data: cycle } = await supabaseAdmin
+        .from('recovery_cycles')
+        .select('id')
+        .eq('school_id', schoolId)
+        .eq('class', row.class_name)
+        .eq('section', row.section)
+        .eq('status', 'pack_ready')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!cycle) return;
+
+      // Count how many packs are ready for this cycle
+      const { count } = await supabaseAdmin
+        .from('recovery_packs')
+        .select('id', { count: 'exact', head: true })
+        .eq('cycle_id', (cycle as { id: string }).id)
+        .eq('generation_status', 'completed');
+
+      results.push({
+        class_name: row.class_name,
+        section: row.section,
+        student_count: count ?? 0,
+      });
+    })
+  );
+
+  sendSuccess(res, results);
 });
 
 // ── GET /api/recovery/cycle-status ───────────────────────────────────────────

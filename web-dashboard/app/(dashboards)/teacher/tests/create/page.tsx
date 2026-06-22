@@ -598,7 +598,7 @@ export default function CreateTestPage() {
   const [libChaptersLoading, setLibChaptersLoading] = useState(false);
 
   const [libSelection, setLibSelection] = useState<LibrarySelection>({
-    board: details.board || 'CBSE',
+    board: schoolBoard,
     subject: '',
     chapterId: '',
     chapterNumber: 0,
@@ -608,6 +608,28 @@ export default function CreateTestPage() {
     customTopicChecked: false,
     customTopicText: '',
   });
+
+  // Keep libSelection.board in sync with the school's board setting
+  useEffect(() => {
+    if (schoolBoard) {
+      setLibSelection((prev) => {
+        if (prev.board === schoolBoard) return prev;
+        // Reset cascading selections when board changes
+        return {
+          ...prev,
+          board: schoolBoard,
+          subject: '',
+          chapterId: '',
+          chapterNumber: 0,
+          chapterName: '',
+          allTopics: [],
+          checkedTopics: new Set(),
+          customTopicChecked: false,
+          customTopicText: '',
+        };
+      });
+    }
+  }, [schoolBoard]);
 
   // When the teacher picks a subject in the top section, mirror it into the
   // library selection so they don't have to pick it again in the AI section.
@@ -1461,12 +1483,8 @@ export default function CreateTestPage() {
                       <button type="button"
                         onClick={() => {
                           setTopicSourceMode('library');
-                          // Pre-populate library board from current details.board if it's CBSE or GSEB
-                          const validBoards = ['CBSE', 'GSEB'];
-                          const preBoard = validBoards.includes(details.board) ? details.board : 'CBSE';
-                          setLibSelection((s) => ({ ...s, board: preBoard }));
                           if (details.class_name) {
-                            fetchLibSubjects(preBoard, details.class_name);
+                            fetchLibSubjects(schoolBoard, details.class_name);
                           }
                         }}
                         className={`flex-1 py-2 px-3 text-xs font-semibold rounded-lg border-2 transition-colors ${
@@ -1495,20 +1513,12 @@ export default function CreateTestPage() {
                   {topicSourceMode === 'library' && (
                   <div className="space-y-3 p-4 bg-indigo-50/60 border border-indigo-100 rounded-xl">
 
-                    {/* Board dropdown */}
-                    <FormField label="Board" htmlFor="lib-board">
-                      <select id="lib-board" className={inputClass}
-                        value={libSelection.board}
-                        onChange={(e) => {
-                          const b = e.target.value;
-                          setLibSelection({ board: b, subject: '', chapterId: '', chapterNumber: 0, chapterName: '', allTopics: [], checkedTopics: new Set(), customTopicChecked: false, customTopicText: '' });
-                          setLibChapters([]);
-                          if (details.class_name) fetchLibSubjects(b, details.class_name);
-                        }}>
-                        <option value="CBSE">CBSE</option>
-                        <option value="GSEB">GSEB</option>
-                      </select>
-                    </FormField>
+                    {/* Board — derived from school setting, shown read-only */}
+                    <div className="flex items-center gap-2 px-3 py-2 bg-white border border-indigo-100 rounded-lg">
+                      <span className="text-xs text-indigo-500">🏫 Board:</span>
+                      <span className="text-sm font-semibold text-indigo-800">{schoolBoard}</span>
+                      <span className="text-xs text-gray-400 ml-auto">set from school profile</span>
+                    </div>
 
                     {/* Subject — auto-matched from teacher's assigned subject, or manual picker */}
                     {(() => {
