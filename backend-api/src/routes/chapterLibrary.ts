@@ -94,7 +94,16 @@ router.get('/chapters', async (req: Request, res: Response) => {
     return;
   }
 
-  sendSuccess(res, { chapters: data ?? [] });
+  // `topics` is stored as a comma-separated text string in the DB.
+  // Normalise to string[] so the frontend can always use .map/.join etc.
+  const chapters = (data ?? []).map((ch: { id: string; chapter_number: number; chapter_name: string; topics: string | null }) => ({
+    ...ch,
+    topics: ch.topics
+      ? ch.topics.split(',').map((t: string) => t.trim()).filter(Boolean)
+      : [],
+  }));
+
+  sendSuccess(res, { chapters });
 });
 
 export default router;
