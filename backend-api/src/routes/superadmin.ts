@@ -915,7 +915,7 @@ router.get('/export/:school_id', async (req: Request, res: Response) => {
           .limit(ATTENDANCE_EXPORT_LIMIT)
       : Promise.resolve({ data: [] as Record<string, unknown>[], count: 0, error: null }),
     supabaseAdmin.from('marks').select('*').eq('school_id', school_id),
-    supabaseAdmin.from('fees').select('*').eq('school_id', school_id),
+    supabaseAdmin.from('student_fees').select('*').in('student_id', studentIds.length > 0 ? studentIds : ['']),
     supabaseAdmin.from('assignments').select('*').eq('school_id', school_id),
     supabaseAdmin.from('complaints').select('*').eq('school_id', school_id),
     userIds.length > 0

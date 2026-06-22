@@ -106,11 +106,11 @@ export async function invalidateAuthCache(token: string): Promise<void> {
 // maintain a Redis blocklist. Blocked tokens are rejected by authenticateStudent
 // before profile lookup — effectively revoking them server-side.
 //
-// TTL matches the token lifetime (7 days) so the blocklist entry expires
-// automatically when the token itself would have expired anyway.
-
+// TTL matches the token lifetime. Since we now use 10-year tokens, cap the
+// blocklist entry at 365 days — long enough to cover any realistic session,
+// and Redis will automatically expire the key.
 const BLOCKLIST_PREFIX = 'auth:blocked:';
-const STUDENT_TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+const STUDENT_TOKEN_TTL_SECONDS = 365 * 24 * 60 * 60; // 1 year
 
 /**
  * Add a student JWT to the revocation blocklist.

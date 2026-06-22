@@ -382,7 +382,7 @@ router.post('/fee', async (req: Request, res: Response) => {
     .from('student_fees')
     .upsert(
       { student_id, fee_paid, updated_by: req.user!.id, updated_at: new Date().toISOString() },
-      { onConflict: 'student_id' }
+      { onConflict: 'student_id,term,academic_year' }
     )
     .select()
     .single();
@@ -796,7 +796,7 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
 
     for (let i = 0; i < attemptIds.length; i += CHUNK) {
       const { data: answerChunk } = await supabaseAdmin
-        .from('test_answers')
+        .from('student_answers')
         .select('attempt_id, question_id, is_correct, selected_option')
         .in('attempt_id', attemptIds.slice(i, i + CHUNK))
         .in('question_id', mcqQuestions.map((q) => q.id));

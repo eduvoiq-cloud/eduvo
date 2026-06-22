@@ -28,9 +28,11 @@ apiClient.interceptors.request.use(
   (error: AxiosError) => Promise.reject(error)
 );
 
-// ── Response interceptor: auto-logout on 401, subscription block on 402 ──────
-// Only auto-logout on 401 from authenticated routes, NOT from login/change-password
-// endpoints — those should let the screen handle the error and show it to the user.
+// ── Response interceptor: handle auth errors ──────────────────────────────────
+// 401 means the token was explicitly revoked server-side (logout or password
+// change). Since student tokens are long-lived (no expiry), a 401 on a
+// non-auth endpoint is a genuine revocation signal — log out cleanly.
+// Auth endpoints themselves handle their own errors; don't double-logout there.
 const AUTH_ENDPOINTS = [
   '/api/auth/login/student',
   '/api/auth/student/change-password',
@@ -45,8 +47,10 @@ apiClient.interceptors.response.use(
     const url = error.config?.url ?? '';
     const isAuthEndpoint = AUTH_ENDPOINTS.some((ep) => url.includes(ep));
 
+    // Only logout on 401 from a non-auth endpoint — this means the server
+    // has explicitly revoked the token (password change / admin forced logout).
+    // Network errors or server errors do NOT trigger a logout.
     if (error.response?.status === 401 && !isAuthEndpoint) {
-      // Token expired or invalid on a regular route — clear auth state
       useAuthStore.getState().logout();
     }
 

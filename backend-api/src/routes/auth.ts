@@ -48,7 +48,10 @@ import { sendWhatsAppMessage } from '../services/whatsappService';
 const router = Router();
 
 const BCRYPT_ROUNDS = 12;
-const STUDENT_TOKEN_TTL = '7d'; // students stay logged in for 7 days
+// Students should never be logged out — use a very long-lived token.
+// Revocation (logout / password change) is handled via the Redis blocklist,
+// so the long TTL does not create a security hole.
+const STUDENT_TOKEN_TTL = '3650d'; // 10 years — effectively permanent
 
 // ── Resend email client ───────────────────────────────────────────────────────
 // Lazy-initialised so the server still starts even if RESEND_API_KEY is missing

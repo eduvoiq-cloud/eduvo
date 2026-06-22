@@ -11,11 +11,13 @@ import { getClassAdmin } from './classAdmin';
 
 const router = Router();
 
-// ── Rate limiter: max 10 attendance submissions per teacher per day ────────────
+// ── Rate limiter: max 50 attendance submissions per teacher per day ───────────
+// One submission call covers an entire class at once, so 50 is very generous
+// for normal usage while still blocking runaway automation.
 // Uses a 24-hour window keyed by user ID (via Authorization header).
 const submitRateLimit = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: 10,
+  max: 50,
   keyGenerator: (req) => req.user?.id ?? req.ip ?? 'unknown',
   standardHeaders: true,
   legacyHeaders: false,

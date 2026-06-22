@@ -118,7 +118,7 @@ router.get('/announcements', async (req: Request, res: Response) => {
 
   const { data, error } = await supabaseAdmin
     .from('announcements')
-    .select('id, title, body, created_at, created_by')
+    .select('id, title, message, created_at, created_by')
     .eq('school_id', schoolId)
     .order('created_at', { ascending: false })
     .limit(limit);

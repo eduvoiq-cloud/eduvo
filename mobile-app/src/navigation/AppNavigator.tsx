@@ -44,15 +44,10 @@ import AnnouncementsScreen from '../screens/main/AnnouncementsScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import LinkChildScreen from '../screens/settings/LinkChildScreen';
 
-// Parent screens
-import ParentDashboardScreen from '../screens/parent/DashboardScreen';
-import ParentAttendanceScreen from '../screens/parent/AttendanceScreen';
-import ParentPerformanceScreen from '../screens/parent/PerformanceScreen';
-import ParentNotificationsScreen from '../screens/parent/NotificationsScreen';
-import ActivityPacksScreen from '../screens/parent/ActivityPacksScreen';
-import PremiumInsightsScreen from '../screens/parent/PremiumInsightsScreen';
-
-import { useChildStore } from '../store/childStore';
+// NOTE: Parent screens (src/screens/parent/) are kept on disk but are no longer
+// routed through a separate ParentNavigator. Parents log in with their child's
+// phone number and use the same student UI. The childStore handles switching
+// between linked children inside the existing student screens.
 
 // ── Stack param lists ─────────────────────────────────────────────────────────
 
@@ -94,8 +89,9 @@ export type MainStackParamList = {
 // Keep StudentStackParamList as an alias so existing student screens don't break
 export type StudentStackParamList = MainStackParamList;
 
-// ── Parent navigator types ────────────────────────────────────────────────────
-
+// ParentTabParamList is kept for TypeScript compatibility — the parent screens
+// still exist on disk and import this type. They are not actively routed to;
+// parents use the standard student UI (with child switching via childStore).
 export type ParentTabParamList = {
   Dashboard: undefined;
   Attendance: undefined;
@@ -110,81 +106,12 @@ export type ParentTabParamList = {
 const AuthStack = createStackNavigator<AuthStackParamList>();
 const MainTab = createBottomTabNavigator<MainTabParamList>();
 const MainStack = createStackNavigator<MainStackParamList>();
-const ParentTab = createBottomTabNavigator<ParentTabParamList>();
 
 // ── Tab icon helper ───────────────────────────────────────────────────────────
 
 function TabIcon({ label, focused }: { label: string; focused: boolean }) {
   return (
     <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>{label}</Text>
-  );
-}
-
-// ── Parent bottom tab navigator ───────────────────────────────────────────────
-
-function ParentNavigator() {
-  return (
-    <ParentTab.Navigator
-      screenOptions={{
-        headerStyle: { backgroundColor: '#1D4ED8' },
-        headerTintColor: '#FFFFFF',
-        headerTitleStyle: { fontWeight: '600' },
-        tabBarActiveTintColor: '#1D4ED8',
-        tabBarInactiveTintColor: '#9CA3AF',
-        tabBarStyle: { paddingBottom: 4 },
-      }}
-    >
-      <ParentTab.Screen
-        name="Dashboard"
-        component={ParentDashboardScreen}
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ focused }) => <TabIcon label="🏠" focused={focused} />,
-        }}
-      />
-      <ParentTab.Screen
-        name="Attendance"
-        component={ParentAttendanceScreen}
-        options={{
-          title: 'Attendance',
-          tabBarIcon: ({ focused }) => <TabIcon label="📅" focused={focused} />,
-        }}
-      />
-      <ParentTab.Screen
-        name="ActivityPacks"
-        component={ActivityPacksScreen}
-        options={{
-          title: 'Activities',
-          tabBarIcon: ({ focused }) => <TabIcon label="🎯" focused={focused} />,
-          headerTitle: "Today's Activities",
-        }}
-      />
-      <ParentTab.Screen
-        name="Performance"
-        component={ParentPerformanceScreen}
-        options={{
-          title: 'Progress',
-          tabBarIcon: ({ focused }) => <TabIcon label="📊" focused={focused} />,
-        }}
-      />
-      <ParentTab.Screen
-        name="Insights"
-        component={PremiumInsightsScreen}
-        options={{
-          title: 'Insights',
-          tabBarIcon: ({ focused }) => <TabIcon label="✨" focused={focused} />,
-          headerShown: false,
-        }}
-      />
-      <ParentTab.Screen
-        name="Notifications"
-        component={ParentNotificationsScreen}
-        options={{
-          title: 'Alerts',
-          tabBarIcon: ({ focused }) => <TabIcon label="🔔" focused={focused} />,
-        }}
-      />
-    </ParentTab.Navigator>
   );
 }
 
@@ -491,17 +418,11 @@ interface AppNavigatorProps {
 
 export default function AppNavigator({ navigationRef }: AppNavigatorProps) {
   const { isLoggedIn } = useAuthStore();
-  const linkedChildren = useChildStore((s) => s.linkedChildren);
-  const isParent = linkedChildren.length > 0;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <NavigationContainer ref={navigationRef}>
-        {isLoggedIn && isParent
-          ? <ParentNavigator />
-          : isLoggedIn
-          ? <MainNavigator />
-          : <AuthNavigator />}
+        {isLoggedIn ? <MainNavigator /> : <AuthNavigator />}
       </NavigationContainer>
     </GestureHandlerRootView>
   );
