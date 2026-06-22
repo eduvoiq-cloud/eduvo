@@ -8,6 +8,12 @@ import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
 
+interface ReadyPackAlert {
+  class_name: string;
+  section: string;
+  student_count: number;
+}
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 interface ClassAdminEntry {
@@ -25,6 +31,7 @@ export default function TeacherDashboard() {
   const [suspiciousActivity, setSuspiciousActivity] = useState<SuspiciousActivityRow[]>([]);
   const [pendingRecoveryCount, setPendingRecoveryCount] = useState(0);
   const [myAdminClasses, setMyAdminClasses] = useState<ClassAdminEntry[]>([]);
+  const [readyPackAlerts, setReadyPackAlerts] = useState<ReadyPackAlert[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -53,7 +60,7 @@ export default function TeacherDashboard() {
           return;
         }
 
-        const [classesRes, complaintsRes, testsRes, suspiciousRes, recoveryCountRes, adminClassesRes] = await Promise.all([
+        const [classesRes, complaintsRes, testsRes, suspiciousRes, recoveryCountRes, adminClassesRes, readyPacksRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
@@ -62,6 +69,9 @@ export default function TeacherDashboard() {
           testsApi.getSuspiciousActivity(token!).catch(() => ({ data: [] })),
           recoverySchedulesApi.pendingCount(token!).catch(() => ({ data: { count: 0 } })),
           fetch(`${BASE_URL}/api/class-admin/my-classes`, {
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          }).then((r) => r.json()).catch(() => ({ data: [] })),
+          fetch(`${BASE_URL}/api/recovery/ready-packs`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
         ]);
@@ -100,6 +110,7 @@ export default function TeacherDashboard() {
         setSuspiciousActivity(Array.isArray(suspiciousRes.data) ? suspiciousRes.data : []);
         setPendingRecoveryCount((recoveryCountRes.data as { count?: number })?.count ?? 0);
         setMyAdminClasses(Array.isArray(adminClassesRes.data) ? adminClassesRes.data : []);
+        setReadyPackAlerts(Array.isArray(readyPacksRes.data) ? readyPacksRes.data : []);
       } catch (err) {
         console.error('[TeacherDashboard] fetch error:', err);
       } finally {
@@ -135,6 +146,32 @@ export default function TeacherDashboard() {
         title={user?.name ? `Welcome back, ${user.name}` : 'Welcome back'}
         description="Your classes and student overview"
       />
+
+      {/* Recovery Pack Ready alerts — shown when a cycle has pack_ready status */}
+      {!loading && readyPackAlerts.length > 0 && readyPackAlerts.map((alert) => (
+        <div
+          key={`${alert.class_name}||${alert.section}`}
+          className="bg-purple-50 border border-purple-200 rounded-xl px-6 py-4 mb-4 flex items-center justify-between gap-4"
+        >
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-purple-800">Recovery Pack Ready — {alert.class_name} · {alert.section}</p>
+              <p className="text-xs text-purple-700 mt-0.5">
+                Packs are ready for {alert.student_count} student{alert.student_count !== 1 ? 's' : ''}. Generate recovery tests now.
+              </p>
+            </div>
+          </div>
+          <Link
+            href={`/teacher/recovery-schedule?class=${encodeURIComponent(alert.class_name)}&section=${encodeURIComponent(alert.section)}`}
+            className="shrink-0 px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors whitespace-nowrap"
+          >
+            View Recovery →
+          </Link>
+        </div>
+      ))}
 
       {/* Monthly Recovery Tests widget — only shown when there are pending approvals */}
       {!loading && pendingRecoveryCount > 0 && (
@@ -206,50 +243,6 @@ export default function TeacherDashboard() {
                 </div>
               );
             })}
-          </div>
-        </div>
-      )}
-
-      {/* ── Class Admin Tools ───────────────────────────────────────────────── */}
-      {!loading && adminAssignments.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 mb-6">
-          <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
-            <span>🎓</span>
-            <h2 className="text-sm font-semibold text-gray-900">Class Admin Tools</h2>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {adminAssignments.map((ac) => (
-              <div key={`${ac.class_name}||${ac.section}`} className="px-6 py-4">
-                <p className="text-sm font-medium text-gray-800 mb-3">
-                  {ac.class_name} · {ac.section}
-                </p>
-                <div className="flex flex-wrap gap-3">
-                  {/* Streak Board — only visible because teacher IS class admin */}
-                  <Link
-                    href="/teacher/streak-leaderboard"
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-orange-200 bg-orange-50 hover:bg-orange-100 text-sm font-medium text-orange-700 transition-colors"
-                  >
-                    🔥 Streak Board
-                  </Link>
-
-                  {/* Generate Report Cards */}
-                  <Link
-                    href="/teacher/report-cards"
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-sm font-medium text-blue-700 transition-colors"
-                  >
-                    📄 Generate Report Cards
-                  </Link>
-
-                  {/* Class Recovery */}
-                  <Link
-                    href="/teacher/recovery-schedule"
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg border border-purple-200 bg-purple-50 hover:bg-purple-100 text-sm font-medium text-purple-700 transition-colors"
-                  >
-                    🔄 Class Recovery
-                  </Link>
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       )}

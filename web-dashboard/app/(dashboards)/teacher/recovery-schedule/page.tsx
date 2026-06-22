@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
@@ -59,6 +60,13 @@ interface TeacherAssignment {
 interface SubjectChapters {
   subject: string;
   chapter_names: string[];
+}
+
+interface ChapterLibraryEntry {
+  id: string;
+  chapter_number: number;
+  chapter_name: string;
+  topics: string[] | null;
 }
 
 // ── Toggle (matches tests/create/page.tsx) ────────────────────────────────────
@@ -237,39 +245,92 @@ function TestConfigModal({ subjects, onConfirm, onClose, submitting }: TestConfi
 interface ChapterSelectionModalProps {
   noDataSubjects: string[];
   savedChapters: SubjectChapters[];
+  board: string;
+  selectedClass: string;
   onSave: (subject: string, chapters: string[]) => Promise<void>;
   onClose: () => void;
-  onDone: () => void;
+  onDone: (includedSubjects: string[]) => void;
 }
 
-function ChapterSelectionModal({ noDataSubjects, savedChapters, onSave, onClose, onDone }: ChapterSelectionModalProps) {
+function ChapterSelectionModal({ noDataSubjects, savedChapters, board, selectedClass, onSave, onClose, onDone }: ChapterSelectionModalProps) {
   const [activeSubject, setActiveSubject] = useState(noDataSubjects[0] ?? '');
-  const [inputValue, setInputValue] = useState('');
-  // chapters per subject in local state
+
+  // chapters per subject in local state (names only, for the API)
   const [chaptersBySubject, setChaptersBySubject] = useState<Record<string, string[]>>(() => {
     const init: Record<string, string[]> = {};
     for (const s of savedChapters) { init[s.subject] = s.chapter_names; }
     return init;
   });
+
+  // skipped subjects — teacher opted not to include them in the recovery pack
+  const [skippedSubjects, setSkippedSubjects] = useState<Set<string>>(new Set());
+
+  // chapter library data per subject
+  const [libraryChapters, setLibraryChapters] = useState<Record<string, ChapterLibraryEntry[]>>({});
+  const [libraryLoading, setLibraryLoading] = useState<Record<string, boolean>>({});
+
   const [saving, setSaving] = useState(false);
 
-  const activeChapters = chaptersBySubject[activeSubject] ?? [];
+  // Fetch chapter library for a subject when switching to its tab
+  useEffect(() => {
+    if (!activeSubject || !board || !selectedClass) return;
+    if (libraryChapters[activeSubject] !== undefined) return; // already fetched
 
-  function addChapter() {
-    const trimmed = inputValue.trim();
-    if (!trimmed) return;
-    setChaptersBySubject((prev) => ({
-      ...prev,
-      [activeSubject]: [...(prev[activeSubject] ?? []), trimmed],
-    }));
-    setInputValue('');
+    const token = getToken();
+    if (!token) return;
+
+    setLibraryLoading((prev) => ({ ...prev, [activeSubject]: true }));
+    const qs = new URLSearchParams({ board, class: selectedClass, subject: activeSubject });
+    fetch(`${BASE_URL}/api/chapter-library/chapters?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => r.json())
+      .then((j: { success?: boolean; data?: { chapters?: ChapterLibraryEntry[] } }) => {
+        setLibraryChapters((prev) => ({
+          ...prev,
+          [activeSubject]: j.success && j.data?.chapters ? j.data.chapters : [],
+        }));
+      })
+      .catch(() => {
+        setLibraryChapters((prev) => ({ ...prev, [activeSubject]: [] }));
+      })
+      .finally(() => {
+        setLibraryLoading((prev) => ({ ...prev, [activeSubject]: false }));
+      });
+  }, [activeSubject, board, selectedClass, libraryChapters]);
+
+  const activeChapters = chaptersBySubject[activeSubject] ?? [];
+  const activeLibrary = libraryChapters[activeSubject] ?? [];
+  const isLoadingLibrary = libraryLoading[activeSubject] ?? false;
+  const isSkipped = skippedSubjects.has(activeSubject);
+
+  function toggleChapter(chapterName: string) {
+    setChaptersBySubject((prev) => {
+      const current = prev[activeSubject] ?? [];
+      if (current.includes(chapterName)) {
+        return { ...prev, [activeSubject]: current.filter((c) => c !== chapterName) };
+      }
+      if (current.length >= 20) return prev; // max 20 chapters
+      return { ...prev, [activeSubject]: [...current, chapterName] };
+    });
+    // Un-skip the subject if teacher is selecting chapters
+    if (skippedSubjects.has(activeSubject)) {
+      setSkippedSubjects((prev) => { const s = new Set(prev); s.delete(activeSubject); return s; });
+    }
   }
 
-  function removeChapter(idx: number) {
-    setChaptersBySubject((prev) => ({
-      ...prev,
-      [activeSubject]: (prev[activeSubject] ?? []).filter((_, i) => i !== idx),
-    }));
+  function toggleSkip() {
+    setSkippedSubjects((prev) => {
+      const s = new Set(prev);
+      if (s.has(activeSubject)) {
+        s.delete(activeSubject);
+      } else {
+        s.add(activeSubject);
+        // Clear any chapter selections for this subject when skipping
+        setChaptersBySubject((ch) => ({ ...ch, [activeSubject]: [] }));
+      }
+      return s;
+    });
   }
 
   async function handleSaveSubject() {
@@ -282,7 +343,15 @@ function ChapterSelectionModal({ noDataSubjects, savedChapters, onSave, onClose,
     }
   }
 
-  const allSubjectsSaved = noDataSubjects.every((s) => (chaptersBySubject[s] ?? []).length > 0);
+  // A subject is "done" if it has chapters saved OR it's skipped
+  const allSubjectsDone = noDataSubjects.every(
+    (s) => skippedSubjects.has(s) || (chaptersBySubject[s] ?? []).length > 0
+  );
+
+  // Subjects that will be included (not skipped)
+  function getIncludedSubjects(): string[] {
+    return noDataSubjects.filter((s) => !skippedSubjects.has(s));
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -292,7 +361,7 @@ function ChapterSelectionModal({ noDataSubjects, savedChapters, onSave, onClose,
           <div>
             <h2 className="text-base font-semibold text-gray-900">Select Chapters for AI Pack Generation</h2>
             <p className="text-xs text-gray-500 mt-1">
-              These subjects have no test data in the app yet. Select the chapters you want the AI to cover in the recovery pack — it will generate detailed explanations, examples and practice questions for each chapter you choose.
+              These subjects have no test data yet. Pick chapters from the library for the AI to cover, or skip any subject you don&apos;t want included in this recovery pack.
             </p>
           </div>
           <button onClick={onClose} className="ml-4 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0">
@@ -303,95 +372,149 @@ function ChapterSelectionModal({ noDataSubjects, savedChapters, onSave, onClose,
         </div>
 
         {/* Subject tabs */}
-        {noDataSubjects.length > 1 && (
-          <div className="flex border-b border-gray-100 overflow-x-auto px-6 pt-2">
-            {noDataSubjects.map((subj) => {
-              const hasSaved = (chaptersBySubject[subj] ?? []).length > 0;
-              return (
-                <button
-                  key={subj}
-                  onClick={() => { setActiveSubject(subj); setInputValue(''); }}
-                  className={`mr-2 pb-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-1.5 ${
-                    activeSubject === subj
-                      ? 'border-purple-600 text-purple-700'
-                      : 'border-transparent text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {subj}
-                  {hasSaved && <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />}
-                </button>
-              );
-            })}
-          </div>
-        )}
+        <div className="flex border-b border-gray-100 overflow-x-auto px-6 pt-2 gap-1">
+          {noDataSubjects.map((subj) => {
+            const hasChapters = (chaptersBySubject[subj] ?? []).length > 0;
+            const isSubjSkipped = skippedSubjects.has(subj);
+            return (
+              <button
+                key={subj}
+                onClick={() => setActiveSubject(subj)}
+                className={`mr-1 pb-2 px-1 text-sm font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-1.5 ${
+                  activeSubject === subj
+                    ? 'border-purple-600 text-purple-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                } ${isSubjSkipped ? 'opacity-50' : ''}`}
+              >
+                {isSubjSkipped && <span className="text-xs">⊘</span>}
+                {subj}
+                {hasChapters && !isSubjSkipped && <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />}
+              </button>
+            );
+          })}
+        </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="mb-4">
-            <p className="text-sm font-medium text-gray-700 mb-1">{activeSubject} — No test data found</p>
-            <p className="text-xs text-gray-500">
-              Add the chapter names you want covered. The AI will generate up to 1 detailed section per chapter (explanations, solved examples, practice questions).
-            </p>
-          </div>
 
-          {/* Chapter list */}
-          {activeChapters.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-4">
-              {activeChapters.map((ch, idx) => (
-                <span
-                  key={idx}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 text-purple-800 text-sm font-medium rounded-lg border border-purple-200"
-                >
-                  {ch}
-                  <button
-                    onClick={() => removeChapter(idx)}
-                    className="text-purple-400 hover:text-purple-700 transition-colors"
-                    aria-label={`Remove ${ch}`}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
+          {/* Skip toggle */}
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-sm font-medium text-gray-800">{activeSubject}</p>
+              <p className="text-xs text-gray-500 mt-0.5">No test data found — select chapters from the library below</p>
             </div>
-          )}
-
-          {/* Add chapter input */}
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="e.g. Chemical Reactions, Electricity, Motion..."
-              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addChapter(); } }}
-            />
             <button
-              onClick={addChapter}
-              disabled={!inputValue.trim()}
-              className="px-4 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 rounded-lg transition-colors"
+              onClick={toggleSkip}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                isSkipped
+                  ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+                  : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+              }`}
             >
-              + Add
+              {isSkipped ? '⊘ Skipped — click to include' : 'Skip this subject'}
             </button>
           </div>
-          <p className="text-xs text-gray-400 mt-2">Press Enter or click Add. You can add up to 20 chapters.</p>
+
+          {isSkipped ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+              <span className="text-3xl mb-2">⊘</span>
+              <p className="text-sm text-gray-500 font-medium">{activeSubject} will not be included in this recovery pack.</p>
+              <button onClick={toggleSkip} className="mt-3 text-xs text-purple-600 hover:underline">Click to include it</button>
+            </div>
+          ) : (
+            <>
+              {/* Selected chapters */}
+              {activeChapters.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {activeChapters.map((ch) => (
+                    <span
+                      key={ch}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 text-purple-800 text-sm font-medium rounded-lg border border-purple-200"
+                    >
+                      {ch}
+                      <button
+                        onClick={() => toggleChapter(ch)}
+                        className="text-purple-400 hover:text-purple-700 transition-colors"
+                        aria-label={`Remove ${ch}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Chapter library list */}
+              {isLoadingLibrary ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-5 h-5 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="ml-2 text-xs text-gray-400">Loading chapters…</span>
+                </div>
+              ) : activeLibrary.length > 0 ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-gray-500 font-medium mb-2">
+                    Select chapters to include ({activeChapters.length}/20 selected):
+                  </p>
+                  {activeLibrary.map((ch) => {
+                    const isSelected = activeChapters.includes(ch.chapter_name);
+                    return (
+                      <button
+                        key={ch.id}
+                        onClick={() => toggleChapter(ch.chapter_name)}
+                        disabled={!isSelected && activeChapters.length >= 20}
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border text-left transition-colors ${
+                          isSelected
+                            ? 'bg-purple-50 border-purple-300 text-purple-900'
+                            : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed'
+                        }`}
+                      >
+                        <span className={`flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center text-xs font-bold transition-colors ${
+                          isSelected ? 'bg-purple-600 border-purple-600 text-white' : 'border-gray-300'
+                        }`}>
+                          {isSelected ? '✓' : ''}
+                        </span>
+                        <div className="min-w-0">
+                          <span className="text-xs text-gray-400 mr-2">Ch. {ch.chapter_number}</span>
+                          <span className="text-sm font-medium">{ch.chapter_name}</span>
+                          {ch.topics && ch.topics.length > 0 && (
+                            <p className="text-xs text-gray-400 mt-0.5 truncate">{ch.topics.slice(0, 4).join(' · ')}</p>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-6 text-xs text-gray-400 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  No chapters found in the library for {activeSubject} (Class {selectedClass}, {board}).
+                  <br />The AI will use the most important topics for this subject automatically.
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
           <button
             onClick={handleSaveSubject}
-            disabled={saving || activeChapters.length === 0}
+            disabled={saving || activeChapters.length === 0 || isSkipped}
             className="px-4 py-2 text-sm font-medium text-white bg-gray-700 hover:bg-gray-800 disabled:bg-gray-300 rounded-lg transition-colors"
           >
-            {saving ? 'Saving…' : `Save ${activeSubject} Chapters`}
+            {saving ? 'Saving…' : `Save ${activeSubject}`}
           </button>
-          <button
-            onClick={onDone}
-            disabled={!allSubjectsSaved}
-            className="px-5 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 rounded-lg transition-colors"
-          >
-            ✓ Done — Generate Packs
-          </button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">
+              {noDataSubjects.length - skippedSubjects.size} of {noDataSubjects.length} subjects included
+            </span>
+            <button
+              onClick={() => onDone(getIncludedSubjects())}
+              disabled={!allSubjectsDone}
+              className="px-5 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 rounded-lg transition-colors"
+            >
+              ✓ Done — Generate Packs
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -401,8 +524,11 @@ function ChapterSelectionModal({ noDataSubjects, savedChapters, onSave, onClose,
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function RecoverySchedulePage() {
-  const { user } = useAuth();
+  const { user, schools, activeSchoolId } = useAuth();
+  const activeSchool = schools?.find((s) => s.id === activeSchoolId);
+  const schoolBoard = activeSchool?.board ?? 'GSEB';
   const { toasts, show: showToast } = useToast();
+  const searchParams = useSearchParams();
 
   // Class+section selection
   const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
@@ -451,9 +577,15 @@ export default function RecoverySchedulePage() {
           subject: a.subject ?? '',
         }));
         setAssignments(all);
+
+        // Pre-fill class + section from URL query params (e.g. coming from dashboard)
+        const preClass = searchParams.get('class');
+        const preSection = searchParams.get('section');
+        if (preClass) setSelectedClass(preClass);
+        if (preSection) setSelectedSection(preSection);
       })
       .catch(() => {});
-  }, [user]);
+  }, [user, searchParams]);
 
   // ── Derived lists ───────────────────────────────────────────────────────────
 
@@ -518,7 +650,7 @@ export default function RecoverySchedulePage() {
         setShowChapterModal(true);
       } else {
         // All subjects have data — go straight to generation
-        await handleGeneratePack();
+        await handleGeneratePack([]);
       }
     } catch {
       showToast('Failed to check subject data', 'error');
@@ -542,7 +674,7 @@ export default function RecoverySchedulePage() {
     showToast(`Chapters saved for ${subject}`);
   }
 
-  async function handleGeneratePack() {
+  async function handleGeneratePack(skipSubjects: string[] = []) {
     const token = getToken();
     if (!token) return;
     setGeneratingPack(true);
@@ -551,7 +683,7 @@ export default function RecoverySchedulePage() {
       const res = await fetch(`${BASE_URL}/api/recovery/start-pack`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ class: selectedClass, section: selectedSection }),
+        body: JSON.stringify({ class: selectedClass, section: selectedSection, skip_subjects: skipSubjects }),
       });
       const json = await res.json();
       if (!res.ok) { showToast(json.message ?? 'Failed to start pack', 'error'); return; }
@@ -681,9 +813,14 @@ export default function RecoverySchedulePage() {
         <ChapterSelectionModal
           noDataSubjects={noDataSubjects}
           savedChapters={savedChapters}
+          board={schoolBoard}
+          selectedClass={selectedClass}
           onSave={handleSaveChapters}
           onClose={() => setShowChapterModal(false)}
-          onDone={handleGeneratePack}
+          onDone={(includedSubjects) => {
+            const skipped = noDataSubjects.filter((s) => !includedSubjects.includes(s));
+            void handleGeneratePack(skipped);
+          }}
         />
       )}
 
