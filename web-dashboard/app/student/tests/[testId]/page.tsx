@@ -529,7 +529,7 @@ function ResultsScreen({ result, onBack }: { result: AttemptResultResponse; onBa
           ) : (
             <p className="text-sm text-gray-500">Score pending</p>
           )}
-          {theoryAnswers.length > 0 && (
+          {theoryAnswers.length > 0 && result.total_score_pending && (
             <div className="mt-3 px-4 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 font-medium">
               ⏳ Theory questions are pending teacher review
             </div>

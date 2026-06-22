@@ -843,6 +843,7 @@ export interface TestSubmissionRecord {
   mcq_score: number | null;
   total_score: number | null;
   submitted_at: string | null;
+  theory_pending: boolean;
   // Integrity fields — null if no integrity log exists yet
   integrity_score: number | null;
   exit_count: number | null;

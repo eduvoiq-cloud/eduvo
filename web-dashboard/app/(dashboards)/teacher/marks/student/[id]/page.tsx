@@ -353,7 +353,9 @@ export default function TeacherStudentMarksPage() {
                     <td className="px-4 py-3 text-center">
                       {t.total_score !== null
                         ? <span className="font-semibold text-gray-900">{t.total_score}</span>
-                        : <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Pending</span>}
+                        : t.theory_pending
+                          ? <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Pending</span>
+                          : <span className="font-semibold text-gray-900">{t.mcq_score ?? '—'}</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-500 text-xs">
                       {t.submitted_at ? ((t.submitted_at && !t.submitted_at.endsWith('Z') && !t.submitted_at.includes('+') && !/\d{2}:\d{2}$/.test(t.submitted_at)) ? new Date(t.submitted_at + 'Z') : new Date(t.submitted_at)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
@@ -362,12 +364,12 @@ export default function TeacherStudentMarksPage() {
                       <button
                         onClick={() => openAttemptDetail(t.attempt_id)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                          t.total_score === null
+                          t.theory_pending
                             ? 'text-blue-700 bg-blue-50 hover:bg-blue-100'
                             : 'text-gray-600 bg-gray-100 hover:bg-gray-200'
                         }`}
                       >
-                        {t.total_score === null ? 'Mark' : 'Review'}
+                        {t.theory_pending ? 'Mark' : 'Review'}
                       </button>
                     </td>
                   </tr>

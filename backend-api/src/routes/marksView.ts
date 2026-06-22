@@ -320,6 +320,22 @@ router.get('/student/:id', async (req: Request, res: Response) => {
     .eq('is_submitted', true)
     .order('submitted_at', { ascending: false });
 
+  const attemptIds = (testAttempts ?? []).map((a: Record<string, unknown>) => a.id as string);
+
+  // Determine which attempts have ungraded theory answers — used for theory_pending flag
+  const theoryPendingSet = new Set<string>();
+  if (attemptIds.length > 0) {
+    const { data: ungraded } = await supabaseAdmin
+      .from('student_answers')
+      .select('attempt_id')
+      .in('attempt_id', attemptIds)
+      .not('theory_answer', 'is', null)
+      .is('marks_awarded', null);
+    for (const row of (ungraded ?? [])) {
+      theoryPendingSet.add((row as { attempt_id: string }).attempt_id);
+    }
+  }
+
   const formattedAttempts = (testAttempts ?? []).map((a: Record<string, unknown>) => {
     const test = a.tests as Record<string, unknown> | null;
     return {
@@ -332,11 +348,12 @@ router.get('/student/:id', async (req: Request, res: Response) => {
       mcq_score: a.mcq_score as number | null,
       total_score: a.total_score as number | null,
       submitted_at: a.submitted_at as string | null,
+      theory_pending: theoryPendingSet.has(a.id as string),
     };
   });
 
   // Fetch integrity logs for all submitted attempts of this student
-  const attemptIdsForIntegrity = (testAttempts ?? []).map((a: Record<string, unknown>) => a.id as string);
+  const attemptIdsForIntegrity = attemptIds;
   type IntegrityRow = {
     daily_test_attempt_id: string;
     integrity_score: number | null;

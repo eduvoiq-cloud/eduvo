@@ -1297,11 +1297,18 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
     }
   }
 
+  // For pure-MCQ tests (no theory questions in this test), total_score = mcq_score
+  // immediately. For mixed or theory-only tests, total_score stays null until
+  // the teacher marks the theory answers.
+  const hasTheoryQuestions = [...questionMap.values()].some((q) => q.question_type !== 'mcq');
+  const resolvedTotalScore = hasTheoryQuestions ? null : mcqScore;
+
   // Update attempt as submitted (including web proctoring fields if present)
   const { error: updateErr } = await supabaseAdmin
     .from('test_attempts')
     .update({
       mcq_score: mcqScore,
+      total_score: resolvedTotalScore,
       is_submitted: true,
       submitted_at: now.toISOString(),
       // Web proctoring fields (zero by default — only set if submitted from web portal)
