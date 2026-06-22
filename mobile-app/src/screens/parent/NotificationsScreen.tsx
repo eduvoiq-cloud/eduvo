@@ -68,9 +68,14 @@ export default function ParentNotificationsScreen() {
     try {
       const response = await apiClient.get('/api/notifications');
       const raw: Notification[] = response.data.data?.data ?? [];
+      // Normalise: backend may send 'message' (DB column name) or 'body' (after normaliseRow)
+      const normalised = raw.map((n: any) => ({
+        ...n,
+        body: n.body ?? n.message ?? '',
+      }));
       // Sort everything by date descending so the newest item (announcement or
       // notification) always appears at the top, regardless of type.
-      const sorted = [...raw].sort(
+      const sorted = [...normalised].sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       setNotifications(sorted);
@@ -106,9 +111,8 @@ export default function ParentNotificationsScreen() {
 
     setMarkingAll(true);
     try {
-      await Promise.all(
-        unread.map((n) => apiClient.patch(`/api/notifications/${n.id}/read`))
-      );
+      // Use the bulk read-all endpoint — one request instead of N
+      await apiClient.put('/api/notifications/read-all');
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     } catch (error: unknown) {
       Alert.alert('Error', 'Could not mark all notifications as read. Please try again.');

@@ -80,10 +80,18 @@ function secondsUntilHHMM(hhmm: string | null | undefined): number | null {
   return diff > 0 ? Math.round(diff) : null;
 }
 
-/** Returns true if the current IST time is past the HH:MM window end time */
-function isWindowClosed(available_until: string | null | undefined): boolean {
+/** Returns true if the current IST time is past the HH:MM window end time (handles overnight) */
+function isWindowClosed(available_until: string | null | undefined, available_from?: string | null): boolean {
   if (!available_until) return false;
-  return nowISTMinutes() > toMinutes(available_until);
+  const currentMins = nowISTMinutes();
+  const untilMins = toMinutes(available_until);
+  const fromMins = available_from ? toMinutes(available_from) : 0;
+  const isOvernight = fromMins > untilMins;
+  if (isOvernight) {
+    // Window is closed only in the gap between until and from
+    return currentMins > untilMins && currentMins < fromMins;
+  }
+  return currentMins > untilMins;
 }
 
 function formatCountdown(seconds: number): string {
@@ -118,7 +126,7 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
   const isFuture = testDay ? testDay >= tomorrowStart : false;
 
   // Check if the time window has already closed (only relevant for today's not-started tests)
-  const windowClosed = !isMissed && !isFuture && status === 'not_started' && isWindowClosed(test.available_until);
+  const windowClosed = !isMissed && !isFuture && status === 'not_started' && isWindowClosed(test.available_until, test.available_from);
 
   return (
     <TouchableOpacity
@@ -290,7 +298,7 @@ function filterTests(tests: TestRecord[], tab: TabKey): TestRecord[] {
         // time window has already closed (student can't start them anymore).
         if (isToday && status !== 'completed') {
           // If available_until has passed, move to completed/missed bucket
-          return !isWindowClosed(t.available_until);
+          return !isWindowClosed(t.available_until, t.available_from);
         }
         return false;
       case 'upcoming':
@@ -302,7 +310,7 @@ function filterTests(tests: TestRecord[], tab: TabKey): TestRecord[] {
         return (
           status === 'completed' ||
           (isPast && status === 'not_started') ||
-          (isToday && status === 'not_started' && isWindowClosed(t.available_until))
+          (isToday && status === 'not_started' && isWindowClosed(t.available_until, t.available_from))
         );
       default:
         return true;
@@ -373,8 +381,10 @@ export default function TestsScreen() {
     // Date enforcement: only allow starting on the scheduled date.
     // Allow resuming in_progress tests from any date (crash/reconnect safety).
     if (test.attempt_status !== 'in_progress' && test.attempt_status !== 'completed') {
-      const now = new Date();
-      const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      // Use IST date to match backend enforcement — prevents blocking students
+      // between midnight and 5:30 AM IST when UTC is still the previous day.
+      const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const todayISO = istNow.toISOString().slice(0, 10);
       if (test.date && test.date !== todayISO) {
         const testDateFormatted = formatDate(test.date);
         if (test.date > todayISO) {
@@ -393,7 +403,7 @@ export default function TestsScreen() {
         return;
       }
 
-      // Time window enforcement (client-side, for immediate UX feedback)
+  // Client-side overnight window enforcement (mirrors backend logic added in Bug 6 fix)
       if (test.available_from || test.available_until) {
         const currentMins = nowISTMinutes();
         const toMins = (hhmm: string) => {
@@ -408,13 +418,21 @@ export default function TestsScreen() {
           );
           return;
         }
-        if (test.available_until && currentMins > toMins(test.available_until)) {
-          Alert.alert(
-            'Test Window Closed',
-            `The test window closed at ${formatHHMM(test.available_until)}. You can no longer start this test.`,
-            [{ text: 'OK' }]
-          );
-          return;
+        if (test.available_until) {
+          const untilMins = toMins(test.available_until);
+          const fromMins = test.available_from ? toMins(test.available_from) : 0;
+          const isOvernight = fromMins > untilMins;
+          const windowClosed = isOvernight
+            ? (currentMins > untilMins && currentMins < fromMins)
+            : currentMins > untilMins;
+          if (windowClosed) {
+            Alert.alert(
+              'Test Window Closed',
+              `The test window closed at ${formatHHMM(test.available_until)}. You can no longer start this test.`,
+              [{ text: 'OK' }]
+            );
+            return;
+          }
         }
       }
     }

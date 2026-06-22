@@ -235,7 +235,7 @@ router.post('/complaints', async (req: Request, res: Response) => {
     if (admins && admins.length > 0) {
       const notifications = admins.map((admin: { id: string }) => ({
         title: 'New Parent Complaint',
-        body: `New complaint submitted by a parent (student ID: ${student_id})`,
+        message: `New complaint submitted by a parent (student ID: ${student_id})`,
         type: 'alert',
         recipient_id: admin.id,
         sender_id: parentId,

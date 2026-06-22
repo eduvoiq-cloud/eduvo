@@ -131,7 +131,7 @@ export default function AttendanceScreen() {
 
   // Derive yearly summary directly from allRecords — no separate API call needed
   const summary: AttendanceSummary | null = allRecords.length > 0 ? (() => {
-    const present = allRecords.filter((r) => r.status === 'present').length;
+    const present = allRecords.filter((r) => r.status === 'present' || r.status === 'late' || r.status === 'excused').length;
     const absent  = allRecords.filter((r) => r.status === 'absent').length;
     const late    = allRecords.filter((r) => r.status === 'late').length;
     const total   = allRecords.length;

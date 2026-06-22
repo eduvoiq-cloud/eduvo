@@ -55,7 +55,7 @@ async function createNotification(
   try {
     await supabaseAdmin.from('notifications').insert({
       title,
-      body,
+      message: body,
       type: 'alert',
       recipient_id: recipientId,
       sender_id: senderId,
