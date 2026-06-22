@@ -277,11 +277,11 @@ router.get(
             // Enforce student can only see their own class
             const qClass = req.query.class as string;
             const qSection = req.query.section as string;
-            if (qClass && qClass !== student.class_name) {
+            if (qClass && qClass.trim().toLowerCase() !== (student.class_name ?? '').trim().toLowerCase()) {
               sendError(res, 'Access denied: you can only view your own class homework', 403);
               return;
             }
-            if (qSection && qSection !== student.section) {
+            if (qSection && qSection.trim().toLowerCase() !== (student.section ?? '').trim().toLowerCase()) {
               sendError(res, 'Access denied: you can only view your own section homework', 403);
               return;
             }
