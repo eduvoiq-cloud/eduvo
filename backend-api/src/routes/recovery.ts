@@ -100,87 +100,264 @@ async function callGeminiJSON<T>(prompt: string): Promise<T> {
 // Export for use by cron batch-job result processor
 export { callGeminiJSON };
 
-// ── Prompt builders ───────────────────────────────────────────────────────────
+// ── Wrong questions context builder ─────────────────────────────────────────
+
+/**
+ * Fetches the actual questions a student got wrong in recent tests for a subject.
+ * Returns a formatted string the AI can use to understand specific gaps.
+ * Max ~1500 chars to avoid bloating the prompt.
+ */
+async function buildWrongQuestionsContext(
+  studentId: string,
+  subject: string,
+  schoolId: string
+): Promise<string | undefined> {
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: attempts } = await supabaseAdmin
+    .from('test_attempts')
+    .select(`
+      id,
+      tests!test_attempts_test_id_fkey (
+        subject, school_id, chapter, class
+      )
+    `)
+    .eq('student_id', studentId)
+    .eq('is_submitted', true)
+    .gte('submitted_at', ninetyDaysAgo);
+
+  const subjectAttempts = ((attempts ?? []) as unknown as Array<{
+    id: string;
+    tests: { subject: string; school_id: string; chapter: string | null } | null;
+  }>).filter(
+    (a) => a.tests?.school_id === schoolId &&
+      a.tests?.subject?.toLowerCase() === subject.toLowerCase()
+  );
+
+  if (subjectAttempts.length === 0) return undefined;
+
+  const wrongItems: string[] = [];
+  for (const attempt of subjectAttempts.slice(0, 5)) {
+    const { data: answers } = await supabaseAdmin
+      .from('student_answers')
+      .select('question_id, selected_option')
+      .eq('attempt_id', attempt.id);
+
+    if (!answers || answers.length === 0) continue;
+
+    const qIds = (answers as Array<{ question_id: string; selected_option: string | null }>)
+      .map((a) => a.question_id);
+
+    const { data: questions } = await supabaseAdmin
+      .from('test_questions')
+      .select('id, question_text, correct_option, question_type')
+      .in('id', qIds)
+      .eq('question_type', 'mcq');
+
+    if (!questions) continue;
+
+    const correctMap = new Map<string, { text: string; correct: string }>(
+      (questions as Array<{ id: string; question_text: string; correct_option: string | null }>)
+        .map((q) => [q.id, { text: q.question_text, correct: q.correct_option ?? '' }])
+    );
+
+    const chapter = attempt.tests?.chapter ?? '';
+    for (const ans of answers as Array<{ question_id: string; selected_option: string | null }>) {
+      const q = correctMap.get(ans.question_id);
+      if (!q) continue;
+      if (ans.selected_option !== null && ans.selected_option !== q.correct) {
+        const topicStr = chapter ? ` [Chapter: ${chapter}]` : '';
+        wrongItems.push(`- "${q.text}"${topicStr} (student chose: ${ans.selected_option}, correct: ${q.correct})`);
+        if (wrongItems.length >= 15) break;
+      }
+    }
+    if (wrongItems.length >= 15) break;
+  }
+
+  if (wrongItems.length === 0) return undefined;
+  return wrongItems.join('\n');
+}
+
+// ── Language subject detection ────────────────────────────────────────────────
+
+// ── Master pack prompt ────────────────────────────────────────────────────────
+
+/**
+ * Single master prompt for ALL subject types and ALL student profiles.
+ * Gemini gets full context about the app, the student, and subject-type
+ * rules inline — one function, zero ambiguity.
+ */
+function buildMasterPackPrompt(params: {
+  className: string;
+  subject: string;
+  board: string;
+  profileType: 'weak' | 'no_data' | 'enrichment';
+  weakTopics: string[];
+  wrongQuestionsContext?: string;
+  teacherChapters?: string[];
+}): string {
+  const { className, subject, board, profileType, weakTopics, wrongQuestionsContext, teacherChapters } = params;
+  const subjectLower = subject.toLowerCase().trim();
+
+  // ── App context ──────────────────────────────────────────────────────────
+  const appContext = `You are the AI engine inside Eduvo, an Indian school education app. You are generating a RECOVERY STUDY PACK for a Class ${className} student studying ${subject} (${board} curriculum in India). Age: ~${parseInt(className) + 5} years old.
+
+This pack renders on mobile with: topic header, orange 🌍 Real World block, key concept bullets, red mistake bullets, green solved-example cards, and blue practice-question cards with hidden answers.
+
+`;
+
+  // ── Profile context ──────────────────────────────────────────────────────
+  let profileContext = '';
+  if (profileType === 'enrichment') {
+    profileContext = `STUDENT PROFILE — HIGH ACHIEVER (Enrichment Pack): This student scores 85%+ in ${subject}. They have mastered the standard syllabus. This is a CHALLENGE/EXTENSION pack — go beyond the textbook. Reveal deeper principles and the "why behind the why". Topics: 10 most advanced/interesting extension topics in ${subject} Class ${className} ${board}.\n\n`;
+  } else if (profileType === 'no_data') {
+    const topicsLine = teacherChapters && teacherChapters.length > 0
+      ? `Teacher-selected chapters to cover (cover ALL, one section each): ${teacherChapters.join(', ')}.`
+      : `Cover the 10 most important and commonly-tested topics in ${subject} Class ${className} ${board}.`;
+    profileContext = `STUDENT PROFILE — NO TEST DATA (Foundation Pack): No test attempts yet for this student in ${subject}. Build their exam foundation from scratch. ${topicsLine} Make it specific and useful — NOT a generic subject overview.\n\n`;
+  } else {
+    const topicsLine = weakTopics.length > 0
+      ? `Weak topics (weakest first): ${weakTopics.slice(0, 10).join(', ')}.`
+      : `Cover the most important topics in ${subject} Class ${className} ${board}.`;
+    const wrongQsLine = wrongQuestionsContext
+      ? `\nACTUAL WRONG QUESTIONS FROM THIS STUDENT'S RECENT TESTS — address each gap directly:\n${wrongQuestionsContext}\n`
+      : '';
+    profileContext = `STUDENT PROFILE — NEEDS RECOVERY (Weak Areas Pack): This student struggled on specific topics in ${subject}. ${topicsLine}${wrongQsLine}Fix these exact gaps. Do NOT give a generic overview.\n\n`;
+  }
+
+  // (prompt continues in next segment)
+  const PLACEHOLDER_SUBJECT_RULES = '__SUBJECT_RULES__';
+  const PLACEHOLDER_SECTION_COUNT = weakTopics.length > 0 ? Math.min(weakTopics.length, 10) : 10;
+
+  return buildMasterPackPromptPart2(
+    appContext + profileContext,
+    subjectLower,
+    subject,
+    className,
+    board,
+    PLACEHOLDER_SECTION_COUNT,
+    profileType,
+    teacherChapters
+  );
+}
+
+function buildMasterPackPromptPart2(
+  prefix: string,
+  subjectLower: string,
+  subject: string,
+  className: string,
+  board: string,
+  sectionCount: number,
+  profileType: string,
+  teacherChapters?: string[]
+): string {
+  const finalCount = profileType === 'no_data' && teacherChapters && teacherChapters.length > 0
+    ? teacherChapters.length
+    : sectionCount;
+
+  // ── Subject-type rules ───────────────────────────────────────────────────
+  const isMathsOrScience = ['math', 'physics', 'chemistry', 'biology', 'science', 'computer', 'statistics', 'accountancy', 'economics', 'geography'].some(k => subjectLower.includes(k));
+  const isLanguage = ['english', 'hindi', 'gujarati', 'marathi', 'tamil', 'telugu', 'kannada', 'malayalam', 'punjabi', 'urdu', 'sanskrit', 'bengali', 'odia'].includes(subjectLower) || ['language', 'literature', 'second language', 'third language'].some(k => subjectLower.includes(k));
+
+  let subjectRules = '';
+  if (isMathsOrScience) {
+    subjectRules = `SUBJECT TYPE — MATHS/SCIENCE/APPLIED:
+- Hook explanations with real Indian scenarios: cricket averages, Zomato delivery, smartphone battery, UPI, IPL, Bollywood, trains, cooking.
+- real_world_application (🌍): vivid 3-5 sentence story of this concept used RIGHT NOW in India by an engineer/doctor/scientist/cricketer. End: "So when you understand [concept], you're thinking exactly like a [profession]."
+- solved_examples: Indian names (Rohan, Priya, Arjun, Kavya, Meera, Ravi) + relatable scenarios. Each step includes the WHY.
+- practice_questions: frame as fun challenges ("Think you've got it? Try this:").
+
+`;
+  } else if (isLanguage) {
+    subjectRules = `SUBJECT TYPE — LANGUAGE/LITERATURE (${subject}):
+- For STORY/POEM chapters: explanation MUST start with a 2-3 sentence summary ("The story is about... / The poem describes...") then the core exam-tested theme/message.
+- For GRAMMAR topics: explain the rule with an analogy (tenses = time travel), show the recognition pattern.
+- NEVER write generic statements like "Literature teaches us about humanity."
+- real_world_application (🌍): how this chapter's skill/theme matters in REAL LIFE — job interviews, writing emails, understanding speeches, relationships. E.g. for grammar passive voice: "Every professional email uses this — getting it right makes you sound confident." End with something motivating.
+- key_concepts: for stories: key quotes, character traits, literary devices (name them), themes, author's purpose. For grammar: the rule + exception + recognition tip.
+- solved_examples: for stories — one extract question + one theme/value question with full model answers in examiner-expected structure. For grammar — one straightforward + one tricky contextual.
+- practice_questions: mirror actual ${board} Class ${className} ${subject} exam patterns. Full model answers.
+
+`;
+  } else {
+    subjectRules = `SUBJECT TYPE — THEORY/SOCIAL SCIENCE/HISTORY/CIVICS/EVS:
+- Explanation must be TOPIC-SPECIFIC. Never write "History teaches us about the past."
+- real_world_application (🌍): how this chapter is ALIVE and RELEVANT in India today. History: effects still visible in politics/culture/economy. Civics: how this law/body affected recent news. EVS: a local environmental situation students can observe.
+- solved_examples: use Indian names, real Indian locations, cause-effect structures. For history: timeline/cause-effect. For civics: a real government-process scenario.
+- practice_questions: include at least one "give reasons" or "explain the significance" type question.
+
+`;
+  }
+
+  const qualityRules = `UNIVERSAL QUALITY RULES:
+- NEVER produce a generic subject intro. First word of every explanation = the SPECIFIC TOPIC.
+- Write like the best teacher in the school explaining to a student the night before an exam.
+- Short punchy sentences. No academic waffle.
+- Frame every common mistake as insider knowledge: "Here's the trap 80% of students fall into..."
+- Use Indian specifics: ₹, Indian cities, Indian names — never "John bought apples".
+- practice_questions answers = COMPLETE model answers with reasoning and structure.
+
+`;
+
+  const outputFormat = `OUTPUT: Generate exactly ${finalCount} sections (one per topic/chapter listed above).
+
+Each section MUST have ALL fields:
+- topic: specific topic or chapter name
+- explanation: hook + clear concept. Max 120 words. Subject rules above apply.
+- real_world_application: vivid real-life story 3-5 sentences. Subject rules above apply.
+- key_concepts: array of 4-6 precise exam-ready bullet points for THIS topic only.
+- common_mistakes: array of 2-3 specific traps. Each starts with "Trap:" or "Most students...".
+- solved_examples: array of exactly 2 objects {question, solution, steps[]} — each step includes brief reasoning.
+- practice_questions: array of exactly 3 objects {question, answer} — answer is a complete model answer with reasoning.
+
+Return ONLY valid JSON, no markdown fences, no extra text:
+{"sections":[{"topic":"string","explanation":"string","real_world_application":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
+
+  return prefix + subjectRules + qualityRules + outputFormat;
+}
+
+// ── Old prompt functions — now all delegate to buildMasterPackPrompt ──────────
 
 function buildPackPromptWeak(
-  className: string,
-  subject: string,
-  board: string,
-  topics: string[]
+  className: string, subject: string, board: string,
+  topics: string[], wrongQuestionsContext?: string
 ): string {
-  const topicList = topics.slice(0, 4).join(', ');
-  return `You are an enthusiastic, friendly tutor creating a personalised recovery study pack for a Class ${className} student in India studying ${subject} (${board} curriculum). Your job is to make this student EXCITED to learn — not feel punished for struggling.
+  return buildMasterPackPrompt({ className, subject, board, profileType: 'weak', weakTopics: topics, wrongQuestionsContext });
+}
 
-This student needs a confidence boost on these topics: ${topicList}
+function buildPackPromptLanguageWeak(
+  className: string, subject: string, board: string,
+  topics: string[], wrongQuestionsContext?: string
+): string {
+  return buildMasterPackPrompt({ className, subject, board, profileType: 'weak', weakTopics: topics, wrongQuestionsContext });
+}
 
-Tone rules:
-- Write like a cool older sibling or a favourite teacher — warm, encouraging, never boring
-- Use real-life Indian contexts: cricket, Bollywood, street food, festivals, apps like Zomato/CRED, daily life
-- Start each explanation with a surprising fact, a relatable story, or a "Did you know?" hook
-- Frame mistakes positively: "Here's the sneaky trap most students fall into — but not you, now that you know!"
-- Frame practice questions as a fun challenge: "Think you've got it? Try this:", "Level up:", etc.
-- Use short punchy sentences. Avoid long paragraphs.
-
-Create one section per topic (max 4 topics). Each section must include:
-1. explanation: Start with a hook (relatable story, surprising fact, or analogy). Then explain the concept simply. Max 100 words total. Age-appropriate for Class ${className}. Must feel exciting, not textbook-like.
-2. key_concepts: 3-5 bullet points — each should be a memorable one-liner, not a dry definition. Use "→" instead of plain bullets in the text.
-3. common_mistakes: 2-3 bullet points — frame each as "The sneaky trap:" or "Watch out:" to make it feel like insider knowledge, not a scolding.
-4. solved_examples: exactly 1, using Indian names (Rohan, Priya, Arjun, Kavya, etc.) and relatable Indian scenarios. Show clear step-by-step with a brief "why" for each step.
-5. practice_questions: exactly 2 questions — first one is a confidence-builder (easier), second is a fun challenge. Each must have a clear answer.
-
-Return ONLY valid JSON, no markdown fences:
-{"sections":[{"topic":"string","explanation":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
+function buildPackPromptLanguageNoData(
+  className: string, subject: string, board: string, teacherSelectedChapters?: string[]
+): string {
+  return buildMasterPackPrompt({ className, subject, board, profileType: 'no_data', weakTopics: [], teacherChapters: teacherSelectedChapters });
 }
 
 function buildPackPromptNoData(
-  className: string,
-  subject: string,
-  board: string
+  className: string, subject: string, board: string, teacherSelectedChapters?: string[]
 ): string {
-  return `You are an enthusiastic, friendly tutor creating a "welcome to ${subject}" discovery pack for a Class ${className} student in India (${board} curriculum). This student is brand new — no test history yet. Your mission: make them CURIOUS and excited to explore this subject.
-
-Tone rules:
-- Write like you're showing someone an amazing secret they didn't know existed
-- Use the vibe: "You've been using this concept without even realising it!"
-- Connect every topic to something from daily Indian life — cricket scores, UPI payments, cooking measurements, WhatsApp, Bollywood, etc.
-- Every explanation should make the student think "oh wow, that's actually cool"
-- Short sentences. Punchy. Fun. Like a reel, not a lecture.
-
-Cover 4 major topics of ${subject} for Class ${className} ${board}. For each topic:
-1. explanation: Open with a "You already use this in real life!" hook. Then reveal the concept simply and excitingly. Max 100 words. Must feel like discovering a superpower, not reading a textbook.
-2. key_concepts: 3 bullet points — each a memorable one-liner that would make a student go "oh that's neat". Use simple language.
-3. common_mistakes: 1-2 bullet points — frame as "Here's what trips up most beginners:" to feel helpful, not scary.
-4. solved_examples: exactly 1, super simple and fun. Use Indian names (Rohan, Priya, Arjun, Kavya) and everyday scenarios.
-5. practice_questions: exactly 1 easy, confidence-building question. Frame it as "Give this a shot:" with a clear answer.
-
-Return ONLY valid JSON, no markdown fences:
-{"sections":[{"topic":"string","explanation":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
+  return buildMasterPackPrompt({ className, subject, board, profileType: 'no_data', weakTopics: [], teacherChapters: teacherSelectedChapters });
 }
 
-function buildPackPromptEnrichment(
-  className: string,
-  subject: string,
-  board: string
+function buildPackPromptEnrichment(className: string, subject: string, board: string): string {
+  return buildMasterPackPrompt({ className, subject, board, profileType: 'enrichment', weakTopics: [] });
+}
+
+function selectPackPrompt(
+  className: string, subject: string, board: string,
+  profileType: string, weakTopics: string[],
+  wrongQuestionsContext?: string, teacherChapters?: string[]
 ): string {
-  return `You are creating a "you've earned this" challenge pack for a high-achieving Class ${className} student in India studying ${subject} (${board} curriculum). This student has CRUSHED the standard syllabus. Now it's time to blow their mind with what's beyond it.
-
-Tone rules:
-- Open every section like you're letting them in on a secret: "Here's what your textbook didn't tell you..."
-- Treat them as equals — smart, capable, ready for a real challenge
-- Connect advanced concepts to the real world: how engineers use this, how scientists discovered this, what happens if you break the rules
-- Make them feel like they're getting VIP access to knowledge most students their age never see
-- Use Indian context where natural, but also zoom out to global discoveries when it fits
-- Challenging but never discouraging — every hard problem has a clear path to the answer
-
-Cover 4 advanced or extension topics in ${subject} for Class ${className} ${board}. For each topic:
-1. explanation: Start with "Your textbook covered X — but here's the real story:" or a mind-blowing real-world application. Advanced but accessible. Max 100 words. Must feel like levelling up, not more homework.
-2. key_concepts: 4-5 challenging concepts — each one a deeper insight or a connection to the real world that the syllabus skips.
-3. common_mistakes: 2 bullet points — mistakes even top students make, framed as "Even bright students slip here:" to make it feel exclusive and worth knowing.
-4. solved_examples: exactly 1 harder problem with a detailed, satisfying step-by-step solution. Use interesting scenarios — space, sports analytics, coding, business — not just textbook contexts.
-5. practice_questions: exactly 2 hard questions. Frame them as "Challenge:" and "Bonus Challenge:" with full answers.
-
-Return ONLY valid JSON, no markdown fences:
-{"sections":[{"topic":"string","explanation":"string","key_concepts":["string"],"common_mistakes":["string"],"solved_examples":[{"question":"string","solution":"string","steps":["string"]}],"practice_questions":[{"question":"string","answer":"string"}]}]}`;
+  return buildMasterPackPrompt({
+    className, subject, board,
+    profileType: profileType as 'weak' | 'no_data' | 'enrichment',
+    weakTopics, wrongQuestionsContext, teacherChapters,
+  });
 }
 
 function buildTestPrompt(
@@ -405,7 +582,46 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
 
       const currentMonth = now.toISOString().slice(0, 7) + '-01';
 
-      // ── Build one Gemini Batch request per student × subject ────────────────
+      // ── Pre-compute class-level weak topics per subject ──────────────────────
+      // Used as fallback for students who haven't taken any app tests themselves
+      // but whose classmates have — we use the class's aggregate weak areas.
+      const classWeakTopicsMap = new Map<string, string[]>(); // subject -> top weak topics
+      for (const subject of subjects) {
+        try {
+          const allWeakTopics: Map<string, number> = new Map();
+          for (const s of students) {
+            const w = await analyzeStudentWeakness(s.id, subject, schoolId, currentMonth);
+            if (!w.has_no_data) {
+              for (const t of w.weak_topics) {
+                allWeakTopics.set(t.topic, (allWeakTopics.get(t.topic) ?? 0) + t.weakness_score);
+              }
+            }
+          }
+          // Sort by aggregate weakness (most commonly weak topics first)
+          const sorted = [...allWeakTopics.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([topic]) => topic)
+            .slice(0, 10);
+          classWeakTopicsMap.set(subject, sorted);
+        } catch { /* non-fatal */ }
+      }
+
+      // ── Fetch teacher-selected chapters for subjects with no app test data ──
+      const teacherChaptersMap = new Map<string, string[]>(); // subject -> chapter names
+      {
+        const { data: chaptersData } = await supabaseAdmin
+          .from('recovery_subject_chapters')
+          .select('subject, chapter_names')
+          .eq('school_id', schoolId)
+          .eq('class', className)
+          .eq('section', section)
+          .eq('scheduled_month', currentMonth);
+        for (const row of (chaptersData ?? []) as Array<{ subject: string; chapter_names: string[] }>) {
+          teacherChaptersMap.set(row.subject, row.chapter_names);
+        }
+      }
+
+      // ── Build one Gemini Batch request per student x subject ────────────────
       // Key format: "<studentId>|<subject>" — used by cron to route results back
       const batchRequests: Array<{ key: string; prompt: string }> = [];
 
@@ -414,16 +630,28 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
           try {
             const weakness = await analyzeStudentWeakness(student.id, subject, schoolId, currentMonth);
             const profileType = weakness.profile_type;
-            const weakTopics = weakness.weak_topics.slice(0, 4).map((t) => t.topic);
+            let weakTopics = weakness.weak_topics.slice(0, 10).map((t) => t.topic);
 
-            let prompt: string;
-            if (profileType === 'no_data') {
-              prompt = buildPackPromptNoData(className, subject, board);
-            } else if (profileType === 'enrichment') {
-              prompt = buildPackPromptEnrichment(className, subject, board);
-            } else {
-              prompt = buildPackPromptWeak(className, subject, board, weakTopics);
+            // If student has no personal test data but class data exists, use class-level topics
+            if (weakness.has_no_data && (classWeakTopicsMap.get(subject) ?? []).length > 0) {
+              weakTopics = classWeakTopicsMap.get(subject)!;
             }
+
+            // Build wrong questions context from recent test data for richer prompts
+            let wrongQuestionsContext: string | undefined;
+            try {
+              wrongQuestionsContext = await buildWrongQuestionsContext(student.id, subject, schoolId);
+            } catch { /* non-fatal */ }
+
+            const teacherChapters = teacherChaptersMap.get(subject);
+
+            const prompt = selectPackPrompt(
+              className, subject, board,
+              weakness.has_no_data ? 'no_data' : profileType,
+              weakTopics,
+              wrongQuestionsContext,
+              teacherChapters
+            );
 
             batchRequests.push({ key: `${student.id}|${subject}`, prompt });
 
@@ -1013,6 +1241,132 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
   }).eq('id', attemptId);
 
   sendSuccess(res, { attempt_id: attemptId, score, total_questions: total, percentage });
+});
+
+// ── GET /api/recovery/subjects-with-no-data ───────────────────────────────────
+/**
+ * Returns which subjects in the given class+section have NO student test attempts
+ * in the past 90 days. Teacher uses this to know which subjects need chapter selection.
+ *
+ * Query params: class, section
+ */
+router.get('/subjects-with-no-data', ...teacherAuth, async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id as string;
+  const teacherId = req.user!.id;
+  if (!schoolId) { sendError(res, 'No school associated', 403); return; }
+
+  const className = req.query.class as string | undefined;
+  const section   = req.query.section as string | undefined;
+  if (!className || !section) { sendError(res, 'class and section params required', 400); return; }
+
+  const subjects = await getTeacherSubjectsForClass(teacherId, schoolId, className, section);
+  if (subjects.length === 0) { sendSuccess(res, []); return; }
+
+  const students = await getStudentsInClass(schoolId, className, section);
+  if (students.length === 0) { sendSuccess(res, []); return; }
+
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const studentIds = students.map((s) => s.id);
+
+  const noDataSubjects: string[] = [];
+
+  for (const subject of subjects) {
+    // Check if any student in this class has a test attempt for this subject in last 90 days
+    const { data: attempts } = await supabaseAdmin
+      .from('test_attempts')
+      .select(`
+        id,
+        tests!test_attempts_test_id_fkey (subject, school_id)
+      `)
+      .in('student_id', studentIds)
+      .eq('is_submitted', true)
+      .gte('submitted_at', ninetyDaysAgo);
+
+    const hasAttempts = ((attempts ?? []) as unknown as Array<{
+      tests: { subject: string; school_id: string } | null;
+    }>).some((a) =>
+      a.tests?.school_id === schoolId &&
+      a.tests?.subject?.toLowerCase() === subject.toLowerCase()
+    );
+
+    if (!hasAttempts) {
+      noDataSubjects.push(subject);
+    }
+  }
+
+  sendSuccess(res, noDataSubjects);
+});
+
+// ── POST /api/recovery/subject-chapters ──────────────────────────────────────
+/**
+ * Teacher saves the selected chapters for a subject that has no test data.
+ * These chapters are used by the AI to generate a targeted pack instead of
+ * a generic overview.
+ *
+ * Body: { class, section, subject, chapter_names: string[] }
+ */
+const subjectChaptersSchema = z.object({
+  class:         z.string().min(1),
+  section:       z.string().min(1),
+  subject:       z.string().min(1),
+  chapter_names: z.array(z.string().min(1)).min(1).max(20),
+});
+
+router.post('/subject-chapters', ...teacherAuth, async (req: Request, res: Response) => {
+  const schoolId  = req.user!.school_id as string;
+  if (!schoolId) { sendError(res, 'No school associated', 403); return; }
+
+  const parsed = subjectChaptersSchema.safeParse(req.body);
+  if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+  const { class: className, section, subject, chapter_names } = parsed.data;
+  const scheduledMonth = new Date().toISOString().slice(0, 7) + '-01';
+
+  const { data, error } = await supabaseAdmin
+    .from('recovery_subject_chapters')
+    .upsert({
+      school_id: schoolId,
+      class: className,
+      section,
+      subject,
+      scheduled_month: scheduledMonth,
+      chapter_names,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'school_id,class,section,subject,scheduled_month' })
+    .select()
+    .single();
+
+  if (error) { sendError(res, error.message, 500); return; }
+
+  sendSuccess(res, data, `Chapters saved for ${subject}`);
+});
+
+// ── GET /api/recovery/subject-chapters ──────────────────────────────────────
+/**
+ * Returns all saved chapter selections for a class+section for the current month.
+ * Query params: class, section
+ */
+router.get('/subject-chapters', ...teacherAuth, async (req: Request, res: Response) => {
+  const schoolId  = req.user!.school_id as string;
+  if (!schoolId) { sendError(res, 'No school associated', 403); return; }
+
+  const className = req.query.class as string | undefined;
+  const section   = req.query.section as string | undefined;
+  if (!className || !section) { sendError(res, 'class and section params required', 400); return; }
+
+  const scheduledMonth = new Date().toISOString().slice(0, 7) + '-01';
+
+  const { data, error } = await supabaseAdmin
+    .from('recovery_subject_chapters')
+    .select('subject, chapter_names')
+    .eq('school_id', schoolId)
+    .eq('class', className)
+    .eq('section', section)
+    .eq('scheduled_month', scheduledMonth);
+
+  if (error) { sendError(res, error.message, 500); return; }
+
+  sendSuccess(res, data ?? []);
 });
 
 export default router;

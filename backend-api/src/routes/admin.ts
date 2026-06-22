@@ -2930,4 +2930,68 @@ router.get('/health-score', async (req: Request, res: Response) => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// RECOVERY CYCLE MANAGEMENT
+
+/**
+ * POST /api/admin/recovery/reset-lockout
+ *
+ * Clears the 30-day lockout on a recovery cycle so a teacher can regenerate
+ * immediately. Useful during testing / demos.
+ *
+ * Body: { class: string, section: string }
+ */
+router.post('/recovery/reset-lockout', async (req: Request, res: Response) => {
+  const schoolId = req.user!.school_id as string;
+  if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
+
+  const parsed = z.object({
+    class:   z.string().min(1),
+    section: z.string().min(1),
+  }).safeParse(req.body);
+
+  if (!parsed.success) { sendValidationError(res, parsed.error); return; }
+
+  const { class: className, section } = parsed.data;
+
+  // Find the most recent cycle for this class+section
+  const { data: cycle, error: fetchErr } = await supabaseAdmin
+    .from('recovery_cycles')
+    .select('id, status, lockout_until')
+    .eq('school_id', schoolId)
+    .eq('class', className)
+    .eq('section', section)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (fetchErr) { sendError(res, 'Database error fetching cycle', 500); return; }
+  if (!cycle) { sendError(res, `No recovery cycle found for Class ${className}-${section}`, 404); return; }
+
+  const { error: updateErr } = await supabaseAdmin
+    .from('recovery_cycles')
+    .update({
+      lockout_until: null,
+      status: 'pack_ready',     // keep it in a usable state
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', (cycle as { id: string }).id);
+
+  if (updateErr) { sendError(res, 'Failed to reset lockout', 500); return; }
+
+  await logAudit(req.user!.id as string, 'recovery_cycle_lockout_reset', {
+    cycle_id: (cycle as { id: string }).id,
+    class: className,
+    section,
+  });
+
+  sendSuccess(res, {
+    cycle_id: (cycle as { id: string }).id,
+    class: className,
+    section,
+    lockout_until: null,
+  }, `Lockout cleared for Class ${className}-${section}. You can now generate a new recovery pack.`);
+});
+
 export default router;
+

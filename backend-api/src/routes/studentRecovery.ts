@@ -41,6 +41,134 @@ const router = Router();
 router.use(authenticateStudent);
 router.use(requireRole('student'));
 
+// ── Student weakness insight builder ─────────────────────────────────────────
+
+/**
+ * For a given student + subject, fetches their actual test attempt data from
+ * the past 90 days and returns a structured insight card:
+ * - overall score % in this subject
+ * - list of topics/chapters they got wrong the most
+ * - the specific questions they got wrong (up to 5, for display)
+ * - number of tests attempted
+ *
+ * Returns null if the student has no test history for this subject
+ * (so the UI only shows the banner when there's real data to show).
+ */
+async function buildWeaknessInsightCard(
+  studentId: string,
+  subject: string,
+  schoolId: string
+): Promise<{
+  tests_attempted: number;
+  overall_score_pct: number;
+  weak_chapters: Array<{ chapter: string; score_pct: number; wrong_count: number }>;
+  sample_wrong_questions: Array<{ question_text: string; chapter: string }>;
+} | null> {
+  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Fetch submitted attempts for this subject
+  const { data: attempts } = await supabaseAdmin
+    .from('test_attempts')
+    .select(`
+      id, score, total_questions,
+      tests!test_attempts_test_id_fkey (
+        id, subject, school_id, chapter, class
+      )
+    `)
+    .eq('student_id', studentId)
+    .eq('is_submitted', true)
+    .gte('submitted_at', ninetyDaysAgo);
+
+  type AttemptRow = {
+    id: string;
+    score: number | null;
+    total_questions: number | null;
+    tests: { id: string; subject: string; school_id: string; chapter: string | null } | null;
+  };
+
+  const subjectAttempts = ((attempts ?? []) as unknown as AttemptRow[]).filter(
+    (a) =>
+      a.tests?.school_id === schoolId &&
+      a.tests?.subject?.toLowerCase() === subject.toLowerCase()
+  );
+
+  if (subjectAttempts.length === 0) return null;
+
+  // Aggregate per-chapter stats and collect wrong questions
+  const chapterMap = new Map<string, { correct: number; total: number }>();
+  const wrongQuestions: Array<{ question_text: string; chapter: string }> = [];
+
+  let totalCorrect = 0;
+  let totalQs = 0;
+
+  for (const attempt of subjectAttempts) {
+    const chapter = attempt.tests?.chapter?.trim() || subject;
+    if (typeof attempt.score === 'number' && typeof attempt.total_questions === 'number') {
+      totalCorrect += attempt.score;
+      totalQs += attempt.total_questions;
+      const cur = chapterMap.get(chapter) ?? { correct: 0, total: 0 };
+      cur.correct += attempt.score;
+      cur.total += attempt.total_questions;
+      chapterMap.set(chapter, cur);
+    }
+
+    // Collect a few wrong questions for display (max 5 total across all attempts)
+    if (wrongQuestions.length < 5) {
+      const { data: answers } = await supabaseAdmin
+        .from('student_answers')
+        .select('question_id, selected_option')
+        .eq('attempt_id', attempt.id);
+
+      if (answers && answers.length > 0) {
+        const qIds = (answers as Array<{ question_id: string; selected_option: string | null }>)
+          .map((a) => a.question_id);
+
+        const { data: questions } = await supabaseAdmin
+          .from('test_questions')
+          .select('id, question_text, correct_option, question_type')
+          .in('id', qIds)
+          .eq('question_type', 'mcq');
+
+        if (questions) {
+          const correctMap = new Map(
+            (questions as Array<{ id: string; question_text: string; correct_option: string | null }>)
+              .map((q) => [q.id, { text: q.question_text, correct: q.correct_option ?? '' }])
+          );
+
+          for (const ans of answers as Array<{ question_id: string; selected_option: string | null }>) {
+            const q = correctMap.get(ans.question_id);
+            if (!q) continue;
+            if (ans.selected_option !== null && ans.selected_option !== q.correct) {
+              wrongQuestions.push({ question_text: q.text, chapter });
+              if (wrongQuestions.length >= 5) break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const overallPct = totalQs > 0 ? Math.round((totalCorrect / totalQs) * 100) : 0;
+
+  // Build weak chapters sorted by worst performance first
+  const weakChapters = Array.from(chapterMap.entries())
+    .map(([chapter, { correct, total }]) => ({
+      chapter,
+      score_pct: total > 0 ? Math.round((correct / total) * 100) : 0,
+      wrong_count: total - correct,
+    }))
+    .filter((c) => c.score_pct < 80)           // only show genuinely weak chapters
+    .sort((a, b) => a.score_pct - b.score_pct) // weakest first
+    .slice(0, 5);
+
+  return {
+    tests_attempted: subjectAttempts.length,
+    overall_score_pct: overallPct,
+    weak_chapters: weakChapters,
+    sample_wrong_questions: wrongQuestions,
+  };
+}
+
 // ── Shared: calculateIntegrityScore (identical to tests.ts) ──────────────────
 
 interface IntegrityData {
@@ -182,6 +310,7 @@ router.get('/packs', async (req: Request, res: Response) => {
  */
 router.get('/packs/by-cycle/:cycleId', async (req: Request, res: Response) => {
   const studentId = req.student!.id;
+  const schoolId  = req.student!.school_id as string;
   const cycleId   = req.params.cycleId;
 
   const { data, error } = await supabaseAdmin
@@ -198,7 +327,30 @@ router.get('/packs/by-cycle/:cycleId', async (req: Request, res: Response) => {
     return;
   }
 
-  sendSuccess(res, data);
+  // Attach insight card for subjects where the student has real test history
+  type PackRow = {
+    id: string; subject: string; scheduled_month: string;
+    weak_topics: string[] | null; pack_content: unknown;
+    student_profile_type: string | null; created_at: string;
+  };
+
+  const rows = (data as unknown as PackRow[]);
+
+  const enriched = await Promise.all(
+    rows.map(async (pack) => {
+      let insight_card = null;
+      // Only generate insight card for 'weak' profile — these are students who
+      // actually had test data and got weak topics identified from their results.
+      if (pack.student_profile_type === 'weak' && schoolId) {
+        try {
+          insight_card = await buildWeaknessInsightCard(studentId, pack.subject, schoolId);
+        } catch { /* non-fatal — insight card is bonus content */ }
+      }
+      return { ...pack, insight_card };
+    })
+  );
+
+  sendSuccess(res, enriched);
 });
 
 // ── GET /api/student-recovery/packs/:id ──────────────────────────────────────

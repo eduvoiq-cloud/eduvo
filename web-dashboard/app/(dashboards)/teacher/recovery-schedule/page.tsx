@@ -56,6 +56,11 @@ interface TeacherAssignment {
   subject: string;
 }
 
+interface SubjectChapters {
+  subject: string;
+  chapter_names: string[];
+}
+
 // ── Toggle (matches tests/create/page.tsx) ────────────────────────────────────
 
 function Toggle({ checked, onChange, id }: { checked: boolean; onChange: (v: boolean) => void; id: string }) {
@@ -227,6 +232,172 @@ function TestConfigModal({ subjects, onConfirm, onClose, submitting }: TestConfi
   );
 }
 
+// ── Chapter Selection Modal ───────────────────────────────────────────────────
+
+interface ChapterSelectionModalProps {
+  noDataSubjects: string[];
+  savedChapters: SubjectChapters[];
+  onSave: (subject: string, chapters: string[]) => Promise<void>;
+  onClose: () => void;
+  onDone: () => void;
+}
+
+function ChapterSelectionModal({ noDataSubjects, savedChapters, onSave, onClose, onDone }: ChapterSelectionModalProps) {
+  const [activeSubject, setActiveSubject] = useState(noDataSubjects[0] ?? '');
+  const [inputValue, setInputValue] = useState('');
+  // chapters per subject in local state
+  const [chaptersBySubject, setChaptersBySubject] = useState<Record<string, string[]>>(() => {
+    const init: Record<string, string[]> = {};
+    for (const s of savedChapters) { init[s.subject] = s.chapter_names; }
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+
+  const activeChapters = chaptersBySubject[activeSubject] ?? [];
+
+  function addChapter() {
+    const trimmed = inputValue.trim();
+    if (!trimmed) return;
+    setChaptersBySubject((prev) => ({
+      ...prev,
+      [activeSubject]: [...(prev[activeSubject] ?? []), trimmed],
+    }));
+    setInputValue('');
+  }
+
+  function removeChapter(idx: number) {
+    setChaptersBySubject((prev) => ({
+      ...prev,
+      [activeSubject]: (prev[activeSubject] ?? []).filter((_, i) => i !== idx),
+    }));
+  }
+
+  async function handleSaveSubject() {
+    if (activeChapters.length === 0) return;
+    setSaving(true);
+    try {
+      await onSave(activeSubject, activeChapters);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const allSubjectsSaved = noDataSubjects.every((s) => (chaptersBySubject[s] ?? []).length > 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Select Chapters for AI Pack Generation</h2>
+            <p className="text-xs text-gray-500 mt-1">
+              These subjects have no test data in the app yet. Select the chapters you want the AI to cover in the recovery pack — it will generate detailed explanations, examples and practice questions for each chapter you choose.
+            </p>
+          </div>
+          <button onClick={onClose} className="ml-4 text-gray-400 hover:text-gray-600 transition-colors flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Subject tabs */}
+        {noDataSubjects.length > 1 && (
+          <div className="flex border-b border-gray-100 overflow-x-auto px-6 pt-2">
+            {noDataSubjects.map((subj) => {
+              const hasSaved = (chaptersBySubject[subj] ?? []).length > 0;
+              return (
+                <button
+                  key={subj}
+                  onClick={() => { setActiveSubject(subj); setInputValue(''); }}
+                  className={`mr-2 pb-2 text-sm font-medium whitespace-nowrap border-b-2 transition-colors flex items-center gap-1.5 ${
+                    activeSubject === subj
+                      ? 'border-purple-600 text-purple-700'
+                      : 'border-transparent text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {subj}
+                  {hasSaved && <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="mb-4">
+            <p className="text-sm font-medium text-gray-700 mb-1">{activeSubject} — No test data found</p>
+            <p className="text-xs text-gray-500">
+              Add the chapter names you want covered. The AI will generate up to 1 detailed section per chapter (explanations, solved examples, practice questions).
+            </p>
+          </div>
+
+          {/* Chapter list */}
+          {activeChapters.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {activeChapters.map((ch, idx) => (
+                <span
+                  key={idx}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 text-purple-800 text-sm font-medium rounded-lg border border-purple-200"
+                >
+                  {ch}
+                  <button
+                    onClick={() => removeChapter(idx)}
+                    className="text-purple-400 hover:text-purple-700 transition-colors"
+                    aria-label={`Remove ${ch}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Add chapter input */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="e.g. Chemical Reactions, Electricity, Motion..."
+              className="flex-1 px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addChapter(); } }}
+            />
+            <button
+              onClick={addChapter}
+              disabled={!inputValue.trim()}
+              className="px-4 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 rounded-lg transition-colors"
+            >
+              + Add
+            </button>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">Press Enter or click Add. You can add up to 20 chapters.</p>
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between gap-3">
+          <button
+            onClick={handleSaveSubject}
+            disabled={saving || activeChapters.length === 0}
+            className="px-4 py-2 text-sm font-medium text-white bg-gray-700 hover:bg-gray-800 disabled:bg-gray-300 rounded-lg transition-colors"
+          >
+            {saving ? 'Saving…' : `Save ${activeSubject} Chapters`}
+          </button>
+          <button
+            onClick={onDone}
+            disabled={!allSubjectsSaved}
+            className="px-5 py-2 text-sm font-semibold text-white bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 rounded-lg transition-colors"
+          >
+            ✓ Done — Generate Packs
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function RecoverySchedulePage() {
@@ -244,6 +415,12 @@ export default function RecoverySchedulePage() {
 
   // Pack generation
   const [generatingPack, setGeneratingPack] = useState(false);
+
+  // Chapter selection for no-data subjects
+  const [noDataSubjects, setNoDataSubjects] = useState<string[]>([]);
+  const [showChapterModal, setShowChapterModal] = useState(false);
+  const [savedChapters, setSavedChapters] = useState<SubjectChapters[]>([]);
+  const [checkingNoData, setCheckingNoData] = useState(false);
 
   // Test config modal
   const [showTestModal, setShowTestModal] = useState(false);
@@ -318,10 +495,58 @@ export default function RecoverySchedulePage() {
 
   // ── Generate pack ───────────────────────────────────────────────────────────
 
+  async function checkNoDataSubjectsAndStart() {
+    const token = getToken();
+    if (!token) return;
+    setCheckingNoData(true);
+    try {
+      const res = await fetch(
+        `${BASE_URL}/api/recovery/subjects-with-no-data?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await res.json() as { data?: string[] };
+      const subjects = json.data ?? [];
+      if (subjects.length > 0) {
+        // Fetch any previously saved chapters
+        const chRes = await fetch(
+          `${BASE_URL}/api/recovery/subject-chapters?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const chJson = await chRes.json() as { data?: SubjectChapters[] };
+        setSavedChapters(chJson.data ?? []);
+        setNoDataSubjects(subjects);
+        setShowChapterModal(true);
+      } else {
+        // All subjects have data — go straight to generation
+        await handleGeneratePack();
+      }
+    } catch {
+      showToast('Failed to check subject data', 'error');
+    } finally {
+      setCheckingNoData(false);
+    }
+  }
+
+  async function handleSaveChapters(subject: string, chapters: string[]) {
+    const token = getToken();
+    if (!token) return;
+    await fetch(`${BASE_URL}/api/recovery/subject-chapters`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ class: selectedClass, section: selectedSection, subject, chapter_names: chapters }),
+    });
+    setSavedChapters((prev) => {
+      const filtered = prev.filter((s) => s.subject !== subject);
+      return [...filtered, { subject, chapter_names: chapters }];
+    });
+    showToast(`Chapters saved for ${subject}`);
+  }
+
   async function handleGeneratePack() {
     const token = getToken();
     if (!token) return;
     setGeneratingPack(true);
+    setShowChapterModal(false);
     try {
       const res = await fetch(`${BASE_URL}/api/recovery/start-pack`, {
         method: 'POST',
@@ -452,6 +677,16 @@ export default function RecoverySchedulePage() {
         />
       )}
 
+      {showChapterModal && (
+        <ChapterSelectionModal
+          noDataSubjects={noDataSubjects}
+          savedChapters={savedChapters}
+          onSave={handleSaveChapters}
+          onClose={() => setShowChapterModal(false)}
+          onDone={handleGeneratePack}
+        />
+      )}
+
       {/* Class + section picker */}
       <div className="mb-6 flex gap-4 flex-wrap">
         <div className="flex-1 min-w-40">
@@ -499,12 +734,12 @@ export default function RecoverySchedulePage() {
                   <p className="text-sm text-gray-500 mt-1">Start a new cycle to generate personalised packs for all students</p>
                 </div>
                 <button
-                  onClick={handleGeneratePack}
-                  disabled={generatingPack}
+                  onClick={checkNoDataSubjectsAndStart}
+                  disabled={generatingPack || checkingNoData}
                   className="flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white text-sm font-semibold rounded-xl transition-colors"
                 >
-                  {generatingPack
-                    ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Starting…</>
+                  {(generatingPack || checkingNoData)
+                    ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />{checkingNoData ? 'Checking…' : 'Starting…'}</>
                     : '⚡ Generate Recovery Pack'}
                 </button>
               </div>
@@ -530,11 +765,11 @@ export default function RecoverySchedulePage() {
                   <p className="text-sm text-gray-500 mt-1">Something went wrong generating the recovery packs. You can try again.</p>
                 </div>
                 <button
-                  onClick={handleGeneratePack}
-                  disabled={generatingPack}
+                  onClick={checkNoDataSubjectsAndStart}
+                  disabled={generatingPack || checkingNoData}
                   className="flex items-center gap-2 px-6 py-3 bg-red-600 hover:bg-red-700 disabled:bg-red-400 text-white text-sm font-semibold rounded-xl transition-colors"
                 >
-                  {generatingPack
+                  {(generatingPack || checkingNoData)
                     ? <><span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Retrying…</>
                     : '↺ Retry Pack Generation'}
                 </button>

@@ -24,6 +24,7 @@ interface PracticeQuestion {
 interface PackSection {
   topic: string;
   explanation: string;
+  real_world_application?: string;
   key_concepts: string[];
   common_mistakes: string[];
   solved_examples: SolvedExample[];
@@ -34,6 +35,19 @@ interface PackContent {
   sections: PackSection[];
 }
 
+interface WeakChapter {
+  chapter: string;
+  score_pct: number;
+  wrong_count: number;
+}
+
+interface InsightCard {
+  tests_attempted: number;
+  overall_score_pct: number;
+  weak_chapters: WeakChapter[];
+  sample_wrong_questions: Array<{ question_text: string; chapter: string }>;
+}
+
 interface SubjectPack {
   id: string;
   subject: string;
@@ -41,6 +55,7 @@ interface SubjectPack {
   weak_topics: string[] | null;
   pack_content: PackContent | null;
   student_profile_type: string | null;
+  insight_card: InsightCard | null;
   created_at: string;
 }
 
@@ -58,6 +73,104 @@ interface LegacyPackDetail {
 interface RecoveryPackDetailScreenProps {
   navigation: StackNavigationProp<StudentStackParamList, 'RecoveryPackDetail'>;
   route: RouteProp<StudentStackParamList, 'RecoveryPackDetail'>;
+}
+
+// ── Insight Card component ────────────────────────────────────────────────────
+
+function InsightCardView({ insight }: { insight: InsightCard }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const scoreColor = insight.overall_score_pct >= 75
+    ? '#16A34A'
+    : insight.overall_score_pct >= 50
+    ? '#D97706'
+    : '#DC2626';
+
+  return (
+    <View style={styles.insightCard}>
+      {/* Header row */}
+      <View style={styles.insightHeader}>
+        <View style={styles.insightHeaderLeft}>
+          <Text style={styles.insightIcon}>📊</Text>
+          <View>
+            <Text style={styles.insightTitle}>Your Recent Performance</Text>
+            <Text style={styles.insightSubtitle}>
+              {insight.tests_attempted} test{insight.tests_attempted !== 1 ? 's' : ''} attempted in last 90 days
+            </Text>
+          </View>
+        </View>
+        <View style={[styles.insightScoreBadge, { backgroundColor: scoreColor + '20', borderColor: scoreColor + '60' }]}>
+          <Text style={[styles.insightScoreText, { color: scoreColor }]}>
+            {insight.overall_score_pct}%
+          </Text>
+        </View>
+      </View>
+
+      {/* This pack was built to fix your weak areas */}
+      <View style={styles.insightReasonRow}>
+        <Text style={styles.insightReasonText}>
+          ⬆️ This pack was built to fix your weak areas below
+        </Text>
+      </View>
+
+      {/* Weak chapters */}
+      {insight.weak_chapters.length > 0 && (
+        <View style={styles.insightChapters}>
+          {insight.weak_chapters.map((ch, i) => (
+            <View key={i} style={styles.insightChapterRow}>
+              <View style={styles.insightChapterLeft}>
+                <Text style={styles.insightChapterName} numberOfLines={1}>{ch.chapter}</Text>
+                <Text style={styles.insightChapterMeta}>
+                  {ch.wrong_count} question{ch.wrong_count !== 1 ? 's' : ''} wrong
+                </Text>
+              </View>
+              <View style={styles.insightChapterBarWrap}>
+                <View style={styles.insightChapterBarBg}>
+                  <View
+                    style={[
+                      styles.insightChapterBarFill,
+                      {
+                        width: `${ch.score_pct}%` as unknown as number,
+                        backgroundColor: ch.score_pct < 50 ? '#EF4444' : ch.score_pct < 75 ? '#F97316' : '#22C55E',
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.insightChapterPct}>{ch.score_pct}%</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Sample wrong questions — collapsible */}
+      {insight.sample_wrong_questions.length > 0 && (
+        <>
+          <TouchableOpacity
+            style={styles.insightExpandBtn}
+            onPress={() => setExpanded((p) => !p)}
+            accessibilityRole="button"
+            accessibilityLabel={expanded ? 'Hide questions you got wrong' : 'Show questions you got wrong'}
+          >
+            <Text style={styles.insightExpandText}>
+              {expanded ? '▲ Hide questions you got wrong' : `▼ See ${insight.sample_wrong_questions.length} question${insight.sample_wrong_questions.length !== 1 ? 's' : ''} you got wrong`}
+            </Text>
+          </TouchableOpacity>
+
+          {expanded && (
+            <View style={styles.insightWrongList}>
+              {insight.sample_wrong_questions.map((q, i) => (
+                <View key={i} style={styles.insightWrongItem}>
+                  <Text style={styles.insightWrongBullet}>✗</Text>
+                  <Text style={styles.insightWrongText} numberOfLines={3}>{q.question_text}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </>
+      )}
+    </View>
+  );
 }
 
 // ── Section card ──────────────────────────────────────────────────────────────
@@ -80,6 +193,17 @@ function SectionCard({ section }: { section: PackSection }) {
 
       {/* Explanation */}
       <Text style={styles.explanationText}>{section.explanation}</Text>
+
+      {/* Real-world application */}
+      {!!section.real_world_application && (
+        <View style={styles.realWorldBlock}>
+          <View style={styles.realWorldHeader}>
+            <Text style={styles.realWorldIcon}>🌍</Text>
+            <Text style={styles.realWorldTitle}>Real World</Text>
+          </View>
+          <Text style={styles.realWorldText}>{section.real_world_application}</Text>
+        </View>
+      )}
 
       {/* Key concepts */}
       {section.key_concepts.length > 0 && (
@@ -195,11 +319,12 @@ export default function RecoveryPackDetailScreen({ route, navigation }: Recovery
     ? subjectPacks.map((p) => p.subject)
     : legacyPack ? [legacyPack.subject] : [];
 
-  const activePack: { pack_content: PackContent | null } | null = isCycle
+  const activePack: { pack_content: PackContent | null; insight_card?: InsightCard | null } | null = isCycle
     ? (subjectPacks[activeSubjectIndex] ?? null)
     : legacyPack;
 
   const sections = activePack?.pack_content?.sections ?? [];
+  const insightCard = (activePack as SubjectPack | null)?.insight_card ?? null;
 
   useEffect(() => {
     if (subjects.length > 0) {
@@ -255,9 +380,14 @@ export default function RecoveryPackDetailScreen({ route, navigation }: Recovery
             <Text style={styles.emptyText}>No content available for this subject</Text>
           </View>
         ) : (
-          sections.map((section, i) => (
-            <SectionCard key={`${section.topic}-${i}`} section={section} />
-          ))
+          <>
+            {/* Insight card — only shown when student has real test history for this subject */}
+            {!!insightCard && <InsightCardView insight={insightCard} />}
+
+            {sections.map((section, i) => (
+              <SectionCard key={`${section.topic}-${i}`} section={section} />
+            ))}
+          </>
         )}
       </ScrollView>
     </>
@@ -291,6 +421,24 @@ const styles = StyleSheet.create({
   sectionTopic: { fontSize: 18, fontWeight: '800', color: '#111827', marginBottom: 10 },
   explanationText: { fontSize: 14, color: '#374151', lineHeight: 22, marginBottom: 14 },
 
+  // Real-world application
+  realWorldBlock: {
+    backgroundColor: '#FFF7ED',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F97316',
+  },
+  realWorldHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  realWorldIcon: { fontSize: 16, marginRight: 6 },
+  realWorldTitle: { fontSize: 12, fontWeight: '800', color: '#EA580C', textTransform: 'uppercase', letterSpacing: 0.5 },
+  realWorldText: { fontSize: 13, color: '#7C2D12', lineHeight: 21 },
+
   // Blocks
   block: { marginBottom: 14 },
   blockTitle: { fontSize: 13, fontWeight: '700', color: '#374151', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.3 },
@@ -316,4 +464,77 @@ const styles = StyleSheet.create({
   showAnswerText: { fontSize: 12, fontWeight: '600', color: '#1D4ED8' },
   answerBox: { marginTop: 8, backgroundColor: '#DBEAFE', borderRadius: 8, padding: 10 },
   answerText: { fontSize: 13, color: '#1E3A8A', lineHeight: 20 },
+
+  // Insight card
+  insightCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginBottom: 18,
+    borderWidth: 1.5,
+    borderColor: '#E0E7FF',
+    overflow: 'hidden',
+    shadowColor: '#4F46E5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  insightHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    backgroundColor: '#EEF2FF',
+  },
+  insightHeaderLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  insightIcon: { fontSize: 22, marginRight: 10 },
+  insightTitle: { fontSize: 14, fontWeight: '700', color: '#1E1B4B' },
+  insightSubtitle: { fontSize: 11, color: '#6366F1', marginTop: 1 },
+  insightScoreBadge: {
+    borderRadius: 20,
+    borderWidth: 1.5,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    marginLeft: 8,
+  },
+  insightScoreText: { fontSize: 15, fontWeight: '800' },
+  insightReasonRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#F5F3FF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E0E7FF',
+  },
+  insightReasonText: { fontSize: 12, fontWeight: '600', color: '#4338CA' },
+  insightChapters: { paddingHorizontal: 14, paddingTop: 10, paddingBottom: 4 },
+  insightChapterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 10,
+  },
+  insightChapterLeft: { flex: 1 },
+  insightChapterName: { fontSize: 13, fontWeight: '600', color: '#1F2937' },
+  insightChapterMeta: { fontSize: 11, color: '#9CA3AF', marginTop: 1 },
+  insightChapterBarWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
+  insightChapterBarBg: {
+    flex: 1,
+    height: 7,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  insightChapterBarFill: { height: 7, borderRadius: 4 },
+  insightChapterPct: { fontSize: 11, fontWeight: '700', color: '#374151', minWidth: 30, textAlign: 'right' },
+  insightExpandBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E7FF',
+  },
+  insightExpandText: { fontSize: 12, fontWeight: '600', color: '#6366F1' },
+  insightWrongList: { paddingHorizontal: 14, paddingBottom: 12 },
+  insightWrongItem: { flexDirection: 'row', marginBottom: 8, alignItems: 'flex-start' },
+  insightWrongBullet: { fontSize: 13, color: '#EF4444', marginRight: 8, lineHeight: 20, fontWeight: '700' },
+  insightWrongText: { fontSize: 12, color: '#374151', flex: 1, lineHeight: 19 },
 });
