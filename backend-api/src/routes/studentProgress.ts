@@ -96,6 +96,41 @@ router.get(
       return;
     }
 
+    // ── Lazy streak staleness check ───────────────────────────────────────────
+    // If the student's last_activity_date is older than yesterday (IST), their
+    // streak has been broken — they missed at least one day.
+    // We reset current_streak to 0 here (lazily) so the UI always shows the
+    // correct value without needing a nightly cron job.
+    const row = data as Record<string, unknown>;
+    const lastActivityDate = row.last_activity_date as string | null;
+
+    if (lastActivityDate) {
+      // Compute yesterday in IST (UTC+5:30)
+      const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+      const nowIST = new Date(Date.now() + IST_OFFSET_MS);
+      const yesterdayIST = new Date(nowIST.getTime() - 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const todayISTStr = nowIST.toISOString().slice(0, 10);
+
+      const isStale =
+        lastActivityDate !== todayISTStr && lastActivityDate < yesterdayIST;
+
+      if (isStale && (row.current_streak as number) > 0) {
+        // Persist the reset so subsequent reads are fast
+        await supabaseAdmin
+          .from('student_streaks')
+          .update({ current_streak: 0, updated_at: new Date().toISOString() })
+          .eq('student_id', studentId);
+
+        sendSuccess(res, {
+          ...row,
+          current_streak: 0,
+        });
+        return;
+      }
+    }
+
     sendSuccess(res, data);
   }
 );

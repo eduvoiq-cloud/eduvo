@@ -15,7 +15,7 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import * as Haptics from 'expo-haptics';
 import apiClient from '../../api/client';
 import { MainStackParamList } from '../../navigation/AppNavigator';
-import { toMinutes, formatHHMM } from '../../utils/dateUtils';
+import { toMinutes, formatHHMM, nowISTMinutes, nowIST } from '../../utils/dateUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -74,10 +74,16 @@ const STATUS_CONFIG: Record<
 
 function secondsUntilHHMM(hhmm: string | null | undefined): number | null {
   if (!hhmm) return null;
-  const now = new Date();
-  const nowMins = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const ist = nowIST();
+  const nowMins = ist.getUTCHours() * 60 + ist.getUTCMinutes() + ist.getUTCSeconds() / 60;
   const diff = (toMinutes(hhmm) - nowMins) * 60;
   return diff > 0 ? Math.round(diff) : null;
+}
+
+/** Returns true if the current IST time is past the HH:MM window end time */
+function isWindowClosed(available_until: string | null | undefined): boolean {
+  if (!available_until) return false;
+  return nowISTMinutes() > toMinutes(available_until);
 }
 
 function formatCountdown(seconds: number): string {
@@ -111,6 +117,9 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
   const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
   const isFuture = testDay ? testDay >= tomorrowStart : false;
 
+  // Check if the time window has already closed (only relevant for today's not-started tests)
+  const windowClosed = !isMissed && !isFuture && status === 'not_started' && isWindowClosed(test.available_until);
+
   return (
     <TouchableOpacity
       style={[
@@ -130,17 +139,20 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
           backgroundColor: isFeeRestricted ? '#FEE2E2'
             : isMissed ? '#F3F4F6'
             : isFuture ? '#EFF6FF'
+            : windowClosed ? '#FEF3C7'
             : config.bg,
         }]}>
           <Text style={[styles.statusText, {
             color: isFeeRestricted ? '#DC2626'
               : isMissed ? '#9CA3AF'
               : isFuture ? '#3B82F6'
+              : windowClosed ? '#D97706'
               : config.color,
           }]}>
             {isFeeRestricted ? 'Locked'
               : isMissed ? 'Missed'
               : isFuture ? 'Upcoming'
+              : windowClosed ? 'Closed'
               : config.label}
           </Text>
         </View>
@@ -179,6 +191,9 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
               if (secs !== null) {
                 return `🕐 Opens at ${formatHHMM(test.available_from!)} · in ${formatCountdown(secs)}`;
               }
+              if (windowClosed) {
+                return `🔴 Window closed at ${formatHHMM(test.available_until!)}`;
+              }
               if (test.available_from && test.available_until) {
                 return `🟢 Window: ${formatHHMM(test.available_from)} – ${formatHHMM(test.available_until)}`;
               }
@@ -195,6 +210,7 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
           isFeeRestricted && { color: '#DC2626' },
           isMissed && { color: '#9CA3AF' },
           isFuture && { color: '#3B82F6' },
+          windowClosed && { color: '#D97706' },
         ]}>
           {isFeeRestricted
             ? '🔒 Pay fees to unlock'
@@ -206,6 +222,8 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
             ? 'View Results →'
             : status === 'in_progress'
             ? 'Continue Test →'
+            : windowClosed
+            ? 'Window Closed'
             : 'Start Test →'}
         </Text>
       </View>
@@ -266,15 +284,26 @@ function filterTests(tests: TestRecord[], tab: TabKey): TestRecord[] {
 
     switch (tab) {
       case 'current':
-        // Only tests scheduled FOR TODAY that are not yet completed.
-        // Also include in_progress tests from any date (so student can resume).
-        return (isToday && status !== 'completed') || status === 'in_progress';
+        // Include in_progress from any date (resume support).
+        if (status === 'in_progress') return true;
+        // Today's tests that are not yet completed — but exclude ones whose
+        // time window has already closed (student can't start them anymore).
+        if (isToday && status !== 'completed') {
+          // If available_until has passed, move to completed/missed bucket
+          return !isWindowClosed(t.available_until);
+        }
+        return false;
       case 'upcoming':
         // Future-dated tests that haven't been started/completed
         return isFuture && status !== 'completed';
       case 'completed':
-        // Completed tests, plus past-dated tests that were never started (missed)
-        return status === 'completed' || (isPast && status === 'not_started');
+        // Completed tests, plus past-dated tests that were never started (missed),
+        // PLUS today's window-closed not-started tests (student missed the window).
+        return (
+          status === 'completed' ||
+          (isPast && status === 'not_started') ||
+          (isToday && status === 'not_started' && isWindowClosed(t.available_until))
+        );
       default:
         return true;
     }
@@ -366,7 +395,7 @@ export default function TestsScreen() {
 
       // Time window enforcement (client-side, for immediate UX feedback)
       if (test.available_from || test.available_until) {
-        const currentMins = now.getHours() * 60 + now.getMinutes();
+        const currentMins = nowISTMinutes();
         const toMins = (hhmm: string) => {
           const [h, m] = hhmm.split(':').map(Number);
           return h * 60 + m;

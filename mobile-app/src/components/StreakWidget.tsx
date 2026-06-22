@@ -30,6 +30,7 @@ import {
   Animated,
   TouchableOpacity,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import apiClient from '../api/client';
 import { useFocusEffect } from '@react-navigation/native';
@@ -81,6 +82,144 @@ const DOT_COLORS: Record<string, string> = {
   activity_pack: '#15803D', // green
   both:          '#F97316', // orange (both done — max engagement)
 };
+
+// ── Record-breaking celebration overlay ───────────────────────────────────────
+
+function RecordBrokenModal({
+  streak,
+  visible,
+  onDismiss,
+}: {
+  streak: number;
+  visible: boolean;
+  onDismiss: () => void;
+}) {
+  const scaleAnim = useRef(new Animated.Value(0.4)).current;
+  const opacityAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          friction: 5,
+          tension: 120,
+          useNativeDriver: true,
+        }),
+        Animated.timing(opacityAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    } else {
+      scaleAnim.setValue(0.4);
+      opacityAnim.setValue(0);
+    }
+  }, [visible, scaleAnim, opacityAnim]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+    >
+      <TouchableOpacity
+        style={recordStyles.backdrop}
+        activeOpacity={1}
+        onPress={onDismiss}
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss streak record celebration"
+      >
+        <Animated.View
+          style={[
+            recordStyles.card,
+            { transform: [{ scale: scaleAnim }], opacity: opacityAnim },
+          ]}
+        >
+          <Text style={recordStyles.fireworks}>🎉🔥🎉</Text>
+          <Text style={recordStyles.title}>New Record!</Text>
+          <Text style={recordStyles.subtitle}>
+            You just broke your longest streak record!
+          </Text>
+          <Text style={recordStyles.streakNum}>{streak} days 🔥</Text>
+          <Text style={recordStyles.hint}>Keep going — don't break it!</Text>
+          <TouchableOpacity
+            style={recordStyles.dismissBtn}
+            onPress={onDismiss}
+            accessibilityRole="button"
+            accessibilityLabel="Close celebration"
+          >
+            <Text style={recordStyles.dismissText}>Awesome! 🙌</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
+const recordStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 28,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  fireworks: { fontSize: 44, marginBottom: 8 },
+  title: {
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#EA580C',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  streakNum: {
+    fontSize: 42,
+    fontWeight: '900',
+    color: '#F97316',
+    marginBottom: 8,
+  },
+  hint: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+    marginBottom: 24,
+  },
+  dismissBtn: {
+    backgroundColor: '#EA580C',
+    borderRadius: 12,
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+  },
+  dismissText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+});
 
 // ── Flame animation ───────────────────────────────────────────────────────────
 
@@ -203,6 +342,10 @@ export default function StreakWidget({ studentId, studentToken, style }: Props) 
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
+  const [showRecordModal, setShowRecordModal] = useState(false);
+
+  // Track the previous longest streak so we can detect when a new record is set
+  const prevLongestRef = useRef<number | null>(null);
 
   const fetchStreak = useCallback(async () => {
     if (!studentId || !studentToken) return;
@@ -216,7 +359,26 @@ export default function StreakWidget({ studentId, studentToken, style }: Props) 
       ]);
 
       if (streakRes.status === 'fulfilled') {
-        setStreakData(streakRes.value.data.data ?? null);
+        const incoming = streakRes.value.data.data ?? null;
+        if (incoming) {
+          const newCurrent: number = incoming.current_streak ?? 0;
+          const newLongest: number = incoming.longest_streak ?? 0;
+
+          // Show record-broken modal if:
+          //  - we had a previous longest on record (not the very first load)
+          //  - current streak has now exceeded that previous longest
+          //  - new longest is > 0 (not a freshly reset streak)
+          if (
+            prevLongestRef.current !== null &&
+            newCurrent > 0 &&
+            newLongest > prevLongestRef.current &&
+            newLongest === newCurrent
+          ) {
+            setShowRecordModal(true);
+          }
+          prevLongestRef.current = newLongest;
+        }
+        setStreakData(incoming);
       }
       if (logRes.status === 'fulfilled') {
         setLogEntries(logRes.value.data.data ?? []);
@@ -256,6 +418,12 @@ export default function StreakWidget({ studentId, studentToken, style }: Props) 
 
   return (
     <View style={[widgetStyles.card, style]}>
+      {/* ── Record-broken celebration modal ── */}
+      <RecordBrokenModal
+        streak={streak.current_streak}
+        visible={showRecordModal}
+        onDismiss={() => setShowRecordModal(false)}
+      />
       {/* ── Main streak row ── */}
       <View style={widgetStyles.mainRow}>
         {/* Flame + number */}

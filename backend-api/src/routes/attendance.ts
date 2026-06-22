@@ -141,6 +141,8 @@ router.get(
 
     // If no class_name provided, return school-wide summary for the dashboard stat card
     if (!className) {
+      // Use a join-based approach instead of fetching all IDs into an IN clause.
+      // At large schools (5000+ students), IN (all_ids) is slow and sends huge payloads.
       const { data: students, error: stuErr } = await supabaseAdmin
         .from('students')
         .select('id')
@@ -155,17 +157,24 @@ router.get(
         return;
       }
 
-      const { data: existing, error: attErr } = await supabaseAdmin
-        .from('attendance')
-        .select('student_id, status, source')
-        .in('student_id', allIds)
-        .eq('date', date);
-
-      if (attErr) { sendError(res, attErr.message, 500); return; }
+      // Fetch only today's attendance records for these students in one query.
+      // Split into batches of 500 to avoid URL length limits in PostgREST.
+      const BATCH = 500;
+      const existing: Array<{ student_id: string; status: string; source: string }> = [];
+      for (let i = 0; i < allIds.length; i += BATCH) {
+        const batch = allIds.slice(i, i + BATCH);
+        const { data: batchData, error: attErr } = await supabaseAdmin
+          .from('attendance')
+          .select('student_id, status, source')
+          .in('student_id', batch)
+          .eq('date', date);
+        if (attErr) { sendError(res, attErr.message, 500); return; }
+        existing.push(...(batchData ?? []));
+      }
 
       sendSuccess(res, {
         students: students ?? [],
-        existing: existing ?? [],
+        existing,
       });
       return;
     }
@@ -635,19 +644,24 @@ router.put(
     }
 
     // Teachers must be assigned to the student's class (update path)
+    // Also fetch full_name + parent_id here so we can reuse the row for the
+    // parent notification below — avoids a second DB round trip.
+    let studentForUpdate: { class_name: string; section: string; full_name: string; parent_id: string | null } | null = null;
     if (userRole === 'teacher') {
-      const { data: student } = await supabaseAdmin
+      const { data: studentData } = await supabaseAdmin
         .from('students')
-        .select('class_name, section')
+        .select('class_name, section, full_name, parent_id')
         .eq('id', original.student_id)
         .maybeSingle();
 
-      if (!student) {
+      if (!studentData) {
         sendError(res, 'Student not found', 404);
         return;
       }
 
-      const assigned = await isTeacherAssigned(userId, student.class_name, student.section);
+      studentForUpdate = studentData as { class_name: string; section: string; full_name: string; parent_id: string | null };
+
+      const assigned = await isTeacherAssigned(userId, studentData.class_name, studentData.section);
       if (!assigned) {
         sendError(res, 'You are not assigned to this student\'s class', 403);
         return;
@@ -656,7 +670,7 @@ router.put(
       // If a class admin is appointed, only they may correct attendance
       const schoolId = req.user!.school_id;
       if (schoolId) {
-        const classAdmin = await getClassAdmin(schoolId, student.class_name, student.section);
+        const classAdmin = await getClassAdmin(schoolId, studentData.class_name, studentData.section);
         if (classAdmin && classAdmin.teacher_id !== userId) {
           sendError(res, 'Only the class admin can mark attendance for this class', 403);
           return;
@@ -686,19 +700,22 @@ router.put(
       corrected_by: userId,
     });
 
-    // Notify parent about the correction
-    const { data: student } = await supabaseAdmin
+    // Notify parent about the correction.
+    // If we already fetched the student above (teacher path), reuse that row.
+    // Otherwise fetch now (schooladmin/superadmin path).
+    const notifyStudent = studentForUpdate ?? (await supabaseAdmin
       .from('students')
       .select('full_name, parent_id')
       .eq('id', original.student_id)
-      .maybeSingle();
+      .maybeSingle()
+    ).data as { full_name: string; parent_id: string | null } | null;
 
-    if (student?.parent_id) {
+    if (notifyStudent?.parent_id) {
       await supabaseAdmin.from('notifications').insert({
         title: 'Attendance Correction',
-        body: `${student.full_name}'s attendance for ${original.date} was corrected from ${oldStatus} to ${new_status}. Reason: ${reason}`,
+        message: `${notifyStudent.full_name}'s attendance for ${original.date} was corrected from ${oldStatus} to ${new_status}. Reason: ${reason}`,
         type: 'attendance',
-        recipient_id: student.parent_id,
+        recipient_id: notifyStudent.parent_id,
         sender_id: userId,
         is_read: false,
         created_at: new Date().toISOString(),

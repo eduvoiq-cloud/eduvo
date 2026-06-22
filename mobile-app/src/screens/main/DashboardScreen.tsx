@@ -470,8 +470,28 @@ export default function DashboardScreen() {
           ? testsPayload
           : (testsPayload?.data ?? testsPayload?.tests ?? []);
         // Sort ascending by date so the soonest upcoming test is first
+        const nowUTC = Date.now();
+        const istMins = (() => {
+          const ist = new Date(nowUTC + 5.5 * 60 * 60 * 1000);
+          return ist.getUTCHours() * 60 + ist.getUTCMinutes();
+        })();
         const upcoming = testsList
-          .filter((t: any) => t.attempt_status !== 'completed' && t.date >= today)
+          .filter((t: any) => {
+            if (t.attempt_status === 'completed') return false;
+            if (t.date < today) return false;
+            // For today's tests: only show if the window is still open,
+            // OR the student has an in-progress attempt (allow resume).
+            if (t.date === today) {
+              const windowClosed = t.available_until
+                ? (() => {
+                    const [h, m] = (t.available_until as string).split(':').map(Number);
+                    return istMins > h * 60 + m;
+                  })()
+                : false;
+              if (windowClosed && t.attempt_status !== 'in_progress') return false;
+            }
+            return true;
+          })
           .sort((a: any, b: any) => (a.date < b.date ? -1 : 1));
         if (upcoming.length > 0) {
           upcomingTest = { title: upcoming[0].title, date: upcoming[0].date };

@@ -380,8 +380,8 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
     return;
   }
 
-  // Reject past dates
-  const todayStr = new Date().toISOString().slice(0, 10);
+  // Reject past dates — use IST so teachers in India aren't blocked between midnight–5:30 AM
+  const todayStr = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
   if (testFields.date < todayStr) {
     sendError(res, 'Test date cannot be in the past', 400);
     return;
@@ -881,7 +881,11 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   // or crash doesn't lock the student out on the same day).
   const testDate = (test as Record<string, unknown>).date as string | null;
   if (testDate) {
-    const todayISO = new Date().toISOString().slice(0, 10); // YYYY-MM-DD in UTC
+    // Use IST (UTC+5:30) for date comparison so students in India are never blocked
+    // by a UTC-vs-IST midnight mismatch (e.g. 12:30 AM IST = still today in India
+    // but already "tomorrow" in UTC).
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const todayISO = new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
 
     // Check for an existing in-progress attempt before enforcing date
     const { data: dateCheckAttempt } = await supabaseAdmin
@@ -1951,8 +1955,8 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     return;
   }
 
-  // Reject past dates
-  const todayStr2 = new Date().toISOString().slice(0, 10);
+  // Reject past dates — use IST so teachers in India aren't blocked between midnight–5:30 AM
+  const todayStr2 = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
   if (rest.date < todayStr2) {
     sendError(res, 'Test date cannot be in the past', 400);
     return;
