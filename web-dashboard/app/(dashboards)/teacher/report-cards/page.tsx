@@ -341,6 +341,8 @@ export default function ReportCardsPage() {
   }
 
   // ── Main UI ──────────────────────────────────────────────────────────────────
+  // Alias to prevent TypeScript control-flow narrowing across JSX ternary branches
+  const ps: PageState = pageState;
   return (
     <>
       <PageHeader
@@ -423,14 +425,14 @@ export default function ReportCardsPage() {
         )}
 
         {/* Check Readiness button */}
-        {(pageState === 'idle' || pageState === 'checking') && (
+        {(ps === 'idle' || ps === 'checking') && (
           <button
             type="button"
             onClick={handleCheckReadiness}
-            disabled={pageState === 'checking'}
+            disabled={ps === 'checking'}
             className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-lg transition-colors"
           >
-            {pageState === 'checking' ? (
+            {ps === 'checking' ? (
               <>
                 <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                 Checking…
@@ -448,7 +450,7 @@ export default function ReportCardsPage() {
       </div>
 
       {/* ── Readiness result ─────────────────────────────────────────────── */}
-      {(pageState === 'ready' || pageState === 'generating' || pageState === 'done') && readiness && (
+      {(ps === 'ready' || ps === 'generating' || ps === 'done' || ps === 'notifying' || ps === 'notified') && readiness && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
 
           {/* ── Already generated banner ──────────────────────────────────── */}
@@ -567,7 +569,7 @@ export default function ReportCardsPage() {
           )}
 
           {/* Action buttons */}
-          {pageState === 'done' ? (
+          {ps === 'done' ? (
             <div className="space-y-3">
               <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-lg px-4 py-3">
                 <svg className="w-5 h-5 text-green-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -601,7 +603,7 @@ export default function ReportCardsPage() {
                 <span className="text-xs text-gray-400">Remind students &amp; parents again</span>
               </div>
             </div>
-          ) : pageState === 'notified' ? (
+          ) : ps === 'notified' ? (
             <div className="flex items-start gap-3 bg-purple-50 border border-purple-200 rounded-lg px-4 py-3">
               <svg className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
@@ -618,12 +620,12 @@ export default function ReportCardsPage() {
                 Back
               </button>
             </div>
-          ) : pageState === 'generating' ? (
+          ) : ps === 'generating' ? (
             <div className="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
               <span className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin shrink-0" />
               <p className="text-sm font-medium text-blue-800">Generating report cards…</p>
             </div>
-          ) : pageState === 'notifying' ? (
+          ) : ps === 'notifying' ? (
             <div className="flex items-center gap-3 bg-purple-50 border border-purple-200 rounded-lg px-4 py-3">
               <span className="w-5 h-5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin shrink-0" />
               <p className="text-sm font-medium text-purple-800">Sending notifications to students &amp; parents…</p>
