@@ -186,10 +186,21 @@ function ResourceCard({ item }: { item: ResourceItem }) {
       setLightboxUrl(url);
       return;
     }
-    // PDF or other — open in browser
-    const supported = await Linking.canOpenURL(url);
-    if (supported) {
-      await Linking.openURL(url);
+    // For PDFs, use Google Docs viewer so it opens reliably in the browser
+    // on any Android device regardless of whether a local PDF app is installed.
+    const viewerUrl = isPdfUrl(url)
+      ? `https://docs.google.com/gviewer?embedded=true&url=${encodeURIComponent(url)}`
+      : url;
+
+    try {
+      await Linking.openURL(viewerUrl);
+    } catch {
+      // Last resort: try the raw URL directly
+      try {
+        await Linking.openURL(url);
+      } catch (e) {
+        console.warn('[ResourcesScreen] Could not open file:', url, e);
+      }
     }
   }
 

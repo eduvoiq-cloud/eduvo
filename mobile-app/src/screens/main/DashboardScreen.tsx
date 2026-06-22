@@ -479,7 +479,10 @@ export default function DashboardScreen() {
         })();
         const upcoming = testsList
           .filter((t: any) => {
+            // Exclude any completed or missed tests
             if (t.attempt_status === 'completed') return false;
+            if (t.attempt_status === 'missed') return false;
+            // Exclude past dates entirely — they are already missed
             if (t.date < today) return false;
             // For today's tests: only show if the window is still open,
             // OR the student has an in-progress attempt (allow resume).
@@ -722,6 +725,60 @@ export default function DashboardScreen() {
                 sub="Weekly class schedule"
                 color="#1D4ED8"
                 onPress={() => navigateToMore('Timetable')}
+              />
+            </View>
+            <View style={[styles.cardsRow, { marginTop: 12 }]}>
+              <DashCard
+                icon="📘"
+                title="Recovery Pack"
+                value={
+                  loading
+                    ? '—'
+                    : (data?.recoveryPacks?.length ?? 0) > 0
+                      ? `${data!.recoveryPacks.length} Pack${data!.recoveryPacks.length !== 1 ? 's' : ''}`
+                      : 'View'
+                }
+                sub={
+                  (data?.recoveryPacks?.length ?? 0) > 0
+                    ? `${data!.recoveryPacks[0].subjects.length === 1 ? data!.recoveryPacks[0].subjects[0] : `${data!.recoveryPacks[0].subjects[0]} + more`}`
+                    : 'Personalised study packs'
+                }
+                color="#7C3AED"
+                onPress={() => {
+                  const parent = (navigation as any).getParent?.();
+                  if (parent?.navigate) parent.navigate('RecoveryPacks');
+                  else navigateToMore('RecoveryPacks');
+                }}
+              />
+              <DashCard
+                icon="🧪"
+                title="Recovery Test"
+                value={
+                  loading
+                    ? '—'
+                    : (data?.recoveryTests?.length ?? 0) > 0
+                      ? `${data!.recoveryTests.length} Due`
+                      : 'View'
+                }
+                sub={
+                  (data?.recoveryTests?.length ?? 0) > 0
+                    ? `${data!.recoveryTests[0].subject} · Tap to start`
+                    : 'Monthly recovery tests'
+                }
+                color="#DC2626"
+                onPress={() => {
+                  const parent = (navigation as any).getParent?.();
+                  if ((data?.recoveryTests?.length ?? 0) > 0) {
+                    // Go straight to the first pending test
+                    if (parent?.navigate) {
+                      parent.navigate('MonthlyRecoveryTestAttempt', { testId: data!.recoveryTests[0].id });
+                    }
+                  } else {
+                    // No pending tests — open the test list
+                    if (parent?.navigate) parent.navigate('MonthlyRecoveryTests');
+                    else navigateToMore('MonthlyRecoveryTests');
+                  }
+                }}
               />
             </View>
           </>

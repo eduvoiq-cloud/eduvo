@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import Svg, { Polyline, Circle } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import apiClient from '../../api/client';
 import { MainStackParamList } from '../../navigation/AppNavigator';
@@ -564,7 +564,20 @@ export default function MarksScreen() {
   const [expandedSubject, setExpandedSubject] = useState<string | null>(initialSubject);
   const [showTests, setShowTests] = useState(true);
 
+  const flatListRef = React.useRef<FlatList<SubjectSummary>>(null);
   const navigation = useNavigation<StackNavigationProp<MainStackParamList>>();
+
+  // When navigated to with initialSubject (e.g. from Focus Area on Home),
+  // expand that subject card. Runs on every focus so it works even when
+  // the Marks tab is already mounted and just receives new params.
+  useFocusEffect(
+    useCallback(() => {
+      const subject: string | null = route.params?.initialSubject ?? null;
+      if (subject) {
+        setExpandedSubject(subject);
+      }
+    }, [route.params?.initialSubject])
+  );
 
   const handleTestResultPress = useCallback((test: TestRecord) => {
     navigation.navigate('TestAttempt', {
@@ -654,6 +667,18 @@ export default function MarksScreen() {
     [summaries]
   );
 
+  // Scroll to the expanded subject when arriving from Focus Area
+  useEffect(() => {
+    if (!expandedSubject || loading || sortedSummaries.length === 0) return;
+    const idx = sortedSummaries.findIndex((s) => s.subject === expandedSubject);
+    if (idx >= 0) {
+      // Small delay to ensure layout is done
+      setTimeout(() => {
+        flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewOffset: 12 });
+      }, 300);
+    }
+  }, [expandedSubject, loading, sortedSummaries]);
+
   const bestSubject = sortedSummaries.length > 0 ? sortedSummaries[0].subject : null;
   const worstSubject = useMemo(() => {
     if (sortedSummaries.length < 2) return null;
@@ -676,10 +701,15 @@ export default function MarksScreen() {
         <TermFilterBar selected={termFilter} onChange={setTermFilter} />
       </View>
       <FlatList
+        ref={flatListRef}
         style={styles.container}
         contentContainerStyle={styles.content}
         data={sortedSummaries}
         keyExtractor={(item) => item.subject}
+        onScrollToIndexFailed={() => {
+          // If scrollToIndex fails (e.g. index not yet rendered), scroll to end as fallback
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#1D4ED8" />
         }
