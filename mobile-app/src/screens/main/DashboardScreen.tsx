@@ -52,6 +52,23 @@ interface UpcomingTest {
   date: string;
 }
 
+interface RecoveryPackSummary {
+  id: string;
+  type: 'cycle' | 'legacy';
+  subjects: string[];
+  subject_count: number;
+  scheduled_month: string;
+  created_at: string;
+}
+
+interface RecoveryTestSummary {
+  id: string;
+  subject: string;
+  scheduled_month: string;
+  total_questions: number | null;
+  attempt_status: 'not_started' | 'in_progress';
+}
+
 interface DashboardData {
   attendance: AttendanceSummary | null;
   homework: HomeworkSummary;
@@ -59,6 +76,8 @@ interface DashboardData {
   announcements: Announcement[];
   worstSubject: string | null;
   upcomingTest: UpcomingTest | null;
+  recoveryPacks: RecoveryPackSummary[];
+  recoveryTests: RecoveryTestSummary[];
 }
 
 type MainNavProp = BottomTabNavigationProp<MainTabParamList>;
@@ -70,6 +89,13 @@ function todayISO(): string {
 }
 
 // ── Worst subject helper ──────────────────────────────────────────────────────
+
+function formatMonth(dateStr: string): string {
+  if (!dateStr) return '';
+  const [y, m] = dateStr.split('-');
+  return new Date(parseInt(y), parseInt(m) - 1, 1)
+    .toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
 
 function deriveWorstSubject(marks: Array<{ subject: string; score: number; max_score: number }>): string | null {
   if (!marks || marks.length < 2) return null;
@@ -340,7 +366,7 @@ export default function DashboardScreen() {
           ? linkedChildren[activeChildIndex]?.token
           : null;
 
-      const [attHistRes, attTodayRes, hwRes, marksRes, annRes, notifCountRes, testsRes] =
+      const [attHistRes, attTodayRes, hwRes, marksRes, annRes, notifCountRes, testsRes, recoveryPacksRes, recoveryTestsRes] =
         await Promise.allSettled([
           apiClient.get('/api/attendance/history', {
             params: { student_id: activeStudent?.id, start_date: yearStart, end_date: yearEnd },
@@ -359,6 +385,18 @@ export default function DashboardScreen() {
           }),
           apiClient.get('/api/notifications', { params: { unread_only: 'true' } }),
           apiClient.get('/api/tests/student'),
+          // Recovery packs — student-only endpoint (uses student token automatically)
+          apiClient.get('/api/student-recovery/packs', {
+            headers: activeChildToken
+              ? { Authorization: `Bearer ${activeChildToken}` }
+              : undefined,
+          }),
+          // Recovery tests — student-only endpoint
+          apiClient.get('/api/student-recovery/tests', {
+            headers: activeChildToken
+              ? { Authorization: `Bearer ${activeChildToken}` }
+              : undefined,
+          }),
         ]);
 
       // Attendance summary
@@ -440,7 +478,20 @@ export default function DashboardScreen() {
         }
       }
 
-      setData({ attendance, homework, recentMark, announcements, worstSubject: deriveWorstSubject(allMarksForWorst), upcomingTest });
+      // Recovery packs — all completed packs, newest first
+      let recoveryPacks: RecoveryPackSummary[] = [];
+      if (recoveryPacksRes.status === 'fulfilled') {
+        recoveryPacks = (recoveryPacksRes.value.data?.data ?? []) as RecoveryPackSummary[];
+      }
+
+      // Recovery tests — available (not yet completed) tests
+      let recoveryTests: RecoveryTestSummary[] = [];
+      if (recoveryTestsRes.status === 'fulfilled') {
+        const testsData = recoveryTestsRes.value.data?.data as { available?: RecoveryTestSummary[]; completed?: RecoveryTestSummary[] } | null;
+        recoveryTests = testsData?.available ?? [];
+      }
+
+      setData({ attendance, homework, recentMark, announcements, worstSubject: deriveWorstSubject(allMarksForWorst), upcomingTest, recoveryPacks, recoveryTests });
     } catch (err) {
       console.warn('[Dashboard] fetchAll error:', err);
     } finally {
@@ -675,9 +726,99 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         )}
 
+        {/* Recovery section — shown when packs or tests are available */}
+        {!loading && ((data?.recoveryPacks?.length ?? 0) > 0 || (data?.recoveryTests?.length ?? 0) > 0) && (
+          <View style={styles.recoverySection}>
+            <View style={styles.recoverySectionHeader}>
+              <Text style={styles.recoverySectionTitle}>📘 Recovery</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  const parent = (navigation as any).getParent?.();
+                  if (parent?.navigate) parent.navigate('RecoveryPacks');
+                  else navigateToMore('RecoveryPacks');
+                }}
+                accessibilityRole="link"
+                accessibilityLabel="See all recovery packs"
+              >
+                <Text style={styles.recoverySeeAll}>See all →</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Available recovery tests — shown as actionable cards */}
+            {(data?.recoveryTests?.length ?? 0) > 0 && (
+              <>
+                <Text style={styles.recoverySubLabel}>Available Tests</Text>
+                {data!.recoveryTests.slice(0, 2).map((test) => (
+                  <TouchableOpacity
+                    key={test.id}
+                    style={styles.recoveryTestCard}
+                    onPress={() => {
+                      const parent = (navigation as any).getParent?.();
+                      if (parent?.navigate) parent.navigate('MonthlyRecoveryTestAttempt', { testId: test.id });
+                    }}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Start ${test.subject} recovery test`}
+                  >
+                    <View style={styles.recoveryTestLeft}>
+                      <Text style={styles.recoveryTestSubject}>{test.subject}</Text>
+                      <Text style={styles.recoveryTestMeta}>
+                        {formatMonth(test.scheduled_month)}
+                        {test.total_questions ? ` · ${test.total_questions} questions` : ''}
+                      </Text>
+                    </View>
+                    <View style={styles.recoveryTestCta}>
+                      <Text style={styles.recoveryTestCtaText}>Start →</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+
+            {/* Recovery packs list — one card per cycle/month */}
+            {(data?.recoveryPacks?.length ?? 0) > 0 && (
+              <>
+                <Text style={[styles.recoverySubLabel, { marginTop: (data?.recoveryTests?.length ?? 0) > 0 ? 12 : 0 }]}>
+                  Study Packs
+                </Text>
+                {data!.recoveryPacks.slice(0, 3).map((pack) => (
+                  <TouchableOpacity
+                    key={pack.id}
+                    style={styles.recoveryPackCard}
+                    onPress={() => {
+                      const parent = (navigation as any).getParent?.();
+                      if (parent?.navigate) {
+                        parent.navigate('RecoveryPackDetail', {
+                          packId: pack.id,
+                          isCycle: pack.type === 'cycle',
+                        });
+                      }
+                    }}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open recovery pack for ${formatMonth(pack.scheduled_month)}`}
+                  >
+                    <View style={styles.recoveryPackIconWrap}>
+                      <Text style={styles.recoveryPackIcon}>📘</Text>
+                    </View>
+                    <View style={styles.recoveryPackInfo}>
+                      <Text style={styles.recoveryPackMonth}>{formatMonth(pack.scheduled_month)}</Text>
+                      <Text style={styles.recoveryPackSubjects} numberOfLines={1}>
+                        {pack.subjects.length === 1
+                          ? pack.subjects[0]
+                          : `${pack.subjects[0]} + ${pack.subject_count - 1} more`}
+                      </Text>
+                    </View>
+                    <Text style={styles.recoveryPackArrow}>›</Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+          </View>
+        )}
+
         {/* Announcements section — always shown below the cards */}
-        {!loading && (
-          <View style={styles.annSection}>
+        {!loading && (          <View style={styles.annSection}>
             <View style={styles.annSectionHeader}>
               <Text style={styles.annSectionTitle}>📢 Announcements</Text>
               {data?.announcements && data.announcements.length > 0 && (
@@ -848,5 +989,117 @@ const styles = StyleSheet.create({
   annEmptyText: {
     fontSize: 13,
     color: '#9CA3AF',
+  },
+
+  // Recovery section
+  recoverySection: {
+    marginTop: 24,
+  },
+  recoverySectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  recoverySectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  recoverySeeAll: {
+    fontSize: 13,
+    color: '#7C3AED',
+    fontWeight: '500',
+  },
+  recoverySubLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#9CA3AF',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+    marginLeft: 2,
+  },
+  recoveryTestCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderLeftWidth: 4,
+    borderLeftColor: '#7C3AED',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  recoveryTestLeft: {
+    flex: 1,
+  },
+  recoveryTestSubject: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  recoveryTestMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  recoveryTestCta: {
+    backgroundColor: '#7C3AED',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  recoveryTestCtaText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  recoveryPackCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  recoveryPackIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#EDE9FE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  recoveryPackIcon: {
+    fontSize: 20,
+  },
+  recoveryPackInfo: {
+    flex: 1,
+  },
+  recoveryPackMonth: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  recoveryPackSubjects: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  recoveryPackArrow: {
+    fontSize: 20,
+    color: '#D1D5DB',
+    marginLeft: 4,
   },
 });

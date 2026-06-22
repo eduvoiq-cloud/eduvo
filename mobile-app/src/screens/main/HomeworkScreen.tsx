@@ -13,7 +13,6 @@ import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/authStore';
-import { useChildStore } from '../../store/childStore';
 import type { HomeworkMeta } from '../../screens/student/HomeworkSubmitScreen';
 
 // ── Navigation ─────────────────────────────────────────────────────────────────
@@ -233,7 +232,6 @@ const cardStyles = StyleSheet.create({
 
 export default function HomeworkScreen() {
   const student = useAuthStore((s) => s.student);
-  const { linkedChildren, activeChildIndex } = useChildStore();
   const navigation = useNavigation<MoreNavProp>();
   const rootNavigation = useNavigation<RootNavProp>();
   const [homework, setHomework] = useState<HomeworkItem[]>([]);
@@ -241,10 +239,8 @@ export default function HomeworkScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabFilter>('Pending');
 
-  // Use the active linked child's class/section if available, otherwise fall back to logged-in student
-  const activeStudent = linkedChildren.length > 0 ? linkedChildren[activeChildIndex] : student;
-  const studentClass = activeStudent?.class ?? null;
-  const studentSection = activeStudent?.section ?? null;
+  const studentClass = student?.class ?? null;
+  const studentSection = student?.section ?? null;
 
   const fetchHomework = useCallback(async () => {
     if (!studentClass || !studentSection) {
@@ -253,12 +249,9 @@ export default function HomeworkScreen() {
       return;
     }
     try {
-      // Use /api/homework/class which returns homework for a specific class/section
-      // The API also checks the student token and marks acknowledged status
       const response = await apiClient.get('/api/homework/class', {
         params: { class: studentClass, section: studentSection },
       });
-      // API returns { subject_name, acknowledged } — normalise to our internal shape
       const raw: any[] = response.data.data ?? [];
       const normalised: HomeworkItem[] = raw.map((h) => ({
         id: h.id,
@@ -272,7 +265,7 @@ export default function HomeworkScreen() {
         ai_result: h.ai_result ?? null,
       }));
       setHomework(normalised);
-    } catch (err) {
+    } catch (err: unknown) {
       console.warn('[Homework] fetch error:', err);
     } finally {
       setLoading(false);
