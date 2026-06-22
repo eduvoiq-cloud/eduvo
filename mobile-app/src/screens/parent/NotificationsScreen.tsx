@@ -67,7 +67,13 @@ export default function ParentNotificationsScreen() {
   const fetchNotifications = async () => {
     try {
       const response = await apiClient.get('/api/notifications');
-      setNotifications(response.data.data?.data ?? []);
+      const raw: Notification[] = response.data.data?.data ?? [];
+      // Sort everything by date descending so the newest item (announcement or
+      // notification) always appears at the top, regardless of type.
+      const sorted = [...raw].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      setNotifications(sorted);
     } catch (error: unknown) {
       console.warn('[ParentNotifications] Failed to fetch:', error instanceof Error ? error.message : String(error));
     } finally {

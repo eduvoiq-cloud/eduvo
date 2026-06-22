@@ -169,7 +169,7 @@ function MoreNavigator() {
       <MoreStack.Screen
         name="ChangePassword"
         component={ChangePasswordScreen}
-        options={{ title: 'Change Password' }}
+        options={{ title: 'Change Password', gestureEnabled: false }}
       />
       <MoreStack.Screen
         name="LinkChild"
@@ -185,12 +185,6 @@ function MoreNavigator() {
         name="Resources"
         component={ResourcesScreen}
         options={{ title: 'Notes & Resources' }}
-      />
-      <MoreStack.Screen
-        name="HomeworkSubmit"
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        component={HomeworkSubmitScreen as React.ComponentType<any>}
-        options={{ title: 'Submit Homework' }}
       />
       <MoreStack.Screen
         name="Timetable"

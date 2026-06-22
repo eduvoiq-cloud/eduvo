@@ -50,6 +50,26 @@ export function toMinutes(hhmm: string): number {
 }
 
 /**
+ * Current time in IST (UTC+5:30) expressed as minutes since midnight.
+ * The app stores all time windows in IST, so comparisons must use IST
+ * regardless of the device's local timezone.
+ */
+export function nowISTMinutes(): number {
+  const nowUTC = Date.now();
+  const istOffsetMs = 5.5 * 60 * 60 * 1000; // UTC+5:30
+  const istDate = new Date(nowUTC + istOffsetMs);
+  return istDate.getUTCHours() * 60 + istDate.getUTCMinutes();
+}
+
+/**
+ * Current time in IST as a Date object (useful for countdown seconds).
+ */
+export function nowIST(): Date {
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  return new Date(Date.now() + istOffsetMs);
+}
+
+/**
  * Format an "HH:MM" 24h string as "H:MM AM/PM".
  */
 export function formatHHMM(hhmm: string): string {

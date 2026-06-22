@@ -793,11 +793,16 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       : 'not_started';
 
     // For a completed attempt: prefer total_score (MCQ + theory), fall back to mcq_score.
-    // If both are null after submission, theory marking is still pending.
+    // For mixed MCQ+theory tests, theory marking is still pending when total_score is null
+    // even if mcq_score is already set. Only flag as pending when there are actually
+    // unmarked theory answers — not just when both scores are null.
     const mcqScore = attempt?.mcq_score ?? null;
     const totalScore = attempt?.total_score ?? null;
     const maxScore = attempt ? (maxScoreByAttempt.get(attempt.id) ?? null) : null;
-    const totalScorePending = attemptStatus === 'completed' && totalScore === null && mcqScore === null;
+    // A test is pending if: attempt is submitted AND total_score is null.
+    // This correctly handles: pure-theory (mcq_score=0, total_score=null) AND
+    // mixed tests (mcq_score=8, total_score=null while theory awaits grading).
+    const totalScorePending = attemptStatus === 'completed' && totalScore === null;
 
     const integrity = attempt ? integrityByAttemptId.get(attempt.id) : undefined;
 
@@ -945,9 +950,19 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
           sendError(res, `This test opens at ${available_from}. Please wait until then to start.`, 403);
           return;
         }
-        if (available_until && currentMins > toMins(available_until)) {
-          sendError(res, `The test window closed at ${available_until}. You can no longer start this test.`, 403);
-          return;
+
+        // Handle overnight windows (e.g. available_from: 23:00, available_until: 00:30)
+        if (available_until) {
+          const untilMins = toMins(available_until);
+          const fromMins = available_from ? toMins(available_from) : 0;
+          const isOvernight = fromMins > untilMins;
+          const windowClosed = isOvernight
+            ? (currentMins > untilMins && currentMins < fromMins)
+            : currentMins > untilMins;
+          if (windowClosed) {
+            sendError(res, `The test window closed at ${available_until}. You can no longer start this test.`, 403);
+            return;
+          }
         }
       }
     }
@@ -1522,15 +1537,27 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
       .eq('notes', noteTag)
       .maybeSingle();
 
-    // Calculate total possible marks by summing question marks from the test
-    const { data: testQuestions } = await supabaseAdmin
+    // Calculate total possible marks — try test_questions first, fallback to questions table
+    // (mobile-app-created tests store questions only in the questions table)
+    const { data: testQuestionsForMax } = await supabaseAdmin
       .from('test_questions')
       .select('marks')
       .eq('test_id', attemptDetail.test_id);
 
-    const maxScore = (testQuestions ?? []).reduce(
+    let maxScore = (testQuestionsForMax ?? []).reduce(
       (sum: number, row: { marks: number }) => sum + Number(row.marks), 0
     );
+
+    if (maxScore === 0) {
+      // Fallback: try the questions table (used by mobile-app-created tests)
+      const { data: legacyQuestionsForMax } = await supabaseAdmin
+        .from('questions')
+        .select('marks')
+        .eq('test_id', attemptDetail.test_id);
+      maxScore = (legacyQuestionsForMax ?? []).reduce(
+        (sum: number, row: { marks: number }) => sum + Number(row.marks), 0
+      );
+    }
 
     if (existingMark) {
       await supabaseAdmin
@@ -1669,7 +1696,8 @@ router.get('/results/by-test/:test_id', authenticateStudent, requireRole('studen
         option_c: q.option_c,
         option_d: q.option_d,
         selected_option: ans.selected_option,
-        correct_option: !isCorrect ? q.correct_option : null,
+        // Always reveal correct_option so students can review the answer key
+        correct_option: q.correct_option,
         is_correct: ans.is_correct,
         marks: q.marks,
         marks_awarded: ans.marks_awarded,
@@ -1801,8 +1829,8 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
         option_c: q.option_c,
         option_d: q.option_d,
         selected_option: ans.selected_option,
-        // Only reveal correct answer if the student got it wrong or skipped — for learning
-        correct_option: !isCorrect ? q.correct_option : null,
+        // Always reveal correct_option so students can review the answer key
+        correct_option: q.correct_option,
         is_correct: ans.is_correct,
         marks: q.marks,
         marks_awarded: ans.marks_awarded,

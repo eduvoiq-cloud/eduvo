@@ -163,7 +163,7 @@ async function sendHomeworkNotifications(
             await supabaseAdmin.from('notifications').insert({
               title: notifTitle,
               message: notifBody,
-              type: 'announcement',
+              type: 'homework',
               recipient_id: student.id,
               sender_id: senderId,
               is_read: false,
@@ -1649,7 +1649,7 @@ router.post(
             .maybeSingle();
           const studentName = (studentRow as { full_name?: string } | null)?.full_name ?? 'Student';
           const parentId = (studentRow as { parent_id?: string | null } | null)?.parent_id ?? null;
-          await updateStreakWithMilestone(studentId, 'activity_pack', studentName, parentId);
+          await updateStreakWithMilestone(studentId, 'test', studentName, parentId);
         } catch (err) {
           console.error('[homework] Streak update failed:', err);
         }

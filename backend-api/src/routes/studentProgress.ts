@@ -117,7 +117,11 @@ router.get(
         lastActivityDate !== todayISTStr && lastActivityDate < yesterdayIST;
 
       if (isStale && (row.current_streak as number) > 0) {
-        // Persist the reset so subsequent reads are fast
+        // Persist the reset so subsequent reads are fast.
+        // Reset to 0 (not 1) because the student has not yet done any activity today.
+        // The next time they complete an activity, updateStreak will set it to 1.
+        // This keeps the UI (showing 0) consistent with what updateStreak would compute
+        // when called for a gap ≥ 2 days and then immediately incremented to 1.
         await supabaseAdmin
           .from('student_streaks')
           .update({ current_streak: 0, updated_at: new Date().toISOString() })
@@ -145,9 +149,11 @@ router.get(
     const rawDays = parseInt((req.query.days as string) ?? '30', 10);
     const days = isNaN(rawDays) || rawDays < 1 ? 30 : Math.min(rawDays, 90);
 
-    const since = new Date();
-    since.setDate(since.getDate() - days);
-    const sinceStr = since.toISOString().slice(0, 10);
+    // Use IST (UTC+5:30) so the since-date matches how streak_log entries are written
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(Date.now() + IST_OFFSET_MS);
+    nowIST.setDate(nowIST.getDate() - days);
+    const sinceStr = nowIST.toISOString().slice(0, 10);
 
     const { data, error } = await supabaseAdmin
       .from('streak_log')

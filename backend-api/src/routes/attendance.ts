@@ -24,7 +24,7 @@ const submitRateLimit = rateLimit({
   validate: false,
   message: {
     success: false,
-    message: 'Attendance submission limit reached (10 per day). Try again tomorrow.',
+    message: 'Attendance submission limit reached (50 per day). Try again tomorrow.',
   },
   skip: (req) => {
     // Only rate-limit teachers; admins are exempt
@@ -794,7 +794,7 @@ router.get(
 
     const list = records ?? [];
     const total_days = list.length;
-    const present_count = list.filter((r: { status: string }) => r.status === 'present').length;
+    const present_count = list.filter((r: { status: string }) => r.status === 'present' || r.status === 'late' || r.status === 'excused').length;
     const absent_count = list.filter((r: { status: string }) => r.status === 'absent').length;
     const percentage = total_days > 0 ? Math.round((present_count / total_days) * 100) : 0;
 

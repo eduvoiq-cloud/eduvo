@@ -126,7 +126,10 @@ function testsToMarkRecords(tests: TestRecord[]): MarkRecord[] {
     if (!subject) continue;
     const score = t.total_score ?? t.mcq_score;
     if (score === null || score === undefined || t.total_score_pending) continue;
-    const max = t.max_score ?? 100;
+    // Only include if we have a valid non-zero max_score — a null or zero max means
+    // the score hasn't been fully recorded yet (e.g. theory-only test before marking).
+    if (!t.max_score || t.max_score <= 0) continue;
+    const max = t.max_score;
     result.push({
       id: `test-${t.id}`,
       subject,

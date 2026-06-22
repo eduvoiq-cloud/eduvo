@@ -60,8 +60,13 @@ declare global {
 
 // ── Cache helpers ─────────────────────────────────────────────────────────────
 
-/** Auth cache TTL in seconds. Short enough to pick up deactivations quickly. */
-const AUTH_CACHE_TTL = 60;
+/**
+ * Auth cache TTL in seconds.
+ * 5 minutes balances freshness (deactivations, role changes) with DB load.
+ * Profile data (role, school_id, subscription) rarely changes mid-session,
+ * so 60s was unnecessarily aggressive and caused excess Supabase calls at scale.
+ */
+const AUTH_CACHE_TTL = 300;
 
 /** Prefix keys to avoid collisions with rate-limit keys */
 const CACHE_PREFIX_STAFF   = 'auth:staff:';
@@ -128,15 +133,25 @@ export async function blockStudentToken(token: string): Promise<void> {
 
 /**
  * Check whether a student JWT has been revoked.
- * Returns false when Redis is unavailable (fails open — prefer availability).
+ * Returns false when Redis is unavailable (fails open — prefer availability
+ * over locking out all students if Redis goes down).
+ * Logs a warning so ops can detect a Redis outage quickly.
  */
 async function isStudentTokenBlocked(token: string): Promise<boolean> {
-  if (!redis) return false;
+  if (!redis) {
+    // Redis is not configured — blocklist is not enforced.
+    // This is expected in dev but should not happen in production.
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('[auth] Redis unavailable — student token revocation blocklist is NOT enforced');
+    }
+    return false;
+  }
   try {
     const hash = crypto.createHash('sha256').update(token).digest('hex');
     const val = await redis.get(`${BLOCKLIST_PREFIX}${hash}`);
     return val === '1';
-  } catch {
+  } catch (err) {
+    console.warn('[auth] Redis error checking token blocklist — failing open:', (err as Error).message);
     return false;
   }
 }

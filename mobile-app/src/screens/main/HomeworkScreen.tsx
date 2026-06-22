@@ -113,8 +113,15 @@ function HomeworkCard({
   const status = item.submission_status ?? 'not_submitted';
   const ai = item.ai_result ?? null;
 
+  // Check if this is overdue and never submitted
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(item.due_date);
+  due.setHours(0, 0, 0, 0);
+  const isMissed = status === 'not_submitted' && due < today;
+
   const submissionStatusLabel: Record<string, { label: string; color: string }> = {
-    not_submitted:      { label: 'Not attempted', color: '#EF4444' },
+    not_submitted:      { label: isMissed ? 'Missed' : 'Not attempted', color: isMissed ? '#9CA3AF' : '#EF4444' },
     submitted:          { label: 'Submitted', color: '#F59E0B' },
     processing:         { label: 'Checking…', color: '#3B82F6' },
     checked:            { label: 'Checked', color: '#22C55E' },
@@ -316,9 +323,19 @@ export default function HomeworkScreen() {
   };
 
   // Filter by tab
+  const isOverdue = (h: HomeworkItem) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(h.due_date);
+    due.setHours(0, 0, 0, 0);
+    return due < today;
+  };
+
   const needsAction = (h: HomeworkItem) => {
     const status = h.submission_status ?? 'not_submitted';
     const ai = h.ai_result ?? null;
+    // Overdue + never submitted → no longer actionable, move to Completed
+    if (status === 'not_submitted' && isOverdue(h)) return false;
     if (status === 'not_submitted') return true;
     if (status === 'checked' && (ai === 'partial' || ai === 'unclear')) return true;
     return false;

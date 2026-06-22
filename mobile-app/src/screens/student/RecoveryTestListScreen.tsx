@@ -8,6 +8,7 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import { RouteProp } from '@react-navigation/native';
 import apiClient from '../../api/client';
 import { StudentStackParamList } from '../../navigation/AppNavigator';
+import { toMinutes, formatHHMM, nowISTMinutes } from '../../utils/dateUtils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,31 @@ const badgeStyles = StyleSheet.create({
 
 function TestCard({ test, onPress }: { test: RecoveryTestMeta; onPress: () => void }) {
   const canAttempt = test.is_available && test.attempt_status !== 'submitted';
+
+  // Time window state (IST-aware — all windows are stored in IST)
+  const nowMins = nowISTMinutes();
+  const windowOpen = test.available_from ? nowMins >= toMinutes(test.available_from) : true;
+  const windowClosed = test.available_until ? nowMins > toMinutes(test.available_until) : false;
+  const secsUntilOpen = test.available_from && !windowOpen
+    ? Math.max(0, (toMinutes(test.available_from) - nowMins) * 60)
+    : null;
+
+  const windowLabel = (() => {
+    if (secsUntilOpen !== null) {
+      const m = Math.floor(secsUntilOpen / 60);
+      const s = secsUntilOpen % 60;
+      const countdown = m > 0 ? `${m}m ${s}s` : `${s}s`;
+      return `🕐 Opens at ${formatHHMM(test.available_from!)} · in ${countdown}`;
+    }
+    if (windowClosed && test.available_until) {
+      return `🔴 Window closed at ${formatHHMM(test.available_until)}`;
+    }
+    if (test.available_from && test.available_until) {
+      return `🟢 Window: ${formatHHMM(test.available_from)} – ${formatHHMM(test.available_until)}`;
+    }
+    return null;
+  })();
+
   return (
     <TouchableOpacity
       style={styles.card}
@@ -78,19 +104,18 @@ function TestCard({ test, onPress }: { test: RecoveryTestMeta; onPress: () => vo
         </View>
       </View>
 
-      {(test.available_from || test.available_until) && (
+      {windowLabel && (
         <View style={styles.windowRow}>
-          <Text style={styles.windowText}>
-            {test.available_from ? `From ${test.available_from}` : ''}
-            {test.available_from && test.available_until ? ' — ' : ''}
-            {test.available_until ? `Until ${test.available_until}` : ''}
-          </Text>
+          <Text style={styles.windowText}>{windowLabel}</Text>
         </View>
       )}
 
       <View style={styles.cardFooter}>
         <StatusBadge status={test.attempt_status} percentage={test.percentage} />
-        {canAttempt && <Text style={styles.ctaText}>Start →</Text>}
+        {canAttempt && !windowClosed && <Text style={styles.ctaText}>Start →</Text>}
+        {windowClosed && test.attempt_status !== 'submitted' && (
+          <Text style={[styles.ctaText, { color: '#D97706' }]}>Window Closed</Text>
+        )}
       </View>
     </TouchableOpacity>
   );

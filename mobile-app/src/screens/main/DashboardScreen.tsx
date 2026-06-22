@@ -431,9 +431,11 @@ export default function DashboardScreen() {
       let allMarksForWorst: Array<{ subject: string; score: number; max_score: number }> = [];
       if (marksRes.status === 'fulfilled') {
         const marksPayload = marksRes.value.data.data;
-        const marks: any[] = Array.isArray(marksPayload)
-          ? marksPayload
-          : (marksPayload?.data ?? []);
+        // API returns { success, data: { data: [...], total, page, ... } }
+        // so the array lives at .data.data.data
+        const marks: any[] = Array.isArray(marksPayload?.data)
+          ? marksPayload.data
+          : (Array.isArray(marksPayload) ? marksPayload : []);
         if (marks.length > 0) {
           const latest = marks[0];
           recentMark = {

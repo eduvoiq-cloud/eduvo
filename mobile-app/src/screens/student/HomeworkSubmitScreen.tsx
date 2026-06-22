@@ -801,6 +801,18 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
   const alreadySubmitted = detail.existing_submission?.status &&
     detail.existing_submission.status !== 'not_submitted';
 
+  // Check if homework is past its due date (treat as end-of-day on due date)
+  const isPastDue = (() => {
+    if (!detail.due_date) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const [y, m, d] = detail.due_date.split('-').map(Number);
+    const due = new Date(y, m - 1, d);
+    return due < today;
+  })();
+  // Past due + never submitted → block submission
+  const submissionBlocked = isPastDue && !alreadySubmitted;
+
   return (
     <>
       <StatusBar barStyle="dark-content" backgroundColor="#F9FAFB" />
@@ -822,7 +834,9 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
           ) : null}
 
           <View style={styles.metaRow}>
-            <Text style={styles.metaItem}>📅 Due {formatDate(detail.due_date)}</Text>
+            <Text style={[styles.metaItem, isPastDue && { color: '#EF4444' }]}>
+              📅 Due {formatDate(detail.due_date)}{isPastDue ? ' · Overdue' : ''}
+            </Text>
             {detail.teacher_name && (
               <Text style={styles.metaItem}>👤 {detail.teacher_name}</Text>
             )}
@@ -1021,20 +1035,31 @@ export default function HomeworkSubmitScreen({ navigation, route }: Props) {
           </View>
         )}
 
+        {/* ── Overdue block ─────────────────────────────────────────────── */}
+        {submissionBlocked && (
+          <View style={styles.overdueBox}>
+            <Text style={styles.overdueText}>
+              ⏰ The due date has passed. This homework can no longer be submitted.
+            </Text>
+          </View>
+        )}
+
         {/* ── Submit button ─────────────────────────────────────────────── */}
         <TouchableOpacity
-          style={[styles.submitBtn, !canSubmit && styles.submitBtnDisabled]}
+          style={[styles.submitBtn, (!canSubmit || submissionBlocked) && styles.submitBtnDisabled]}
           onPress={handleSubmit}
-          disabled={!canSubmit || submitting}
+          disabled={!canSubmit || submitting || submissionBlocked}
           accessibilityRole="button"
           accessibilityLabel="Submit homework"
-          accessibilityState={{ disabled: !canSubmit || submitting }}
+          accessibilityState={{ disabled: !canSubmit || submitting || submissionBlocked }}
         >
           {submitting ? (
             <ActivityIndicator color="#FFFFFF" />
           ) : (
             <Text style={styles.submitBtnText}>
-              {!wordCountMet
+              {submissionBlocked
+                ? 'Submission Closed'
+                : !wordCountMet
                 ? `${minWords - wc} more word${minWords - wc !== 1 ? 's' : ''} needed`
                 : alreadySubmitted ? 'Re-submit' : 'Submit Homework'}
             </Text>
@@ -1284,6 +1309,15 @@ const styles = StyleSheet.create({
     borderColor: '#FECACA',
   },
   errorBoxText: { fontSize: 14, color: '#B91C1C' },
+  overdueBox: {
+    backgroundColor: '#FFF7ED',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+  },
+  overdueText: { fontSize: 14, color: '#C2410C', fontWeight: '600' as const },
 
   // Submit button
   submitBtn: {

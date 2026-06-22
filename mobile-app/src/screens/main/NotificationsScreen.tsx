@@ -254,20 +254,16 @@ export default function NotificationsScreen() {
     });
   }, [navigation, hasUnread, markingAll, handleMarkAllRead]);
 
-  // Sort each group newest first, then combine into sections
-  const sortedNotifs = [...notifications].sort(
-    (a, b) => parseUtcDate(b.created_at).getTime() - parseUtcDate(a.created_at).getTime()
-  );
-  const sortedAnns = [...announcements].sort(
+  // Merge both feeds into one list sorted by date, newest first.
+  // This ensures a notification from 2 hours ago always appears above an
+  // announcement from last week, regardless of type.
+  const unifiedFeed: FeedItem[] = [...notifications, ...announcements].sort(
     (a, b) => parseUtcDate(b.created_at).getTime() - parseUtcDate(a.created_at).getTime()
   );
 
   const sections: Array<{ title: string; data: FeedItem[] }> = [];
-  if (sortedAnns.length > 0) {
-    sections.push({ title: '📢 Announcements', data: sortedAnns });
-  }
-  if (sortedNotifs.length > 0) {
-    sections.push({ title: '🔔 Notifications', data: sortedNotifs });
+  if (unifiedFeed.length > 0) {
+    sections.push({ title: '🔔 Recent', data: unifiedFeed });
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────

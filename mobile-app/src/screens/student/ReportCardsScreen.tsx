@@ -144,7 +144,9 @@ function SubjectRow({ entry, board, showGP }: { entry: MarkEntry; board: string;
       <Text style={rowStyles.subject} numberOfLines={1}>{entry.subject}</Text>
       <Text style={rowStyles.score}>{entry.score}/{entry.max_score}</Text>
       <Text style={[rowStyles.pct, { color }]}>{pct.toFixed(1)}%</Text>
-      <GradeChip grade={grade} pct={pct} board={board} />
+      <View style={rowStyles.gradeCell}>
+        <GradeChip grade={grade} pct={pct} board={board} />
+      </View>
       {board.toUpperCase() === 'CBSE' && showGP && (
         <Text style={[rowStyles.gp, { color }]}>{cbseGrade(pct).gp}</Text>
       )}
@@ -169,6 +171,7 @@ const rowStyles = StyleSheet.create({
   subject: { flex: 1, fontSize: 12.5, color: '#374151', fontWeight: '500' },
   score:   { width: 68, fontSize: 12, color: '#6B7280', textAlign: 'right' },
   pct:     { width: 46, fontSize: 12, fontWeight: '700', textAlign: 'right' },
+  gradeCell: { width: 36, alignItems: 'center' },
   gp:      { width: 26, fontSize: 11, fontWeight: '600', textAlign: 'center', color: '#6B7280' },
   result:  { width: 20, fontSize: 12, fontWeight: '800', textAlign: 'center' },
 });
@@ -286,7 +289,7 @@ function ReportCardItem({ card }: { card: ReportCard }) {
 
   // For CBSE: also show grade point
   const cbseGP = (b === 'CBSE' || b === 'ICSE') ? cbseGrade(card.percentage).gp : null;
-  const isPass = card.percentage >= pass && card.marks.every(m => m.percentage >= pass);
+  const isPass = card.percentage >= pass;
 
   return (
     <View style={[cardStyles.card, { borderColor: accent + '40' }]}>
@@ -374,12 +377,13 @@ function ReportCardItem({ card }: { card: ReportCard }) {
             <Text style={[cardStyles.totalsPct, { color: gradeColor }]}>
               {card.percentage.toFixed(1)}%
             </Text>
-            <GradeChip grade={overallGrade} pct={card.percentage} board={board} />
+            <View style={{ width: 36, alignItems: 'center' }}>
+              <GradeChip grade={overallGrade} pct={card.percentage} board={board} />
+            </View>
           </View>
 
           {/* Board-specific grading legend */}
           {(b === 'CBSE' || b === 'ICSE') && <CbseLegend />}
-          {b === 'GSEB' && <GsebLegend />}
 
           {/* Signature reminder */}
           <View style={cardStyles.sigNote}>

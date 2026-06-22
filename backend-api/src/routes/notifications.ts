@@ -25,13 +25,14 @@ const createNotificationSchema = z.object({
 /**
  * The live DB has a 'message' column (NOT NULL) instead of 'body'.
  * We normalise rows coming back from the DB so the API always returns 'body'.
+ * Returns a new object — never mutates the original Supabase response object.
+ * Both 'body' and 'message' are returned so legacy clients reading .message still work.
  */
-function normaliseRow(row: Record<string, unknown>) {
+function normaliseRow(row: Record<string, unknown>): Record<string, unknown> {
   if ('message' in row && !('body' in row)) {
-    row.body = row.message;
-    delete row.message;
+    return { ...row, body: row.message };
   }
-  return row;
+  return { ...row };
 }
 
 // -- Routes -------------------------------------------------------------------
@@ -73,13 +74,22 @@ router.get('/', async (req: Request, res: Response) => {
   }
 
   const total = count ?? 0;
+
+  // Fetch the true unread count separately so it's accurate regardless of
+  // whether the caller is using unread_only=true or paginating all notifications.
+  const { count: unreadCount } = await supabaseAdmin
+    .from('notifications')
+    .select('id', { count: 'exact', head: true })
+    .eq('recipient_id', recipientId)
+    .eq('is_read', false);
+
   sendSuccess(res, {
     data: (data ?? []).map(normaliseRow),
     total,
     page,
     limit,
     total_pages: Math.ceil(total / limit),
-    unread_count: total,
+    unread_count: unreadCount ?? 0,
   });
 });
 
