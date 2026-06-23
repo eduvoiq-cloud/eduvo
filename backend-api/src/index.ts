@@ -80,6 +80,7 @@ import classAdminRoutes from './routes/classAdmin';
 import reportCardsRoutes from './routes/reportCards';
 import cronMonthlyRoutes from './routes/cronMonthly';
 import monthlyAnalysisRoutes from './routes/monthlyAnalysis';
+import leaderboardRoutes from './routes/leaderboard';
 
 // ── Port utilities ────────────────────────────────────────────────────────────
 
@@ -332,6 +333,7 @@ async function startServer() {
   app.use('/api/report-cards', reportCardsRoutes);
   app.use('/api/cron/monthly', cronMonthlyRoutes);
   app.use('/api/monthly-analysis', monthlyAnalysisRoutes);
+  app.use('/api/leaderboard', leaderboardRoutes);
 
   // ── Health check ─────────────────────────────────────────────────────────────
   app.get('/health', (_req, res) => {

@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import { authApi, registerOn401Handler, registerOn402Handler, type UserProfile, type MediumSchool, getActiveSchoolId, setActiveSchoolId } from '@/lib/api';
 import {
   saveSession,
+  flushSessionCookies,
   getToken,
   getRefreshToken,
   getExpiresAt,
@@ -240,6 +241,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (res.data.must_reset_password || user.must_reset_password) {
       window.location.replace('/force-reset-password');
     } else {
+      // Wait for the HttpOnly cookies to be set server-side before navigating.
+      // The edge middleware reads eduvo_token + eduvo_role cookies on the very
+      // next request — if we push() before the cookies land, the middleware sees
+      // no token and redirects back to /login, creating a redirect loop.
+      await flushSessionCookies(token, user.role, refresh_token, expires_at);
       router.push(dashboardPath(user.role));
     }
   }, [router, scheduleRefresh]);

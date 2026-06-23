@@ -47,6 +47,25 @@ interface Announcement {
   created_at: string;
 }
 
+interface NotificationFeedItem {
+  id: string;
+  title: string;
+  body: string;
+  type: string;
+  created_at: string;
+  _kind: 'notification';
+}
+
+interface AnnouncementFeedItem {
+  id: string;
+  title: string;
+  message: string;
+  created_at: string;
+  _kind: 'announcement';
+}
+
+type FeedItem = NotificationFeedItem | AnnouncementFeedItem;
+
 interface UpcomingTest {
   title: string;
   date: string;
@@ -74,6 +93,7 @@ interface DashboardData {
   homework: HomeworkSummary;
   recentMark: RecentMark | null;
   announcements: Announcement[];
+  notifications: NotificationFeedItem[];
   worstSubject: string | null;
   upcomingTest: UpcomingTest | null;
   recoveryPacks: RecoveryPackSummary[];
@@ -383,7 +403,7 @@ export default function DashboardScreen() {
               ? { Authorization: `Bearer ${activeChildToken}` }
               : undefined,
           }),
-          apiClient.get('/api/notifications', { params: { unread_only: 'true' } }),
+          apiClient.get('/api/notifications'),
           apiClient.get('/api/tests/student'),
           // Recovery packs — student-only endpoint (uses student token automatically)
           apiClient.get('/api/student-recovery/packs', {
@@ -453,14 +473,27 @@ export default function DashboardScreen() {
         announcements = annRes.value.data.data ?? [];
       }
 
-      // Notification badge count — only truly unread notifications
+      // Notification badge count + feed items
       // API wraps as { success, data: { data: [...], total, unread_count } }
+      let notifications: NotificationFeedItem[] = [];
       if (notifCountRes.status === 'fulfilled') {
         const notifPayload = notifCountRes.value.data.data;
-        // Prefer the server's unread_count; fall back to array length
+        // Build feed items from the full list
+        const rawItems: any[] = Array.isArray(notifPayload?.data)
+          ? notifPayload.data
+          : (Array.isArray(notifPayload) ? notifPayload : []);
+        notifications = rawItems.map((n: any) => ({
+          id: n.id,
+          title: n.title,
+          body: n.body ?? n.message ?? '',
+          type: n.type ?? 'reminder',
+          created_at: n.created_at,
+          _kind: 'notification',
+        }));
+        // Prefer the server's unread_count; fall back to counting unread items
         const unreadCount: number =
           notifPayload?.unread_count ??
-          (Array.isArray(notifPayload) ? notifPayload.length : (notifPayload?.data?.length ?? 0));
+          rawItems.filter((n: any) => !n.is_read).length;
         setNotifCount(unreadCount);
       }
 
@@ -516,7 +549,7 @@ export default function DashboardScreen() {
         recoveryTests = testsData?.available ?? [];
       }
 
-      setData({ attendance, homework, recentMark, announcements, worstSubject: deriveWorstSubject(allMarksForWorst), upcomingTest, recoveryPacks, recoveryTests });
+      setData({ attendance, homework, recentMark, announcements, notifications, worstSubject: deriveWorstSubject(allMarksForWorst), upcomingTest, recoveryPacks, recoveryTests });
     } catch (err) {
       console.warn('[Dashboard] fetchAll error:', err);
     } finally {
@@ -896,50 +929,75 @@ export default function DashboardScreen() {
           </View>
         )}
 
-        {/* Announcements section — always shown below the cards */}
-        {!loading && (          <View style={styles.annSection}>
-            <View style={styles.annSectionHeader}>
-              <Text style={styles.annSectionTitle}>📢 Announcements</Text>
-              {data?.announcements && data.announcements.length > 0 && (
-                <TouchableOpacity
-                  onPress={() => navigateToMore('Announcements')}
-                  accessibilityRole="link"
-                  accessibilityLabel="See all announcements"
-                >
-                  <Text style={styles.annSeeAll}>See all →</Text>
-                </TouchableOpacity>
+        {/* Recent activity feed — notifications + announcements sorted newest first */}
+        {!loading && (() => {
+          // Build unified feed: notifications + announcements, newest first
+          const annFeedItems: AnnouncementFeedItem[] = (data?.announcements ?? []).map((a) => ({
+            ...a,
+            _kind: 'announcement' as const,
+          }));
+          const notifFeedItems: NotificationFeedItem[] = data?.notifications ?? [];
+          const feed: FeedItem[] = [...notifFeedItems, ...annFeedItems].sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          const preview = feed.slice(0, 5);
+
+          return (
+            <View style={styles.annSection}>
+              <View style={styles.annSectionHeader}>
+                <Text style={styles.annSectionTitle}>🔔 Recent</Text>
+                {feed.length > 0 && (
+                  <TouchableOpacity
+                    onPress={openNotifications}
+                    accessibilityRole="link"
+                    accessibilityLabel="See all notifications and announcements"
+                  >
+                    <Text style={styles.annSeeAll}>See all →</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {preview.length > 0 ? (
+                preview.map((item) => {
+                  const isAnn = item._kind === 'announcement';
+                  const body = isAnn ? (item as AnnouncementFeedItem).message : (item as NotificationFeedItem).body;
+                  const icon = isAnn ? '📢' : '🔔';
+                  return (
+                    <TouchableOpacity
+                      key={`${item._kind}-${item.id}`}
+                      style={[styles.announcementCard, isAnn && styles.announcementCardAnn]}
+                      onPress={() => isAnn ? navigateToMore('Announcements') : openNotifications()}
+                      activeOpacity={0.75}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${isAnn ? 'Announcement' : 'Notification'}: ${item.title}`}
+                    >
+                      <View style={styles.annCardHeader}>
+                        <Text style={styles.feedItemIcon}>{icon}</Text>
+                        <Text style={styles.announcementTitle} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                        <Text style={styles.announcementTime}>
+                          {timeAgo(item.created_at)}
+                        </Text>
+                      </View>
+                      <Text style={styles.announcementBody} numberOfLines={2}>
+                        {body}
+                      </Text>
+                      {isAnn && (
+                        <View style={styles.annBadge}>
+                          <Text style={styles.annBadgeText}>Announcement</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })
+              ) : (
+                <View style={styles.annEmpty}>
+                  <Text style={styles.annEmptyText}>No recent notifications</Text>
+                </View>
               )}
             </View>
-            {data?.announcements && data.announcements.length > 0 ? (
-              data.announcements.slice(0, 3).map((ann) => (
-                <TouchableOpacity
-                  key={ann.id}
-                  style={styles.announcementCard}
-                  onPress={() => navigateToMore('Announcements')}
-                  activeOpacity={0.75}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Announcement: ${ann.title}`}
-                >
-                  <View style={styles.annCardHeader}>
-                    <Text style={styles.announcementTitle} numberOfLines={2}>
-                      {ann.title}
-                    </Text>
-                    <Text style={styles.announcementTime}>
-                      {timeAgo(ann.created_at)}
-                    </Text>
-                  </View>
-                  <Text style={styles.announcementBody} numberOfLines={2}>
-                    {ann.message}
-                  </Text>
-                </TouchableOpacity>
-              ))
-            ) : (
-              <View style={styles.annEmpty}>
-                <Text style={styles.annEmptyText}>No announcements for your class</Text>
-              </View>
-            )}
-          </View>
-        )}
+          );
+        })()}
       </ScrollView>
     </>
   );
@@ -1068,6 +1126,27 @@ const styles = StyleSheet.create({
   annEmptyText: {
     fontSize: 13,
     color: '#9CA3AF',
+  },
+  announcementCardAnn: {
+    borderLeftColor: '#2563EB',
+  },
+  feedItemIcon: {
+    fontSize: 16,
+    marginRight: 6,
+    marginTop: 1,
+  },
+  annBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    backgroundColor: '#DBEAFE',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  annBadgeText: {
+    fontSize: 11,
+    color: '#1D4ED8',
+    fontWeight: '600',
   },
 
   // Recovery section
