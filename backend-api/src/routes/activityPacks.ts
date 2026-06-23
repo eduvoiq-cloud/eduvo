@@ -273,7 +273,7 @@ type must be one of: "verbal", "written", "physical"`;
 
       if (lastActivityErr) throw lastActivityErr;
 
-      if (!Array.isArray(parsed2.activities) || parsed2.activities.length === 0) {
+      if (!parsed2 || !Array.isArray(parsed2.activities) || parsed2.activities.length === 0) {
         sendError(res, 'AI did not return valid activities. Please try again.', 500);
         return;
       }
