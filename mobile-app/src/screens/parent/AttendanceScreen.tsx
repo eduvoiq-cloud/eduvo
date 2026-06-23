@@ -148,14 +148,16 @@ export default function ParentAttendanceScreen() {
       });
       const list: Child[] = res.data.data ?? [];
       setChildren(list);
-      if (list.length > 0 && !selectedChild) {
-        setSelectedChild(list[0]);
-      }
+      // Only auto-select the first child when none is selected yet — use the
+      // functional form of setSelectedChild to read current state without
+      // including selectedChild in the dependency array (which would cause
+      // fetchChildren to re-create on every child switch).
+      setSelectedChild((current) => (current ? current : list[0] ?? null));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to load children';
       setError(msg);
     }
-  }, [user?.id, selectedChild]);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Fetch attendance history (full year for calendar) ───────────────────────
   const fetchHistory = useCallback(async (child: Child) => {
