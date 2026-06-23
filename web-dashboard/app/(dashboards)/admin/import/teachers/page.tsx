@@ -536,24 +536,44 @@ export default function ImportTeachersPage() {
       {/* ── Step 4: Success ────────────────────────────────────────────── */}
       {step === 'success' && importResult && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
-          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6">
-            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
+          <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-6 ${importResult.imported > 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+            {importResult.imported > 0 ? (
+              <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <svg className="w-10 h-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            )}
           </div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            {importResult.imported} teacher{importResult.imported !== 1 ? 's' : ''} imported successfully
+            {importResult.imported > 0
+              ? `${importResult.imported} teacher${importResult.imported !== 1 ? 's' : ''} imported successfully`
+              : 'Import failed — 0 teachers created'}
           </h2>
-          <p className="text-sm text-gray-500 mb-2">
-            Each teacher&apos;s phone number has been set as their default password.
-            They will be prompted to change it on first login.
-          </p>
+          {importResult.imported > 0 && (
+            <p className="text-sm text-gray-500 mb-2">
+              Each teacher&apos;s phone number has been set as their default password.
+              They will be prompted to change it on first login.
+            </p>
+          )}
           {importResult.skipped > 0 && (
-            <p className="text-sm text-orange-600 mb-8">
+            <p className="text-sm text-orange-600 mb-2">
               {importResult.skipped} row{importResult.skipped !== 1 ? 's' : ''} skipped (invalid or duplicate)
             </p>
           )}
-          {(!importResult.skipped || importResult.skipped === 0) && <div className="mb-8" />}
+          {importResult.errors && importResult.errors.length > 0 && (
+            <div className="mb-4 w-full max-w-lg text-left bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+              <p className="text-xs font-semibold text-red-700 mb-1">Import errors ({importResult.errors.length}):</p>
+              <ul className="space-y-0.5 max-h-40 overflow-y-auto">
+                {importResult.errors.map((e, i) => (
+                  <li key={i} className="text-xs text-red-600">{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {(!importResult.skipped || importResult.skipped === 0) && (!importResult.errors || importResult.errors.length === 0) && <div className="mb-8" />}
           <div className="flex items-center gap-3 flex-wrap justify-center">
             <button
               onClick={handleReset}

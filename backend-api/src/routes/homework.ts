@@ -960,9 +960,13 @@ router.get(
 
 // ── GET /api/homework/pending-count ──────────────────────────────────────────
 /**
- * Count of unacknowledged homework due today or later for the student.
+ * Count of homework that still needs action from the student.
  * Auth: student token only.
- * Used for the badge count on the mobile app.
+ * Used for the badge count on the mobile app dashboard.
+ *
+ * "Needs action" mirrors the HomeworkScreen needsAction() logic:
+ *   - not_submitted AND due_date >= today  (overdue + unsubmitted = "missed", not pending)
+ *   - checked AND ai_result is 'partial' or 'unclear' (needs re-submission)
  */
 router.get(
   '/pending-count',
@@ -983,10 +987,10 @@ router.get(
       return;
     }
 
-    // Fetch all homework from the last 7 days onward for this class
+    // Fetch all homework from the last 7 days onward for this class (include due_date for overdue check)
     const { data: homeworkList, error: hwErr } = await supabaseAdmin
       .from('homework')
-      .select('id')
+      .select('id, due_date')
       .eq('school_id', schoolId)
       .ilike('class_name', className.trim())
       .ilike('section', section.trim())
@@ -997,16 +1001,20 @@ router.get(
       return;
     }
 
-    const allIds = (homeworkList ?? []).map((h: { id: string }) => h.id);
+    const allItems = (homeworkList ?? []) as Array<{ id: string; due_date: string }>;
 
-    if (allIds.length === 0) {
+    if (allItems.length === 0) {
       sendSuccess(res, { count: 0 });
       return;
     }
 
+    const allIds = allItems.map((h) => h.id);
+    const dueDateMap = new Map<string, string>(allItems.map((h) => [h.id, h.due_date]));
+    const todayStr = new Date().toISOString().slice(0, 10);
+
     // Pending homework for students should reflect "needs action", not just "seen".
-    // We define "pending" as:
-    //   - not_submitted (not attempted), OR
+    // We define "pending" as (matching the HomeworkScreen needsAction logic):
+    //   - not_submitted AND due_date >= today (overdue+unsubmitted = missed, not pending), OR
     //   - checked + partial/unclear (student should improve and re-submit)
     const { data: subs, error: subErr } = await supabaseAdmin
       .from('homework_submissions')
@@ -1030,6 +1038,9 @@ router.get(
       const sub = submissionMap.get(id);
       const status = sub?.status ?? 'not_submitted';
       const aiResult = sub?.ai_result ?? null;
+      const dueDate = dueDateMap.get(id) ?? '';
+      // Overdue and never submitted = missed, not pending
+      if (status === 'not_submitted' && dueDate < todayStr) return false;
       return status === 'not_submitted' || (status === 'checked' && needsReSubmit(aiResult));
     }).length;
 

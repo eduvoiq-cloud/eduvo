@@ -865,22 +865,25 @@ router.post(
       return;
     }
 
-    // Fetch existing teacher emails to check duplicates
-    // Exclude soft-deleted teachers so re-importing them after removal works correctly
-    const { data: existingTeachers, error: dbErr } = await supabaseAdmin
+    // Collect uploaded emails for a targeted duplicate check.
+    // Email is UNIQUE globally in auth and in the users table — check across
+    // ALL schools so preview accurately reflects what confirm will accept.
+    const uploadedEmails = dataRows
+      .map((row) => cellToString((row as unknown[])[1]).trim().toLowerCase())
+      .filter(Boolean);
+
+    const { data: existingUsers, error: dbErr } = await supabaseAdmin
       .from('users')
       .select('email')
-      .eq('role', 'teacher')
-      .eq('school_id', school_id)
-      .neq('is_deleted', true);
+      .in('email', uploadedEmails.length > 0 ? uploadedEmails : ['__no_match__']);
 
     if (dbErr) {
-      sendError(res, 'Failed to check existing teachers.', 500);
+      sendError(res, 'Failed to check existing accounts.', 500);
       return;
     }
 
     const existingEmails = new Set<string>(
-      (existingTeachers ?? []).map((t) => String(t.email).toLowerCase())
+      (existingUsers ?? []).map((t) => String(t.email).toLowerCase())
     );
 
     // ── First pass: collect all rows and group by email ────────────────────────
@@ -1033,7 +1036,7 @@ router.post(
 
       let status: 'valid' | 'invalid' | 'duplicate' = 'valid';
       if (existingEmails.has(emailKey)) {
-        errors.push('Email already exists in system');
+        errors.push('Email already registered — this account exists in the system');
         status = 'duplicate';
       } else if (errors.length > 0) {
         status = 'invalid';
@@ -1140,15 +1143,11 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
 
       // ── Clean phone to digits only ─────────────────────────────────────────
       const phoneDigits = data.phone.replace(/[\s\-+]/g, '');
-      // Default password = full phone number
-      const defaultPassword = phoneDigits;
 
-      // ── Create Supabase Auth user with phone as password ───────────────────
-      // If the email exists in auth (e.g. from a previously soft-deleted teacher),
-      // hard-delete the stale auth entry first so we can re-create cleanly.
-      let { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
+      // ── Create Supabase Auth user ──────────────────────────────────────────
+      const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.createUser({
         email: data.email,
-        password: defaultPassword,
+        password: phoneDigits,
         email_confirm: true,
         user_metadata: {
           name: data.name,
@@ -1156,40 +1155,13 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
         },
       });
 
-      if (authErr && authErr.message?.toLowerCase().includes('already been registered')) {
-        // Hard-delete the stale auth user. Use the users table (public schema) to find
-        // the auth ID — soft-deleted rows still exist there and retain the auth UUID.
-        const { data: staleProfile } = await supabaseAdmin
-          .from('users')
-          .select('id')
-          .ilike('email', data.email)
-          .limit(1)
-          .maybeSingle();
-
-        if (staleProfile) {
-          await supabaseAdmin.auth.admin.deleteUser(staleProfile.id);
-          await supabaseAdmin.from('users').delete().eq('id', staleProfile.id);
-        } else {
-          // Profile row already gone — find the auth entry by scanning with listUsers
-          const { data: page1 } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000, page: 1 });
-          const staleAuth = page1?.users?.find((u) => u.email?.toLowerCase() === data.email.toLowerCase());
-          if (staleAuth) {
-            await supabaseAdmin.auth.admin.deleteUser(staleAuth.id);
-          }
-        }
-        // Retry creation
-        const retry = await supabaseAdmin.auth.admin.createUser({
-          email: data.email,
-          password: defaultPassword,
-          email_confirm: true,
-          user_metadata: { name: data.name, role: 'teacher' },
-        });
-        authUser = retry.data;
-        authErr  = retry.error;
+      if (authErr) {
+        errors.push(`Row ${row.row_number}: Failed to create auth user — ${authErr.message}`);
+        continue;
       }
 
-      if (authErr || !authUser?.user) {
-        errors.push(`Row ${row.row_number}: Failed to create auth user — ${authErr?.message ?? 'unknown error'}`);
+      if (!authUser?.user) {
+        errors.push(`Row ${row.row_number}: Failed to create auth user — no user returned`);
         continue;
       }
 
@@ -1262,6 +1234,10 @@ router.post('/teachers/confirm', requireRole('superadmin', 'schooladmin'), async
     count:     imported.length,
     school_id: cached.school_id,
   });
+
+  if (errors.length > 0) {
+    console.error(`[bulkImport] Teacher import completed with ${errors.length} error(s) for school ${cached.school_id}:`, errors);
+  }
 
   // Remove session from cache
   previewCache.delete(import_session_id);
