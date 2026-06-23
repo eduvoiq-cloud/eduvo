@@ -152,9 +152,11 @@ router.post('/teacher', requireRole('teacher'), async (req: Request, res: Respon
               `Announcement: ${title}`,
               message
             );
-            console.log(
-              `[FCM] Teacher announcement push — sent: ${successCount}, failed: ${failureCount}`
-            );
+            if (failureCount > 0) {
+              console.error(
+                `[FCM] Teacher announcement push failures — sent: ${successCount}, failed: ${failureCount}`
+              );
+            }
           }
         } catch (err) {
           console.error('[FCM] Failed to send teacher announcement push:', err);
@@ -271,9 +273,11 @@ router.post('/admin', requireRole('schooladmin', 'superadmin'), async (req: Requ
               `Announcement: ${title}`,
               message
             );
-            console.log(
-              `[FCM] Admin announcement push — sent: ${successCount}, failed: ${failureCount}`
-            );
+            if (failureCount > 0) {
+              console.error(
+                `[FCM] Admin announcement push failures — sent: ${successCount}, failed: ${failureCount}`
+              );
+            }
           }
         } catch (err) {
           console.error('[FCM] Failed to send admin announcement push:', err);

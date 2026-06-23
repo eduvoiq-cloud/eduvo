@@ -1,13 +1,15 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
+import { fromBuffer as fileTypeFromBuffer } from 'file-type';
 import * as admin from 'firebase-admin';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate, authenticateStudent } from '../middleware/auth';
+import { authenticate, authenticateStudent, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 import rateLimit from 'express-rate-limit';
+import { studentAiRateLimit } from '../middleware/rateLimit';
 import { updateStreakWithMilestone } from '../services/streakService';
 
 const router = Router();
@@ -19,9 +21,10 @@ const FCM_BATCH_SIZE = 100;
 const FCM_BATCH_DELAY_MS = 100;
 
 // ── Multer (memory storage — file streamed to Supabase Storage) ──────────────
+console.log(`[homework] Max file size: ${process.env.AI_MAX_FILE_SIZE_MB ?? '5'}MB`);
 const homeworkUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  limits: { fileSize: parseInt(process.env.AI_MAX_FILE_SIZE_MB ?? '5') * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const mime = file.mimetype.toLowerCase();
     const allowedMimes = new Set([
@@ -162,7 +165,7 @@ async function sendHomeworkNotifications(
           try {
             await supabaseAdmin.from('notifications').insert({
               title: notifTitle,
-              message: notifBody,
+              body: notifBody,
               type: 'homework',
               recipient_id: student.id,
               sender_id: senderId,
@@ -186,7 +189,6 @@ async function sendHomeworkNotifications(
       }
     }
 
-    console.log(`[homework] Notifications sent for homework ${homeworkId} to ${students.length} students`);
   } catch (err) {
     console.error('[homework] Unexpected error in sendHomeworkNotifications:', err);
   }
@@ -245,77 +247,29 @@ const updateHomeworkSchema = z.object({
  */
 router.get(
   '/class',
+  authenticateAny,
+  requireRole('teacher', 'schooladmin', 'superadmin', 'student'),
   async (req: Request, res: Response) => {
-    // Accept either a staff token or a student token
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      sendError(res, 'Missing or malformed Authorization header', 401);
-      return;
-    }
+    const isStudent = req.tokenType === 'student';
+    const studentId: string | null = req.student?.id ?? null;
 
-    const token = authHeader.split(' ')[1];
-    let isStudent = false;
-    let studentId: string | null = null;
-    let schoolId: string | null = null;
-
-    // Try student JWT first
-    const jwt = await import('jsonwebtoken');
-    const secret = process.env.JWT_SECRET;
-    if (secret) {
-      try {
-        const payload = jwt.default.verify(token, secret) as { type?: string; sub?: string; school_id?: string };
-        if (payload?.type === 'student') {
-          const { data: student } = await supabaseAdmin
-            .from('students')
-            .select('id, school_id, class_name, section')
-            .eq('id', payload.sub)
-            .single();
-          if (student) {
-            isStudent = true;
-            studentId = student.id;
-            schoolId = student.school_id;
-            // Enforce student can only see their own class
-            const qClass = req.query.class as string;
-            const qSection = req.query.section as string;
-            if (qClass && qClass.trim().toLowerCase() !== (student.class_name ?? '').trim().toLowerCase()) {
-              sendError(res, 'Access denied: you can only view your own class homework', 403);
-              return;
-            }
-            if (qSection && qSection.trim().toLowerCase() !== (student.section ?? '').trim().toLowerCase()) {
-              sendError(res, 'Access denied: you can only view your own section homework', 403);
-              return;
-            }
-          }
-        }
-      } catch {
-        // Not a student JWT — fall through to staff auth
+    // Enforce student can only see their own class/section
+    if (isStudent && req.student) {
+      const qClass = req.query.class as string;
+      const qSection = req.query.section as string;
+      if (qClass && qClass.trim().toLowerCase() !== (req.student.class_name ?? '').trim().toLowerCase()) {
+        sendError(res, 'Access denied: you can only view your own class homework', 403);
+        return;
+      }
+      if (qSection && qSection.trim().toLowerCase() !== (req.student.section ?? '').trim().toLowerCase()) {
+        sendError(res, 'Access denied: you can only view your own section homework', 403);
+        return;
       }
     }
 
-    // If not a student, verify as staff
-    if (!isStudent) {
-      const { supabase } = await import('../config/supabase');
-      const { data: authData, error: authError } = await supabase.auth.getUser(token);
-      if (authError || !authData.user) {
-        sendError(res, 'Invalid or expired token', 401);
-        return;
-      }
-      const { data: profile } = await supabaseAdmin
-        .from('users')
-        .select('id, role, school_id')
-        .eq('id', authData.user.id)
-        .single();
-      if (!profile || (profile as Record<string, unknown>).is_deleted === true) {
-        sendError(res, 'User profile not found or account deactivated', 403);
-        return;
-      }
-      const allowedRoles = ['superadmin', 'schooladmin', 'teacher'];
-      if (!allowedRoles.includes(profile.role)) {
-        sendError(res, 'Access denied', 403);
-        return;
-      }
-      schoolId = profile.school_id ?? null;
-    }
+    let schoolId: string | null = isStudent
+      ? (req.student?.school_id ?? null)
+      : (req.user?.school_id ?? null);
 
     const { class: className, section, school_id: qSchoolId } = req.query as Record<string, string>;
 
@@ -1137,6 +1091,18 @@ router.post(
       return;
     }
 
+    // ── Magic byte check: verify actual file content, not just the client-supplied MIME label ──
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+    for (const file of uploadedFiles) {
+      // First filter: client-supplied mimetype (already validated by multer fileFilter above)
+      // Second filter: actual file signature — cannot be spoofed by the client
+      const detected = await fileTypeFromBuffer(file.buffer);
+      if (!detected || !allowedMimeTypes.includes(detected.mime)) {
+        sendError(res, 'Only JPEG, PNG, WebP images and PDF files are allowed. Please upload a valid file.', 400);
+        return;
+      }
+    }
+
     const schoolId = req.user!.school_id;
     if (!schoolId) {
       sendError(res, 'Your account is not linked to a school', 403);
@@ -1341,53 +1307,16 @@ router.get(
  */
 router.get(
   '/:id',
+  authenticateAny,
+  requireRole('teacher', 'schooladmin', 'superadmin', 'student'),
   async (req: Request, res: Response) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      sendError(res, 'Missing or malformed Authorization header', 401);
-      return;
-    }
-
-    const token = authHeader.split(' ')[1];
-    let isStudent = false;
-    let studentId: string | null = null;
-    let schoolId: string | null = null;
-    let studentClassname: string | null = null;
-    let studentSection: string | null = null;
-
-    const jwt = await import('jsonwebtoken');
-    const secret = process.env.JWT_SECRET;
-    if (secret) {
-      try {
-        const payload = jwt.default.verify(token, secret) as { type?: string; sub?: string; school_id?: string };
-        if (payload?.type === 'student') {
-          const { data: student } = await supabaseAdmin
-            .from('students')
-            .select('id, school_id, class_name, section')
-            .eq('id', payload.sub)
-            .single();
-          if (student) {
-            isStudent = true;
-            studentId = student.id;
-            schoolId = student.school_id;
-            studentClassname = student.class_name;
-            studentSection = student.section;
-          }
-        }
-      } catch { /* fall through */ }
-    }
-
-    if (!isStudent) {
-      const { supabase: supabaseClient } = await import('../config/supabase');
-      const { data: authData, error: authError } = await supabaseClient.auth.getUser(token);
-      if (authError || !authData.user) { sendError(res, 'Invalid or expired token', 401); return; }
-      const { data: profile } = await supabaseAdmin
-        .from('users').select('id, role, school_id').eq('id', authData.user.id).single();
-      if (!profile) { sendError(res, 'User profile not found', 403); return; }
-      const allowedRoles = ['superadmin', 'schooladmin', 'teacher'];
-      if (!allowedRoles.includes(profile.role)) { sendError(res, 'Access denied', 403); return; }
-      schoolId = profile.school_id ?? null;
-    }
+    const isStudent = req.tokenType === 'student';
+    const studentId: string | null = req.student?.id ?? null;
+    const schoolId: string | null = isStudent
+      ? (req.student?.school_id ?? null)
+      : (req.user?.school_id ?? null);
+    const studentClassname: string | null = req.student?.class_name ?? null;
+    const studentSection: string | null = req.student?.section ?? null;
 
     const homeworkId = req.params.id;
 
@@ -1486,6 +1415,7 @@ router.get(
 router.post(
   '/:id/submit',
   authenticateStudent,
+  studentAiRateLimit,
   async (req: Request, res: Response) => {
     const studentId = req.student!.id;
     const schoolId = req.student!.school_id;
@@ -1715,6 +1645,16 @@ router.post(
     if (!files || files.length === 0) {
       sendError(res, 'No images provided. Send a multipart/form-data request with "images" field.', 400);
       return;
+    }
+
+    // Server-side MIME validation using actual file signatures (not client-provided mimetype)
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    for (const file of files) {
+      const detected = await fileTypeFromBuffer(file.buffer);
+      if (!detected || !allowedMimeTypes.includes(detected.mime)) {
+        sendError(res, 'Only JPEG, PNG and WebP images allowed', 400);
+        return;
+      }
     }
 
     const studentId = req.student!.id;
@@ -2159,7 +2099,7 @@ router.post(
         try {
           await db.from('notifications').insert({
             title: `${label} — ${subjectName}`,
-            message: `Your homework "${homeworkTitle}" has been reviewed by your teacher.`,
+            body: `Your homework "${homeworkTitle}" has been reviewed by your teacher.`,
             type: 'announcement',
             recipient_id: studentId,
             sender_id: userId,

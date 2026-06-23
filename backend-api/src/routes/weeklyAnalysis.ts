@@ -38,29 +38,6 @@ const router = Router();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Check parent → child ownership via parent_students junction table. */
-async function isParentOfStudent(parentId: string, studentId: string): Promise<boolean> {
-  // Check parent_students junction table first
-  const { data: link } = await supabaseAdmin
-    .from('parent_students')
-    .select('student_id')
-    .eq('parent_id', parentId)
-    .eq('student_id', studentId)
-    .maybeSingle();
-
-  if (link) return true;
-
-  // Fallback: check students.parent_id column (older link method)
-  const { data: student } = await supabaseAdmin
-    .from('students')
-    .select('id')
-    .eq('id', studentId)
-    .eq('parent_id', parentId)
-    .maybeSingle();
-
-  return student !== null;
-}
-
 function parseClassLevel(className: string): number {
   const match = className.replace(/[^0-9]/g, '');
   return parseInt(match, 10) || 0;
@@ -110,10 +87,7 @@ router.get(
     // Access check
     if (req.tokenType !== 'student') {
       const userRole = req.user?.role;
-      if (userRole === 'parent') {
-        const isOwner = await isParentOfStudent(req.user!.id, studentId);
-        if (!isOwner) { sendError(res, 'Access denied', 403); return; }
-      } else if (userRole !== 'schooladmin' && userRole !== 'superadmin' && userRole !== 'teacher') {
+      if (userRole !== 'schooladmin' && userRole !== 'superadmin' && userRole !== 'teacher') {
         sendError(res, 'Access denied', 403);
         return;
       }
@@ -148,10 +122,7 @@ router.get(
     // Access check
     if (req.tokenType !== 'student') {
       const userRole = req.user?.role;
-      if (userRole === 'parent') {
-        const isOwner = await isParentOfStudent(req.user!.id, studentId);
-        if (!isOwner) { sendError(res, 'Access denied', 403); return; }
-      } else if (userRole !== 'schooladmin' && userRole !== 'superadmin') {
+      if (userRole !== 'schooladmin' && userRole !== 'superadmin') {
         sendError(res, 'Access denied', 403);
         return;
       }
@@ -191,10 +162,7 @@ router.get(
     // Access check
     if (req.tokenType !== 'student') {
       const userRole = req.user?.role;
-      if (userRole === 'parent') {
-        const isOwner = await isParentOfStudent(req.user!.id, studentId);
-        if (!isOwner) { sendError(res, 'Access denied', 403); return; }
-      } else if (
+      if (
         userRole !== 'schooladmin' &&
         userRole !== 'superadmin' &&
         userRole !== 'teacher'

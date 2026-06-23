@@ -153,9 +153,11 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
             title,
             body
           );
-          console.log(
-            `[FCM] Announcement push — sent: ${successCount}, failed: ${failureCount}, type: ${type}`
-          );
+          if (failureCount > 0) {
+            console.error(
+              `[FCM] Announcement push failures — sent: ${successCount}, failed: ${failureCount}, type: ${type}`
+            );
+          }
         }
       } catch (err) {
         console.error('[FCM] Failed to send announcement push notifications:', err);

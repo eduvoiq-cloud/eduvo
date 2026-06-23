@@ -2,15 +2,14 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate } from '../middleware/auth';
-import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 
 const router = Router();
 
-// All routes in this file require a valid JWT + parent role
+// All routes in this file require a valid JWT (staff token).
+// Parent accounts are schooladmin-managed; access is scoped to parent_id below.
 router.use(authenticate);
-router.use(requireRole('parent'));
 
 // -- Helpers ------------------------------------------------------------------
 
@@ -235,7 +234,7 @@ router.post('/complaints', async (req: Request, res: Response) => {
     if (admins && admins.length > 0) {
       const notifications = admins.map((admin: { id: string }) => ({
         title: 'New Parent Complaint',
-        message: `New complaint submitted by a parent (student ID: ${student_id})`,
+        body: `New complaint submitted by a parent (student ID: ${student_id})`,
         type: 'alert',
         recipient_id: admin.id,
         sender_id: parentId,

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
+import { fromBuffer as fileTypeFromBuffer } from 'file-type';
 import ExcelJS from 'exceljs';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcrypt';
@@ -347,6 +348,19 @@ router.post(
       return;
     }
 
+    // ── Magic byte check: verify actual file content, not just the client-supplied MIME label ──
+    const allowedExcelMimeTypes = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+    ];
+    // First filter: client-supplied mimetype + extension (already validated by multer fileFilter above)
+    // Second filter: actual file signature — cannot be spoofed by the client
+    const detectedStudents = await fileTypeFromBuffer(req.file.buffer);
+    if (!detectedStudents || !allowedExcelMimeTypes.includes(detectedStudents.mime)) {
+      sendError(res, 'Only .xlsx and .xls Excel files are allowed. Please upload a valid file.', 400);
+      return;
+    }
+
     const school_id = req.user!.school_id;
     if (!school_id) {
       sendError(res, 'Your account is not linked to a school.', 403);
@@ -556,39 +570,28 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
   }
 
   // If skip_warned=true, exclude rows that have a phone warning
-  const validRows = cached.rows.filter((r) => {
+  const candidateRows = cached.rows.filter((r) => {
     if (r.status !== 'valid') return false;
     if (skip_warned && r.warning) return false;
     return true;
   });
-  if (validRows.length === 0) {
+  if (candidateRows.length === 0) {
     sendError(res, 'No valid rows to import.', 400);
     return;
   }
 
-  // Fetch school name for the welcome SMS
-  const { data: school } = await supabaseAdmin
-    .from('schools')
-    .select('name')
-    .eq('id', cached.school_id)
-    .maybeSingle();
-  const schoolName = (school as Record<string, unknown> | null)?.name as string ?? 'your school';
+  // ── PHASE 1: Validate ALL rows — no inserts yet ───────────────────────────
+  // Pre-compute every derived value (login phone, student ID).
+  // bcrypt hashes are computed in parallel batches of 20 to avoid blocking
+  // the Node event loop (500 students × ~100ms at 10 rounds = sequential blocking).
 
-  const errors: string[] = [];
-  let importedCount = 0;
-
-  // ── Process in batches of 50 to avoid request timeout ────────────────────
-  // Each row needs a bcrypt hash + DB insert + SMS, so batching prevents
-  // the HTTP connection from being dropped on large imports (500+ students).
-  const BATCH_SIZE = 50;
-
-  for (let batchStart = 0; batchStart < validRows.length; batchStart += BATCH_SIZE) {
-    const batch = validRows.slice(batchStart, batchStart + BATCH_SIZE);
-
-  // ── Insert students one-by-one so we can send SMS per student ────────────────
-  // (Bulk insert is skipped here because each row needs a bcrypt hash + SMS)
-  for (const row of batch) {
-    const data = row.data as {
+  interface PreparedStudent {
+    row:           PreviewRow;
+    studentId:     string;
+    loginPhone:    string;
+    defaultPassword: string;
+    passwordHash:  string;
+    data: {
       name:          string;
       roll_number:   string | null;
       class:         string;
@@ -597,78 +600,152 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
       student_phone: string | null;
       login_phone:   string;
       parent_email:  string;
-      date_of_birth: string; // YYYY-MM-DD (already parsed in preview)
+      date_of_birth: string;
     };
+  }
 
-    const studentId  = uuidv4();
-    const loginPhone = data.login_phone || data.parent_phone; // fallback safety
+  // Step 1: derive login phones and default passwords, filter out bad rows
+  interface PendingStudent {
+    row:             PreviewRow;
+    studentId:       string;
+    loginPhone:      string;
+    defaultPassword: string;
+    data: PreparedStudent['data'];
+  }
 
-    // Default password = last 5 digits of login phone number
-    const defaultPassword = loginPhone.slice(-5);
-    let passwordHash: string;
-    try {
-      passwordHash = await bcrypt.hash(defaultPassword, 12);
-    } catch (hashErr) {
-      errors.push(`Row ${row.row_number}: Failed to hash password — ${hashErr instanceof Error ? hashErr.message : String(hashErr)}`);
+  const pendingRows: PendingStudent[] = [];
+  const phase1Errors: string[] = [];
+
+  for (const row of candidateRows) {
+    const data = row.data as PreparedStudent['data'];
+    const loginPhone = data.login_phone || data.parent_phone;
+
+    if (!loginPhone) {
+      phase1Errors.push(`Row ${row.row_number} (${data.name}): Login phone is empty — cannot prepare record`);
       continue;
     }
 
-    const { error: insertErr } = await supabaseAdmin.from('students').insert({
-      id:             studentId,
-      full_name:      data.name,
-      name:           data.name,           // keep legacy name column in sync
-      school_id:      cached.school_id,
-      class_name:     data.class,
-      class:          data.class,          // legacy NOT NULL column in live DB
-      section:        data.division,
-      roll_number:    data.roll_number || null,
-      phone_number:   loginPhone,
-      phone:          loginPhone,          // keep legacy phone column in sync
-      parent_phone:   data.parent_phone,   // always stored separately for WhatsApp
-      date_of_birth:  data.date_of_birth || null,
-      password_hash:  passwordHash,
-      is_first_login: true,
-      qr_code:        studentId,
-      is_deleted:     false,
-      created_at:     new Date().toISOString(),
+    pendingRows.push({
+      row,
+      studentId:       uuidv4(),
+      loginPhone,
+      defaultPassword: loginPhone.slice(-5),
+      data,
     });
+  }
 
-    if (insertErr) {
-      console.error(`[bulkImport] Insert failed for row ${row.row_number} ("${data.name}"):`, insertErr.message);
-      errors.push(`Row ${row.row_number} (${data.name}): ${insertErr.message}`);
+  // Step 2: hash passwords in parallel batches of 20 (10 rounds — secure and fast)
+  // 10 rounds is industry standard; 12 rounds doubles CPU time for no meaningful gain.
+  const HASH_BATCH = 20;
+  const preparedRows: PreparedStudent[] = [];
+
+  for (let i = 0; i < pendingRows.length; i += HASH_BATCH) {
+    const batch = pendingRows.slice(i, i + HASH_BATCH);
+    let hashes: string[];
+    try {
+      hashes = await Promise.all(batch.map((p) => bcrypt.hash(p.defaultPassword, 10)));
+    } catch (hashErr) {
+      // Surface which batch failed
+      for (const p of batch) {
+        phase1Errors.push(
+          `Row ${p.row.row_number} (${p.data.name}): Failed to hash password — ${hashErr instanceof Error ? hashErr.message : String(hashErr)}`
+        );
+      }
       continue;
     }
 
-    importedCount++;
+    for (let j = 0; j < batch.length; j++) {
+      preparedRows.push({ ...batch[j], passwordHash: hashes[j] });
+    }
+  }
 
-    // ── Send welcome SMS to parent_phone (best-effort — never fail the import) ──
+  // If any row failed preparation, abort before any inserts happen.
+  if (phase1Errors.length > 0) {
+    sendError(res, 'Validation failed — no students were imported. Fix the errors and re-upload.', 422, {
+      validation_errors: phase1Errors,
+    });
+    return;
+  }
+
+  // ── PHASE 2: Batch insert all students ───────────────────────────────────
+  // Only reached if Phase 1 found zero errors.
+  // Build the full insert array and send it as a single call so Supabase
+  // either inserts all rows or rolls back on the first constraint violation.
+
+  const now = new Date().toISOString();
+
+  const insertRows = preparedRows.map((p) => ({
+    id:             p.studentId,
+    full_name:      p.data.name,
+    name:           p.data.name,           // keep legacy name column in sync
+    school_id:      cached.school_id,
+    class_name:     p.data.class,
+    class:          p.data.class,          // legacy NOT NULL column in live DB
+    section:        p.data.division,
+    roll_number:    p.data.roll_number || null,
+    phone_number:   p.loginPhone,
+    phone:          p.loginPhone,          // keep legacy phone column in sync
+    parent_phone:   p.data.parent_phone,   // always stored separately for WhatsApp
+    date_of_birth:  p.data.date_of_birth || null,
+    password_hash:  p.passwordHash,
+    is_first_login: true,
+    qr_code:        p.studentId,
+    is_deleted:     false,
+    created_at:     now,
+  }));
+
+  const { error: batchInsertErr } = await supabaseAdmin.from('students').insert(insertRows);
+
+  if (batchInsertErr) {
+    console.error('[bulkImport] Batch insert failed — no students imported:', batchInsertErr.message);
+    sendError(res, `Batch insert failed — no students were imported: ${batchInsertErr.message}`, 500);
+    return;
+  }
+
+  // ── PHASE 2 complete: all rows committed ─────────────────────────────────
+  const importedCount = preparedRows.length;
+
+  // Fetch school name for the welcome SMS (deferred until after insert succeeds)
+  const { data: school } = await supabaseAdmin
+    .from('schools')
+    .select('name')
+    .eq('id', cached.school_id)
+    .maybeSingle();
+  const schoolName = (school as Record<string, unknown> | null)?.name as string ?? 'your school';
+
+  // ── Send welcome SMS after confirmed insert ───────────────────────────────
+  // SMS failures are logged but never roll back the committed inserts.
+  const smsErrors: string[] = [];
+
+  for (const p of preparedRows) {
     const smsMessage =
-      `Welcome to Eduvo! Your child ${data.name} has been added to ${schoolName}. ` +
-      `Download Eduvo app and login with: Phone: ${loginPhone} Password: ${defaultPassword} ` +
+      `Welcome to Eduvo! Your child ${p.data.name} has been added to ${schoolName}. ` +
+      `Download Eduvo app and login with: Phone: ${p.loginPhone} Password: ${p.defaultPassword} ` +
       `Please change your password after first login.`;
 
     try {
-      // Always send to parent_phone so the parent gets the credentials
-      const smsSent = await sendSMS(data.parent_phone, smsMessage);
+      // Always send to parent_phone so the parent gets the credentials.
+      const smsSent = await sendSMS(p.data.parent_phone, smsMessage);
       if (!smsSent) {
-        console.warn(`[bulkImport] SMS not sent for student "${data.name}" (parent phone: ...${data.parent_phone.slice(-4)})`);
+        console.warn(`[bulkImport] SMS not sent for student "${p.data.name}" (parent phone: ...${p.data.parent_phone.slice(-4)})`);
+        smsErrors.push(`SMS not delivered for ${p.data.name} (row ${p.row.row_number})`);
       }
     } catch (smsErr) {
-      // Log but never fail the import
-      console.error(`[bulkImport] SMS error for student "${data.name}":`, smsErr);
+      console.error(`[bulkImport] SMS error for student "${p.data.name}":`, smsErr);
+      smsErrors.push(`SMS error for ${p.data.name} (row ${p.row.row_number}): ${smsErr instanceof Error ? smsErr.message : String(smsErr)}`);
     }
-
-    // ── Audit log per student ─────────────────────────────────────────────────
-    await logAudit(req.user!.id, 'bulk_import_student_created', {
-      student_id:   studentId,
-      student_name: data.name,
-      school_id:    cached.school_id,
-      class:        data.class,
-      section:      data.division,
-      roll_number:  data.roll_number ?? null,
-    });
   }
-  // end batch loop
+
+  // ── Audit log per student ─────────────────────────────────────────────────
+  for (const p of preparedRows) {
+    await logAudit(req.user!.id, 'bulk_import_student_created', {
+      student_id:   p.studentId,
+      student_name: p.data.name,
+      school_id:    cached.school_id,
+      class:        p.data.class,
+      section:      p.data.division,
+      roll_number:  p.data.roll_number ?? null,
+    });
   }
 
   // Summary audit log
@@ -681,9 +758,10 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
   previewCache.delete(import_session_id);
 
   sendSuccess(res, {
-    imported: importedCount,
-    skipped:  validRows.length - importedCount,
-    errors,
+    imported:   importedCount,
+    skipped:    0,
+    errors:     [],
+    sms_errors: smsErrors.length > 0 ? smsErrors : undefined,
   });
 });
 
@@ -741,6 +819,19 @@ router.post(
   async (req: Request, res: Response) => {
     if (!req.file) {
       sendError(res, 'No file uploaded. Please attach an .xlsx or .xls file.', 400);
+      return;
+    }
+
+    // ── Magic byte check: verify actual file content, not just the client-supplied MIME label ──
+    const allowedExcelMimeTypesTeacher = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+    ];
+    // First filter: client-supplied mimetype + extension (already validated by multer fileFilter above)
+    // Second filter: actual file signature — cannot be spoofed by the client
+    const detectedTeachers = await fileTypeFromBuffer(req.file.buffer);
+    if (!detectedTeachers || !allowedExcelMimeTypesTeacher.includes(detectedTeachers.mime)) {
+      sendError(res, 'Only .xlsx and .xls Excel files are allowed. Please upload a valid file.', 400);
       return;
     }
 
@@ -1342,6 +1433,19 @@ router.post(
   async (req: Request, res: Response) => {
     if (!req.file) {
       sendError(res, 'No file uploaded. Please attach an .xlsx or .xls file.', 400);
+      return;
+    }
+
+    // ── Magic byte check: verify actual file content, not just the client-supplied MIME label ──
+    const allowedExcelMimeTypesMarks = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+    ];
+    // First filter: client-supplied mimetype + extension (already validated by multer fileFilter above)
+    // Second filter: actual file signature — cannot be spoofed by the client
+    const detectedMarks = await fileTypeFromBuffer(req.file.buffer);
+    if (!detectedMarks || !allowedExcelMimeTypesMarks.includes(detectedMarks.mime)) {
+      sendError(res, 'Only .xlsx and .xls Excel files are allowed. Please upload a valid file.', 400);
       return;
     }
 

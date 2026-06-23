@@ -7,12 +7,7 @@ import redis from '../config/redis';
 
 // ── Role type ─────────────────────────────────────────────────────────────────
 
-/**
- * 'parent' is kept here for backward compatibility with existing routes.
- * New code should not create parent accounts — parents use student credentials.
- * Remove 'parent' from this union once all routes have been migrated.
- */
-export type AppRole = 'superadmin' | 'schooladmin' | 'teacher' | 'parent' | 'student';
+export type AppRole = 'superadmin' | 'schooladmin' | 'teacher' | 'student';
 
 // ── JWT payload shapes ────────────────────────────────────────────────────────
 
@@ -25,6 +20,8 @@ export interface StudentJwtPayload {
   type: 'student';
   sub: string; // students.id (uuid)
   school_id: string;
+  iat?: number; // issued-at (standard JWT claim, used for blocklist fallback)
+  exp?: number; // expires-at (standard JWT claim)
 }
 
 // ── Augment Express Request ───────────────────────────────────────────────────
@@ -136,8 +133,13 @@ export async function blockStudentToken(token: string): Promise<void> {
  * Returns false when Redis is unavailable (fails open — prefer availability
  * over locking out all students if Redis goes down).
  * Logs a warning so ops can detect a Redis outage quickly.
+ *
+ * On Redis error: tokens older than 1 hour are rejected conservatively
+ * (we cannot know if they were revoked while Redis was down).
+ * Recent tokens (<= 1 hour old) are allowed through — this limits blast
+ * radius to short-lived sessions during a Redis outage.
  */
-async function isStudentTokenBlocked(token: string): Promise<boolean> {
+async function isStudentTokenBlocked(token: string, decoded: StudentJwtPayload): Promise<boolean> {
   if (!redis) {
     // Redis is not configured — blocklist is not enforced.
     // This is expected in dev but should not happen in production.
@@ -150,9 +152,16 @@ async function isStudentTokenBlocked(token: string): Promise<boolean> {
     const hash = crypto.createHash('sha256').update(token).digest('hex');
     const val = await redis.get(`${BLOCKLIST_PREFIX}${hash}`);
     return val === '1';
-  } catch (err) {
-    console.warn('[auth] Redis error checking token blocklist — failing open:', (err as Error).message);
-    return false;
+  } catch (error) {
+    console.error('[auth] Redis error checking blocklist — failing safe');
+    // If we cannot check the blocklist,
+    // reject tokens older than 1 hour
+    // as a conservative safety measure
+    const tokenAge = Date.now() / 1000 - (decoded.iat ?? 0);
+    if (tokenAge > 3600) {
+      return true; // treat as blocked
+    }
+    return false; // recent tokens OK
   }
 }
 
@@ -208,7 +217,6 @@ interface CachedStudentProfile {
   section: string | null;
   school_id: string;
   is_first_login: boolean;
-  subscription_active: boolean;
 }
 
 // ── Staff profile loader (with Redis cache) ───────────────────────────────────
@@ -259,6 +267,14 @@ async function loadStaffProfile(
   return result;
 }
 
+// ── Student premium check (removed — B2C parent_subscriptions feature deleted) ──
+// Parent subscriptions have been removed from the product.
+// All students are treated as active; no per-student gating is applied.
+// @deprecated — kept as a no-op export so any external callers don't break at compile time.
+export async function isStudentPremiumActive(_studentId: string): Promise<boolean> {
+  return true;
+}
+
 // ── Student profile loader (with Redis cache) ─────────────────────────────────
 
 async function loadStudentProfile(
@@ -278,15 +294,6 @@ async function loadStudentProfile(
 
   if (error || !student) return null;
 
-  const { data: studentSchool } = await supabaseAdmin
-    .from('schools')
-    .select('subscription_status')
-    .eq('id', student.school_id)
-    .single();
-
-  const subscription_active =
-    (studentSchool as { subscription_status: boolean } | null)?.subscription_status ?? false;
-
   const result: CachedStudentProfile = {
     id: student.id,
     full_name: student.full_name,
@@ -295,7 +302,6 @@ async function loadStudentProfile(
     section: student.section ?? null,
     school_id: student.school_id,
     is_first_login: student.is_first_login ?? false,
-    subscription_active,
   };
 
   await setCached(cacheKey, result);
@@ -451,7 +457,7 @@ export async function authenticateStudent(
   }
 
   // Check revocation blocklist before hitting the DB/cache
-  if (await isStudentTokenBlocked(token)) {
+  if (await isStudentTokenBlocked(token, payload)) {
     sendError(res, 'Token has been revoked. Please log in again.', 401);
     return;
   }
@@ -460,15 +466,6 @@ export async function authenticateStudent(
 
   if (!student) {
     sendError(res, 'Student not found', 403);
-    return;
-  }
-
-  if (!student.subscription_active) {
-    sendError(
-      res,
-      'Your subscription has expired. Please renew your subscription to continue using the service.',
-      402
-    );
     return;
   }
 

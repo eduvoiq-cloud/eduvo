@@ -20,23 +20,21 @@
 
 import { supabaseAdmin } from '../config/supabase';
 import { checkAndSendStreakMilestone } from './fcmService';
+import { getTodayIST, getYesterdayIST } from '../utils/dateUtils';
 
 // ── IST date helper ───────────────────────────────────────────────────────────
 
-/** Returns today's date string (YYYY-MM-DD) in IST (UTC+5:30). */
+/**
+ * Returns today's date string (YYYY-MM-DD) in IST (UTC+5:30).
+ * Re-exported from dateUtils for backward compatibility.
+ */
 export function todayIST(): string {
-  const now = new Date();
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const istDate = new Date(now.getTime() + IST_OFFSET_MS);
-  return istDate.toISOString().slice(0, 10);
+  return getTodayIST();
 }
 
 /** Returns yesterday's date string (YYYY-MM-DD) in IST. */
 function yesterdayIST(): string {
-  const now = new Date();
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const istDate = new Date(now.getTime() + IST_OFFSET_MS - 24 * 60 * 60 * 1000);
-  return istDate.toISOString().slice(0, 10);
+  return getYesterdayIST();
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -67,50 +65,51 @@ export async function updateStreak(
   const yesterday = yesterdayIST();
 
   try {
-    // ── Step 1: Check streak_log for today ─────────────────────────────────
-    const { data: existingLog } = await supabaseAdmin
+    // ── Step 1: Atomically insert today's streak_log entry ─────────────────
+    // Using INSERT with ON CONFLICT DO NOTHING makes this race-condition safe.
+    // If two completions arrive simultaneously, only one insert will succeed;
+    // the second will hit the unique constraint (student_id, activity_date)
+    // and return error code 23505 — which we use to short-circuit the update.
+    const { error: logError } = await supabaseAdmin
       .from('streak_log')
-      .select('id, activity_type')
-      .eq('student_id', studentId)
-      .eq('activity_date', today)
-      .maybeSingle();
+      .insert({
+        student_id: studentId,
+        activity_date: today,
+        activity_type: activityType,
+      });
 
-    if (existingLog) {
-      const logRow = existingLog as Record<string, unknown>;
-      const existingType = logRow.activity_type as ActivityType;
-
-      // Upgrade single-type to 'both' if a different activity type came in
-      if (existingType !== 'both' && existingType !== activityType) {
+    if (logError) {
+      if (logError.code === '23505') {
+        // Unique conflict — this student+date was already logged (possibly by a
+        // concurrent request). Attempt to upgrade single-type → 'both' if needed,
+        // then return the current streak without double-incrementing anything.
         await supabaseAdmin
           .from('streak_log')
           .update({ activity_type: 'both' })
-          .eq('id', logRow.id);
+          .eq('student_id', studentId)
+          .eq('activity_date', today)
+          .neq('activity_type', 'both')
+          .neq('activity_type', activityType);
+
+        const { data: streakRow } = await supabaseAdmin
+          .from('student_streaks')
+          .select('current_streak, longest_streak, total_active_days')
+          .eq('student_id', studentId)
+          .maybeSingle();
+
+        const row = (streakRow as Record<string, unknown> | null) ?? {};
+        return {
+          current_streak: (row.current_streak as number) ?? 0,
+          longest_streak: (row.longest_streak as number) ?? 0,
+          total_active_days: (row.total_active_days as number) ?? 0,
+          already_counted_today: true,
+        };
       }
-
-      // Already counted today — return current streak without modifying it
-      const { data: streakRow } = await supabaseAdmin
-        .from('student_streaks')
-        .select('current_streak, longest_streak, total_active_days')
-        .eq('student_id', studentId)
-        .maybeSingle();
-
-      const row = (streakRow as Record<string, unknown> | null) ?? {};
-      return {
-        current_streak: (row.current_streak as number) ?? 0,
-        longest_streak: (row.longest_streak as number) ?? 0,
-        total_active_days: (row.total_active_days as number) ?? 0,
-        already_counted_today: true,
-      };
+      // Any other DB error — rethrow to be caught by the outer try/catch
+      throw logError;
     }
 
-    // ── Step 2: Insert today's streak_log entry ─────────────────────────────
-    await supabaseAdmin.from('streak_log').insert({
-      student_id: studentId,
-      activity_date: today,
-      activity_type: activityType,
-    });
-
-    // ── Step 3: Fetch (or create) student_streaks row ───────────────────────
+    // ── Step 2: Fetch (or create) student_streaks row ───────────────────────
     const { data: streakRow } = await supabaseAdmin
       .from('student_streaks')
       .select('*')
@@ -141,7 +140,7 @@ export async function updateStreak(
     const prevLongest = row.longest_streak as number;
     const prevTotalDays = row.total_active_days as number;
 
-    // ── Step 4: Calculate new streak ───────────────────────────────────────
+    // ── Step 3: Calculate new streak ───────────────────────────────────────
     //
     //   lastDate == today      → already counted (caught above by streak_log check)
     //   lastDate == yesterday  → consecutive day → increment
@@ -161,7 +160,7 @@ export async function updateStreak(
     const newLongest = Math.max(prevLongest, newCurrent);
     const newTotalDays = prevTotalDays + 1;
 
-    // ── Step 5: Persist updated student_streaks ─────────────────────────────
+    // ── Step 4: Persist updated student_streaks ─────────────────────────────
     await supabaseAdmin
       .from('student_streaks')
       .update({

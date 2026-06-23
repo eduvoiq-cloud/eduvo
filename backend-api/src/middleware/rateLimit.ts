@@ -230,4 +230,32 @@ export const studentOtpRateLimit = rateLimit({
   },
 });
 
+/**
+ * Per-student AI operations rate limit — max 50 AI-consuming operations
+ * per student per day (resets at midnight IST, ~18:30 UTC).
+ *
+ * Keyed by student ID from the authenticated request so it cannot be bypassed
+ * by rotating IPs. Apply this to any route where a student action directly
+ * triggers a Gemini API call (e.g. AI-checked homework submissions).
+ *
+ * Key: `ai:student:<studentId>`
+ */
+export const studentAiRateLimit = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 50,
+  keyGenerator: (req: Request) => {
+    // req.student is populated by authenticateStudent middleware
+    const studentId = (req as Request & { student?: { id?: string } }).student?.id;
+    return studentId ? `ai:student:${studentId}` : `ai:student:ip:${req.ip ?? 'unknown'}`;
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  store: makeStore('student_ai'),
+  message: {
+    success: false,
+    message: 'Daily AI operations limit reached. Please try again tomorrow.',
+  },
+});
+
 

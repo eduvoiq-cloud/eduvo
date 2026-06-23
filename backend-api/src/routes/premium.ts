@@ -1,37 +1,55 @@
 /**
- * /api/premium — Parent Premium system
+ * /api/premium — Premium management routes
  *
- * B2B2C model: school admin activates/deactivates/renews premium per student.
- * No payment gateway. Routes are grouped by actor:
+ * NOTE: The B2C parent_subscriptions feature has been removed.
+ * Routes that previously managed per-student subscriptions now return 410 Gone.
+ * Teacher premium access and revenue ledger routes are unchanged.
  *
- *   Admin endpoints  (schooladmin / superadmin)
+ *   Removed (return 410):
  *     POST   /api/premium/subscriptions/:studentId/activate
  *     POST   /api/premium/subscriptions/:studentId/deactivate
  *     POST   /api/premium/subscriptions/:studentId/renew
- *     GET    /api/premium/subscriptions          — list all for school
- *     GET    /api/premium/revenue                — revenue share ledger
+ *     GET    /api/premium/subscriptions
+ *     GET    /api/premium/my-subscription
+ *     GET    /api/premium/student-summary
+ *     GET    /api/premium/schools/summary
+ *     POST   /api/premium/revenue/calculate
+ *
+ *   Still active:
+ *     GET    /api/premium/revenue                — revenue share ledger (own school)
+ *     GET    /api/premium/revenue/all            — all schools (superadmin)
+ *     PATCH  /api/premium/revenue/:id/status     — update payout_status
  *     GET    /api/premium/teacher-access         — list teacher flags
  *     POST   /api/premium/teacher-access         — grant/update teacher flags
- *
- *   Student / parent endpoints
- *     GET    /api/premium/my-subscription        — active subscription for calling student
- *
- *   Superadmin only
- *     GET    /api/premium/revenue/all            — all schools
- *     GET    /api/premium/schools/summary        — schools with live premium counts
- *     POST   /api/premium/revenue/calculate      — recalculate a month's ledger
- *     PATCH  /api/premium/revenue/:id/status     — update payout_status
  */
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { supabaseAdmin } from '../config/supabase';
-import { authenticate, authenticateStudent } from '../middleware/auth';
+import { authenticate } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 
 const router = Router();
+
+// ── Removed routes — return 410 Gone ─────────────────────────────────────────
+
+const gone = (_req: Request, res: Response) => {
+  res.status(410).json({
+    success: false,
+    message: 'This feature has been removed.',
+  });
+};
+
+router.post('/subscriptions/:studentId/activate',   authenticate, gone);
+router.post('/subscriptions/:studentId/deactivate', authenticate, gone);
+router.post('/subscriptions/:studentId/renew',      authenticate, gone);
+router.get('/subscriptions',                        authenticate, gone);
+router.get('/my-subscription',                      gone);
+router.get('/student-summary',                      authenticate, gone);
+router.get('/schools/summary',                      authenticate, gone);
+router.post('/revenue/calculate',                   authenticate, gone);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,12 +57,186 @@ const router = Router();
 function derivePlanType(className: string): 'premium_junior' | 'premium_senior' {
   const num = parseInt(className.replace(/\D/g, ''), 10);
   return num >= 7 ? 'premium_senior' : 'premium_junior';
-}
 
-// ── Admin: activate premium for a student ─────────────────────────────────────
-// POST /api/premium/subscriptions/:studentId/activate
+// ── Admin: grant / update teacher premium access ──────────────────────────────
+// POST /api/premium/teacher-access
 router.post(
-  '/subscriptions/:studentId/activate',
+  '/teacher-access',
+  authenticate,
+  requireRole('schooladmin', 'superadmin'),
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      teacher_id: z.string().uuid(),
+      can_create_daily_tests: z.boolean().default(false),
+      can_create_activity_packs: z.boolean().default(false),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+    const { teacher_id, can_create_daily_tests, can_create_activity_packs } = parsed.data;
+    const adminId = req.user!.id;
+    const schoolId = req.user!.school_id!;
+
+    const { data: teacher } = await supabaseAdmin
+      .from('users')
+      .select('id, name')
+      .eq('id', teacher_id)
+      .eq('school_id', schoolId)
+      .eq('role', 'teacher')
+      .maybeSingle();
+
+    if (!teacher) {
+      sendError(res, 'Teacher not found in your school', 404);
+      return;
+    }
+
+    const { data: access, error: upsertErr } = await supabaseAdmin
+      .from('teacher_premium_access')
+      .upsert(
+        {
+          teacher_id,
+          school_id: schoolId,
+          can_create_daily_tests,
+          can_create_activity_packs,
+          granted_by: adminId,
+          granted_at: new Date().toISOString(),
+        },
+        { onConflict: 'teacher_id,school_id' }
+      )
+      .select()
+      .single();
+
+    if (upsertErr) { sendError(res, upsertErr.message, 500); return; }
+
+    await logAudit(adminId, 'TEACHER_PREMIUM_ACCESS_UPDATED', 'teacher_premium_access', {
+      teacher_id,
+      teacher_name: (teacher as Record<string, unknown>).name,
+      can_create_daily_tests,
+      can_create_activity_packs,
+      school_id: schoolId,
+    });
+
+    sendSuccess(res, access, 'Teacher premium access updated');
+  }
+);
+
+// ── Admin: list teacher premium access for school ─────────────────────────────
+// GET /api/premium/teacher-access
+router.get(
+  '/teacher-access',
+  authenticate,
+  requireRole('schooladmin', 'superadmin'),
+  async (req: Request, res: Response) => {
+    const schoolId = req.user!.school_id!;
+
+    const { data, error } = await supabaseAdmin
+      .from('teacher_premium_access')
+      .select(
+        `id, teacher_id, can_create_daily_tests, can_create_activity_packs, granted_at,
+         users ( id, name, email )`
+      )
+      .eq('school_id', schoolId)
+      .order('granted_at', { ascending: false });
+
+    if (error) { sendError(res, error.message, 500); return; }
+
+    sendSuccess(res, data ?? []);
+  }
+);
+
+// ── Admin: revenue share ledger for own school ────────────────────────────────
+// GET /api/premium/revenue?year=2025
+router.get(
+  '/revenue',
+  authenticate,
+  requireRole('schooladmin', 'superadmin'),
+  async (req: Request, res: Response) => {
+    const schoolId = req.user!.school_id!;
+    const year = req.query.year as string | undefined;
+
+    let query = supabaseAdmin
+      .from('revenue_shares')
+      .select('*')
+      .eq('school_id', schoolId)
+      .order('month', { ascending: false });
+
+    if (year) {
+      query = query
+        .gte('month', `${year}-01-01`)
+        .lte('month', `${year}-12-31`);
+    }
+
+    const { data, error } = await query;
+    if (error) { sendError(res, error.message, 500); return; }
+
+    sendSuccess(res, data ?? []);
+  }
+);
+
+// ── Superadmin: all schools revenue ──────────────────────────────────────────
+// GET /api/premium/revenue/all
+router.get(
+  '/revenue/all',
+  authenticate,
+  requireRole('superadmin'),
+  async (req: Request, res: Response) => {
+    const year   = req.query.year   as string | undefined;
+    const status = req.query.status as string | undefined;
+
+    let query = supabaseAdmin
+      .from('revenue_shares')
+      .select(`*, schools ( id, name )`)
+      .order('month', { ascending: false });
+
+    if (year) {
+      query = query
+        .gte('month', `${year}-01-01`)
+        .lte('month', `${year}-12-31`);
+    }
+    if (status) query = query.eq('payout_status', status);
+
+    const { data, error } = await query;
+    if (error) { sendError(res, error.message, 500); return; }
+
+    sendSuccess(res, data ?? []);
+  }
+);
+
+// ── Superadmin: update payout status ─────────────────────────────────────────
+// PATCH /api/premium/revenue/:id/status
+router.patch(
+  '/revenue/:id/status',
+  authenticate,
+  requireRole('superadmin'),
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      payout_status: z.enum(['pending', 'invoiced', 'paid']),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+
+    const updates: Record<string, unknown> = { payout_status: parsed.data.payout_status };
+    if (parsed.data.payout_status === 'invoiced') {
+      updates.invoiced_at = new Date().toISOString();
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('revenue_shares')
+      .update(updates)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+
+    if (error) { sendError(res, error.message, 500); return; }
+
+    sendSuccess(res, data, 'Payout status updated');
+  }
+);
+
+export default router;
+
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {

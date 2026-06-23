@@ -565,8 +565,6 @@ router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Reque
 
   const { email } = parsed.data;
 
-  console.log(`[auth] forgot-password request for: ${email}`);
-
   // Always return the same response regardless of whether email exists
   const genericOk = () =>
     sendSuccess(res, null, 'If an account with that email exists, a reset link has been sent.');
@@ -587,13 +585,10 @@ router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Reque
     }
 
     if (!userRecord) {
-      console.log(`[auth] forgot-password: no user found for email=${email}`);
       await logAudit(null, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: false });
       genericOk();
       return;
     }
-
-    console.log(`[auth] forgot-password: found user id=${userRecord.id}`);
 
     // 2. Generate a secure random token (32 bytes = 64 hex chars)
     const rawToken = crypto.randomBytes(32).toString('hex');
@@ -624,16 +619,12 @@ router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Reque
       await logAudit(userRecord.id, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: true, token_stored: false });
       genericOk();
       return;
-    } else {
-      console.log(`[auth] forgot-password: token stored OK`);
     }
 
     // 5. Build the reset URL
     const siteUrl = (process.env.SITE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
     const resetUrl = `${siteUrl}/reset-password?token=${rawToken}`;
     const fromEmail = process.env.FROM_EMAIL ?? 'onboarding@resend.dev';
-
-    console.log(`[auth] forgot-password: SITE_URL=${siteUrl}, FROM_EMAIL=${fromEmail}, to=${email}`);
 
     // 6. Send the email via Resend
     let resend: Resend;
@@ -645,7 +636,7 @@ router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Reque
       return;
     }
 
-    const { data: emailData, error: emailError } = await resend.emails.send({
+    const { error: emailError } = await resend.emails.send({
       from: `Eduvo <${fromEmail}>`,
       to: email.toLowerCase(),
       subject: 'Reset your Eduvo password',
@@ -684,8 +675,6 @@ router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Reque
 
     if (emailError) {
       console.error('[auth] Resend error:', JSON.stringify(emailError));
-    } else {
-      console.log(`[auth] Reset email sent OK — Resend id=${emailData?.id}, to=${email}`);
     }
 
     await logAudit(userRecord.id, 'STAFF_FORGOT_PASSWORD_REQUESTED', { email, found: true });

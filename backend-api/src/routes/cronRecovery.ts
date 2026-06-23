@@ -39,6 +39,7 @@ import * as Sentry from '@sentry/node';
 import { supabaseAdmin } from '../config/supabase';
 import { sendSuccess, sendError } from '../utils/response';
 import { sendPushNotification } from '../services/fcmService';
+import { getTodayIST } from '../utils/dateUtils';
 
 const router = Router();
 
@@ -269,7 +270,7 @@ async function runMonthlyScheduler(req: Request, res: Response): Promise<void> {
                     // Insert in-app notification
                     await supabaseAdmin.from('notifications').insert({
                       title: notifTitle,
-                      message: notifBody,
+                      body: notifBody,
                       type: 'reminder',
                       recipient_id: teacherId,
                       sender_id: teacherId, // system-generated; reuse teacher id as sender
@@ -317,6 +318,108 @@ async function runMonthlyScheduler(req: Request, res: Response): Promise<void> {
       );
       if (errors.length > 0) {
         console.error('[cron/recovery] Errors:', errors);
+      }
+
+      // ── FIX 6: Timeout stale pending_teacher_approval schedules ─────────────
+      // If a teacher ignores the approval notification for 5+ days, send a
+      // second reminder. After 7+ days, auto-cancel the schedule.
+      try {
+        const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+        const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+        const { data: stuckSchedules } = await supabaseAdmin
+          .from('monthly_recovery_schedules')
+          .select('id, teacher_id, class, section, subject, created_at')
+          .eq('status', 'pending_teacher_approval')
+          .lt('created_at', fiveDaysAgo);
+
+        if (stuckSchedules && stuckSchedules.length > 0) {
+          let remindedCount  = 0;
+          let cancelledCount = 0;
+
+          for (const schedule of stuckSchedules as Array<{
+            id: string;
+            teacher_id: string | null;
+            class: string;
+            section: string;
+            subject: string;
+            created_at: string;
+          }>) {
+            const isOverSevenDays = schedule.created_at < sevenDaysAgo;
+
+            if (isOverSevenDays) {
+              // Auto-cancel after 7 days of no response
+              await supabaseAdmin
+                .from('monthly_recovery_schedules')
+                .update({
+                  status: 'cancelled',
+                  cancellation_reason: 'auto_cancelled_no_teacher_response',
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', schedule.id);
+
+              if (schedule.teacher_id) {
+                const cancelTitle = 'Recovery Schedule Auto-Cancelled';
+                const cancelBody  = `Class ${schedule.class}${schedule.section} ${schedule.subject} recovery schedule was auto-cancelled after 7 days without approval.`;
+
+                await supabaseAdmin.from('notifications').insert({
+                  title:        cancelTitle,
+                  body:         cancelBody,
+                  type:         'reminder',
+                  recipient_id: schedule.teacher_id,
+                  sender_id:    schedule.teacher_id,
+                  is_read:      false,
+                  created_at:   new Date().toISOString(),
+                });
+
+                try {
+                  await sendPushNotification(
+                    schedule.teacher_id,
+                    cancelTitle,
+                    cancelBody,
+                    { type: 'recovery_schedule_cancelled', schedule_id: schedule.id },
+                    'user'
+                  );
+                } catch { /* non-fatal */ }
+              }
+
+              cancelledCount++;
+            } else if (schedule.teacher_id) {
+              // Send second FCM reminder (5+ days, not yet 7)
+              const reminderTitle = 'Reminder: Recovery Test Approval Pending';
+              const reminderBody  = `Class ${schedule.class}${schedule.section} ${schedule.subject} — Please review and approve this month's recovery test schedule before it is auto-cancelled.`;
+
+              await supabaseAdmin.from('notifications').insert({
+                title:        reminderTitle,
+                body:         reminderBody,
+                type:         'reminder',
+                recipient_id: schedule.teacher_id,
+                sender_id:    schedule.teacher_id,
+                is_read:      false,
+                created_at:   new Date().toISOString(),
+              });
+
+              try {
+                await sendPushNotification(
+                  schedule.teacher_id,
+                  reminderTitle,
+                  reminderBody,
+                  { type: 'monthly_recovery_schedule', schedule_id: schedule.id },
+                  'user'
+                );
+              } catch { /* non-fatal */ }
+
+              remindedCount++;
+            }
+          }
+
+          console.log(
+            `[cron/recovery] stale-schedule check — reminded: ${remindedCount}, auto-cancelled: ${cancelledCount}`
+          );
+        }
+      } catch (staleErr) {
+        const msg = staleErr instanceof Error ? staleErr.message : String(staleErr);
+        console.error('[cron/recovery] stale-schedule check error (non-fatal):', msg);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -389,7 +492,7 @@ async function notifyTeacher(teacherId: string, title: string, message: string):
   try {
     await supabaseAdmin.from('notifications').insert({
       title,
-      message,
+      body: message,
       type: 'reminder',
       recipient_id: teacherId,
       sender_id: teacherId,
@@ -419,7 +522,7 @@ async function notifyTeacher(teacherId: string, title: string, message: string):
  *
  * Railway cron schedule: 0 *\/2 * * *  (every 2 hours)
  */
-router.all('/check-batch-jobs', async (req: Request, res: Response) => {
+router.post('/check-batch-jobs', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
   const startedAt = new Date().toISOString();
@@ -466,10 +569,24 @@ router.all('/check-batch-jobs', async (req: Request, res: Response) => {
           }
 
           if (jobResult.state === 'SUCCEEDED') {
+            // Build the set of expected student IDs for this cycle to guard against
+            // malformed AI batch response keys corrupting another student's data.
+            const { data: cyclePackRows } = await supabaseAdmin
+              .from('recovery_packs')
+              .select('student_id')
+              .eq('cycle_id', cycle.id);
+            const expectedStudentIds = new Set(
+              (cyclePackRows ?? []).map((r: { student_id: string }) => r.student_id)
+            );
+
             // Save each student's pack content into recovery_packs
             for (const { key, content } of jobResult.results) {
               try {
                 const [studentId, subject] = key.split('|');
+                if (!expectedStudentIds.has(studentId)) {
+                  console.error(`[batch] Unexpected studentId in pack result: ${studentId} — skipping`);
+                  continue;
+                }
                 const parsed = JSON.parse(content) as unknown;
 
                 await supabaseAdmin
@@ -514,7 +631,7 @@ router.all('/check-batch-jobs', async (req: Request, res: Response) => {
                 const now = new Date().toISOString();
                 const notifRows = packStudents.map((p: { student_id: string; subject: string }) => ({
                   title: '📚 Recovery Pack Ready',
-                  message: `Your ${p.subject} recovery study pack is ready. Open it to start reviewing and boost your marks!`,
+                  body: `Your ${p.subject} recovery study pack is ready. Open it to start reviewing and boost your marks!`,
                   type: 'announcement',
                   recipient_id: p.student_id,
                   sender_id: cycle.created_by,
@@ -565,10 +682,23 @@ router.all('/check-batch-jobs', async (req: Request, res: Response) => {
           }
 
           if (jobResult.state === 'SUCCEEDED') {
+            // Build the set of expected student IDs for this cycle.
+            const { data: cycleTestRows } = await supabaseAdmin
+              .from('monthly_recovery_tests')
+              .select('student_id')
+              .eq('cycle_id', cycle.id);
+            const expectedStudentIds = new Set(
+              (cycleTestRows ?? []).map((r: { student_id: string }) => r.student_id)
+            );
+
             // Save each student's test questions into monthly_recovery_tests
             for (const { key, content } of jobResult.results) {
               try {
                 const [studentId, subject] = key.split('|');
+                if (!expectedStudentIds.has(studentId)) {
+                  console.error(`[batch] Unexpected studentId in test result: ${studentId} — skipping`);
+                  continue;
+                }
                 const cleaned = content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
                 const parsed = JSON.parse(cleaned) as { questions?: unknown[] };
                 const questions = parsed.questions ?? [];
@@ -617,7 +747,7 @@ router.all('/check-batch-jobs', async (req: Request, res: Response) => {
                 const now = new Date().toISOString();
                 const notifRows = testStudents.map((t: { student_id: string; subject: string }) => ({
                   title: '📝 Recovery Test Ready',
-                  message: `Your ${t.subject} recovery test is ready. Go attempt it now!`,
+                  body: `Your ${t.subject} recovery test is ready. Go attempt it now!`,
                   type: 'announcement',
                   recipient_id: t.student_id,
                   sender_id: cycle.created_by,
@@ -673,7 +803,8 @@ router.all('/check-batch-jobs', async (req: Request, res: Response) => {
 async function runActivateTests(req: Request, res: Response): Promise<void> {
   if (!verifyCronSecret(req, res)) return;
 
-  const today = new Date().toISOString().slice(0, 10);
+  // FIX 1: use IST date to avoid UTC vs IST midnight mismatch
+  const today = getTodayIST();
   sendSuccess(res, { message: 'Test activation job started', date: today }, 'Job started');
 
   setImmediate(async () => {
@@ -745,7 +876,7 @@ async function runActivateTests(req: Request, res: Response): Promise<void> {
           // Insert in-app notification
           await supabaseAdmin.from('notifications').insert({
             title: '📝 Your Monthly Recovery Test is Ready',
-            message: `${test.subject} recovery test is now available. Good luck!`,
+            body: `${test.subject} recovery test is now available. Good luck!`,
             type: 'reminder',
             recipient_id: test.student_id,
             sender_id: test.student_id, // system notification

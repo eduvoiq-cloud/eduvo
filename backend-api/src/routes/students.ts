@@ -18,7 +18,7 @@ const BCRYPT_ROUNDS = 12;
 const createStudentSchema = z.object({
   full_name: z.string().min(1).max(150),
   date_of_birth: z.string().date().optional(),
-  school_id: z.string().uuid(),
+  school_id: z.string().uuid().optional(), // ignored on create — always taken from auth token
   class_name: z.string().min(1).max(20),
   section: z.string().min(1).max(10),
   roll_number: z.string().min(1).max(20).optional(),
@@ -51,8 +51,13 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
   const rawPage = parseInt(req.query.page as string ?? '1', 10);
   const rawLimit = parseInt(req.query.limit as string ?? '50', 10);
   const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
-  // limit=0 means fetch all (no pagination); otherwise clamp to 1–200
-  const limit = rawLimit === 0 ? 0 : (isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200));
+  const role = req.user!.role;
+  // limit=0 means fetch all — only superadmin may do this.
+  // schooladmin and teacher are capped at 200 per request.
+  const limit =
+    rawLimit === 0
+      ? role === 'superadmin' ? 0 : 200
+      : isNaN(rawLimit) || rawLimit < 1 ? 50 : Math.min(rawLimit, 200);
 
   // ── Teacher access control ──────────────────────────────────────────────────
   // Teachers must supply class_name + section and must be assigned to that class.
@@ -64,12 +69,14 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
     }
 
     // Verify teacher is assigned to this class+section
+    // Sanitize class_name to prevent PostgREST or() argument injection
+    const safeClassName = class_name.trim().replace(/[,.()\[\]]/g, '');
     const { data: assignment } = await supabaseAdmin
       .from('teacher_assignments')
       .select('id')
       .eq('teacher_id', req.user!.id)
       .eq('school_id', req.user!.school_id ?? '')
-      .or(`class_name.ilike.${class_name.trim()},class.ilike.${class_name.trim()}`)
+      .or(`class_name.ilike.${safeClassName},class.ilike.${safeClassName}`)
       .ilike('section', section.trim())
       .limit(1);
 
@@ -126,7 +133,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
 });
 
 /** GET /api/students/:id */
-router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher', 'parent'), async (req: Request, res: Response) => {
+router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const { data, error } = await supabaseAdmin
     .from('students')
     .select('id, full_name, roll_number, class_name, section, school_id, date_of_birth, phone_number, parent_id, is_first_login, is_deleted, created_at')
@@ -136,12 +143,6 @@ router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher', 'parent')
 
   if (error || !data) {
     sendError(res, 'Student not found', 404);
-    return;
-  }
-
-  // Parents can only view their own children
-  if (req.user!.role === 'parent' && data.parent_id !== req.user!.id) {
-    sendError(res, 'Access denied', 403);
     return;
   }
 
@@ -163,7 +164,9 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     return;
   }
 
-  const { phone_number, full_name, ...rest } = parsed.data;
+  // Always use school_id from the authenticated token — never from the request body
+  const school_id = req.user!.school_id;
+  const { phone_number, full_name, school_id: _ignoredSchoolId, ...rest } = parsed.data;
 
   // Default password = last 5 digits of phone number
   const defaultPassword = phone_number.slice(-5);
@@ -173,6 +176,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     .from('students')
     .insert({
       ...rest,
+      school_id,
       full_name,
       name: full_name,           // keep legacy name column in sync
       phone_number,

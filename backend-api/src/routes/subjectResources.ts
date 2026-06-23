@@ -18,6 +18,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
+import { fromBuffer as fileTypeFromBuffer } from 'file-type';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateAny, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
@@ -168,7 +169,7 @@ async function notifyStudents(
       // In-app notifications
       const notifRows = batch.map((studentId) => ({
         title: notifTitle,
-        message: notifBody,
+        body: notifBody,
         type: 'announcement',
         recipient_id: studentId,
         sender_id: senderId,
@@ -193,7 +194,6 @@ async function notifyStudents(
       }
     }
 
-    console.log(`[subject-resources] Notified ${students.length} students for resource ${resourceId}`);
   } catch (err) {
     console.error('[subject-resources] Error in notifyStudents:', err);
   }
@@ -215,6 +215,18 @@ router.post(
     if (!files || files.length === 0) {
       sendError(res, 'No files provided', 400);
       return;
+    }
+
+    // ── Magic byte check: verify actual file content, not just the client-supplied MIME label ──
+    const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+    for (const file of files) {
+      // First filter: client-supplied mimetype (already validated by multer fileFilter above)
+      // Second filter: actual file signature — cannot be spoofed by the client
+      const detected = await fileTypeFromBuffer(file.buffer);
+      if (!detected || !allowedMimeTypes.includes(detected.mime)) {
+        sendError(res, 'Only JPEG, PNG, WebP images and PDF files are allowed. Please upload a valid file.', 400);
+        return;
+      }
     }
 
     const teacherId = req.user!.id;

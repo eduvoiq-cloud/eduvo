@@ -27,29 +27,6 @@ const router = Router();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Check parent → child ownership via parent_students or students.parent_id. */
-async function isParentOfStudent(parentId: string, studentId: string): Promise<boolean> {
-  // Check parent_students junction table first
-  const { data: link } = await supabaseAdmin
-    .from('parent_students')
-    .select('student_id')
-    .eq('parent_id', parentId)
-    .eq('student_id', studentId)
-    .maybeSingle();
-
-  if (link) return true;
-
-  // Fallback: check students.parent_id column (older link method)
-  const { data: student } = await supabaseAdmin
-    .from('students')
-    .select('id')
-    .eq('id', studentId)
-    .eq('parent_id', parentId)
-    .maybeSingle();
-
-  return student !== null;
-}
-
 /**
  * Shared access check used by GET endpoints.
  * Returns true if the request is authorised for the given studentId.
@@ -69,12 +46,6 @@ async function checkAccess(
   }
 
   const role = req.user?.role;
-
-  if (role === 'parent') {
-    const ok = await isParentOfStudent(req.user!.id, studentId);
-    if (!ok) { sendError(res, 'Access denied', 403); return false; }
-    return true;
-  }
 
   if (role === 'schooladmin' || role === 'superadmin' || role === 'teacher') {
     return true;

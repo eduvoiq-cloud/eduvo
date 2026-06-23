@@ -438,19 +438,7 @@ function QuestionRow({ q, index, onEdit, onDelete }: QuestionRowProps) {
   );
 }
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
-
-const LS_TERM_KEY        = 'eduvo_last_term';
-const LS_EXAM_TYPE_KEY   = 'eduvo_last_exam_type';
-const LS_START_TIME_KEY  = 'eduvo_last_start_time';
-const LS_END_TIME_KEY    = 'eduvo_last_end_time';
-
-function readLS(key: string): string {
-  try { return localStorage.getItem(key) ?? ''; } catch { return ''; }
-}
-function writeLS(key: string, value: string) {
-  try { localStorage.setItem(key, value); } catch { /* ignore */ }
-}
+// TODO: Implement full draft persistence if needed in future
 
 // ── Subject fuzzy-match helper ────────────────────────────────────────────────
 // Maps a teacher assignment subject name (free-text, e.g. "Maths") to the
@@ -519,29 +507,9 @@ export default function CreateTestPage() {
   // Step state
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // Step 1 — test details (initialised with last-used values from localStorage)
-  const [details, setDetails] = useState<TestDetails>(() => {
-    const lastTerm      = readLS(LS_TERM_KEY);
-    const lastExamType  = readLS(LS_EXAM_TYPE_KEY) as ExamTypeValue | '';
-    const lastStartTime = readLS(LS_START_TIME_KEY);
-    const lastEndTime   = readLS(LS_END_TIME_KEY);
-    return {
-      ...EMPTY_DETAILS,
-      term:       lastTerm     || EMPTY_DETAILS.term,
-      exam_type:  (lastExamType && (EXAM_TYPES as readonly string[]).includes(lastExamType))
-                    ? (lastExamType as ExamTypeValue)
-                    : EMPTY_DETAILS.exam_type,
-      start_time: lastStartTime || EMPTY_DETAILS.start_time,
-      end_time:   lastEndTime   || EMPTY_DETAILS.end_time,
-    };
-  });
+  // Step 1 — test details
+  const [details, setDetails] = useState<TestDetails>(EMPTY_DETAILS);
   const [detailsError, setDetailsError] = useState('');
-
-  // Persist last-used term, exam type and test-window times to localStorage
-  useEffect(() => { if (details.term)       writeLS(LS_TERM_KEY,       details.term);      }, [details.term]);
-  useEffect(() => { if (details.exam_type)  writeLS(LS_EXAM_TYPE_KEY,  details.exam_type); }, [details.exam_type]);
-  useEffect(() => {                          writeLS(LS_START_TIME_KEY, details.start_time); }, [details.start_time]);
-  useEffect(() => {                          writeLS(LS_END_TIME_KEY,   details.end_time);   }, [details.end_time]);
 
   // Set board from the active school's board setting
   useEffect(() => {

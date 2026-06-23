@@ -18,6 +18,12 @@ jest.mock('../middleware/rateLimit', () => {
     studentLoginRateLimit: passthrough,
     forgotPasswordRateLimit: passthrough,
     registerRateLimit: passthrough,
+    studentAiRateLimit: passthrough,
+    deleteAccountRequestRateLimit: passthrough,
+    studentOtpRateLimit: passthrough,
+    testSubmitRateLimit: passthrough,
+    schoolListRateLimit: passthrough,
+    templateDownloadRateLimit: passthrough,
   };
 });
 

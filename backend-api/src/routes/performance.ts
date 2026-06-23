@@ -42,26 +42,12 @@ interface SubjectSummary {
  */
 router.get(
   '/:student_id',
-  requireRole('superadmin', 'schooladmin', 'teacher', 'parent', 'student'),
+  requireRole('superadmin', 'schooladmin', 'teacher', 'student'),
   async (req: Request, res: Response) => {
     const { student_id } = req.params;
     const requestingUser = req.user!;
 
     // ── Access control ──────────────────────────────────────────────────────
-
-    if (requestingUser.role === 'parent') {
-      const { data: child } = await supabaseAdmin
-        .from('students')
-        .select('id')
-        .eq('id', student_id)
-        .eq('parent_id', requestingUser.id)
-        .maybeSingle();
-
-      if (!child) {
-        sendError(res, 'Access denied', 403);
-        return;
-      }
-    }
 
     if (requestingUser.role === 'student') {
       // Students are linked via a user_id column on the students table

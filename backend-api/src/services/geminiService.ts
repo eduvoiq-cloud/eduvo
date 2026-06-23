@@ -248,6 +248,44 @@ Return this exact JSON structure:
     ];
   }
 
+  // ── Response schema for structured JSON output ────────────────────────────
+  // Mirrors the pattern used in tests.ts /generate — tells Gemini to return
+  // clean JSON without markdown fences or prose wrappers.
+  const responseSchema = {
+    type: "object" as const,
+    properties: {
+      mcq_questions: {
+        type: "array" as const,
+        items: {
+          type: "object" as const,
+          properties: {
+            question:       { type: "string" as const },
+            option_a:       { type: "string" as const },
+            option_b:       { type: "string" as const },
+            option_c:       { type: "string" as const },
+            option_d:       { type: "string" as const },
+            correct_option: { type: "string" as const, enum: ["a", "b", "c", "d"] },
+            marks:          { type: "integer" as const },
+          },
+          required: ["question", "option_a", "option_b", "option_c", "option_d", "correct_option", "marks"],
+        },
+      },
+      theory_questions: {
+        type: "array" as const,
+        items: {
+          type: "object" as const,
+          properties: {
+            question:        { type: "string" as const },
+            expected_answer: { type: "string" as const },
+            marks:           { type: "integer" as const },
+          },
+          required: ["question", "expected_answer", "marks"],
+        },
+      },
+    },
+    required: ["mcq_questions", "theory_questions"],
+  };
+
   const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
   const fallbackModelId = "gemini-2.0-flash";
   const modelsToTry = modelId === fallbackModelId ? [modelId] : [modelId, fallbackModelId];
@@ -261,7 +299,14 @@ Return this exact JSON structure:
 
   for (const currentModelId of modelsToTry) {
     try {
-      const model = genAI.getGenerativeModel({ model: currentModelId, systemInstruction });
+      const model = genAI.getGenerativeModel({
+        model: currentModelId,
+        systemInstruction,
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema,
+        } as Record<string, unknown>,
+      });
       t_gs3_geminiCallStart = performance.now();
       if (currentModelId !== modelId) {
         console.warn(`[geminiService] Falling back to ${currentModelId}…`);
@@ -405,7 +450,7 @@ function buildPromptHash(
   theory_count: number
 ): string {
   return crypto
-    .createHash("md5")
+    .createHash("sha256")
     .update(data + subject + class_level + difficulty + mcq_count + theory_count)
     .digest("hex");
 }

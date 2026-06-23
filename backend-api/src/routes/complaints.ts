@@ -55,7 +55,7 @@ async function createNotification(
   try {
     await supabaseAdmin.from('notifications').insert({
       title,
-      message: body,
+      body,
       type: 'alert',
       recipient_id: recipientId,
       sender_id: senderId,
@@ -69,8 +69,8 @@ async function createNotification(
 
 /**
  * Create an in-app notification for a student.
- * Students don't have a users row, so we use a system sender_id (school_admin).
- * Falls back gracefully if no admin is found.
+ * Uses recipient_id = student.id, which the notifications GET endpoint
+ * resolves correctly for student tokens.
  */
 async function createStudentNotification(
   schoolId: string,
@@ -79,7 +79,7 @@ async function createStudentNotification(
   body: string
 ): Promise<void> {
   try {
-    // Find a school_admin to use as sender_id (required FK)
+    // Find a school_admin to use as sender_id (required FK on notifications table)
     const { data: admin } = await supabaseAdmin
       .from('users')
       .select('id')
@@ -87,13 +87,17 @@ async function createStudentNotification(
       .eq('role', 'schooladmin')
       .maybeSingle();
 
-    if (!admin) return; // No admin found — skip notification silently
+    const senderId = admin?.id ?? null;
 
-    // Students don't have a notifications row (they use the students table),
-    // so we store the notification against the student's parent_id if available,
-    // or skip. For now we log it — full student notification is a Phase 2 feature.
-    // TODO: extend notifications table to support student recipients.
-    console.log(`[complaints] Student notification (Phase 2): ${title} → student ${studentId}`);
+    await supabaseAdmin.from('notifications').insert({
+      title,
+      body,
+      type: 'alert',
+      recipient_id: studentId,
+      sender_id: senderId,
+      is_read: false,
+      created_at: new Date().toISOString(),
+    });
   } catch (err) {
     console.error('[complaints] Failed to create student notification:', err);
   }

@@ -39,20 +39,24 @@ router.get('/subjects', async (req: Request, res: Response) => {
 
   const { board, class: classNum } = parsed.data;
 
+  // Select only the subject column to avoid loading all chapter data just to
+  // deduplicate subjects. Future improvement: use a DB-level DISTINCT query via
+  // an RPC function (e.g. rpc('get_distinct_subjects', { board, class })) to
+  // push the deduplication fully into Postgres.
   const { data, error } = await supabaseAdmin
     .from('chapter_library')
     .select('subject')
     .eq('board', board)
     .eq('class', classNum)
-    .order('subject', { ascending: true });
+    .order('subject');
 
   if (error) {
     sendError(res, error.message, 500);
     return;
   }
 
-  // Deduplicate (Supabase doesn't have a DISTINCT shorthand in the JS client)
-  const subjects = [...new Set((data ?? []).map((r: { subject: string }) => r.subject))].sort();
+  // Deduplicate in JS (Supabase JS client has no DISTINCT shorthand)
+  const subjects = [...new Set(data?.map((r: { subject: string }) => r.subject) ?? [])];
 
   sendSuccess(res, { subjects });
 });

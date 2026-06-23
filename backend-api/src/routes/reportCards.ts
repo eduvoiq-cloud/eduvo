@@ -452,7 +452,7 @@ router.post(
       // Student notification
       await supabaseAdmin.from('notifications').insert({
         title:        '📄 Report Card Available',
-        message:      `Your ${term} ${exam_type.replace('_', ' ')} report card is ready.${pctStr ? ` Overall: ${pctStr}` : ''}`,
+        body:         `Your ${term} ${exam_type.replace('_', ' ')} report card is ready.${pctStr ? ` Overall: ${pctStr}` : ''}`,
         type:         'grade',
         recipient_id: row.id,
         sender_id:    teacherId,
@@ -465,7 +465,7 @@ router.post(
         parentIds.push(row.parent_id);
         await supabaseAdmin.from('notifications').insert({
           title:        '📄 Report Card Available',
-          message:      `${row.full_name}'s ${term} ${exam_type.replace('_', ' ')} report card is ready.`,
+          body:         `${row.full_name}'s ${term} ${exam_type.replace('_', ' ')} report card is ready.`,
           type:         'grade',
           recipient_id: row.parent_id,
           sender_id:    teacherId,
@@ -499,7 +499,6 @@ router.post(
       }
     }
 
-    console.log(`[reportCards] Re-sent notifications for ${studentIds.length} students.`);
     sendSuccess(res, { notified: studentIds.length });
   }
 );
@@ -708,7 +707,7 @@ router.post(
           // In-app notification for the student
           await supabaseAdmin.from('notifications').insert({
             title:        '📄 Report Card Available',
-            message:      `Your ${term} ${exam_type.replace('_', ' ')} report card is ready. Overall: ${overallPct.toFixed(1)}% — Grade ${grade}`,
+            body:         `Your ${term} ${exam_type.replace('_', ' ')} report card is ready. Overall: ${overallPct.toFixed(1)}% — Grade ${grade}`,
             type:         'grade',
             recipient_id: student.id,
             sender_id:    senderId,
@@ -734,7 +733,7 @@ router.post(
               parentIds.push(row.parent_id);
               await supabaseAdmin.from('notifications').insert({
                 title:        '📄 Report Card Available',
-                message:      `${row.full_name}'s ${term} ${exam_type.replace('_', ' ')} report card is ready.`,
+                body:         `${row.full_name}'s ${term} ${exam_type.replace('_', ' ')} report card is ready.`,
                 type:         'grade',
                 recipient_id: row.parent_id,
                 sender_id:    senderId,
@@ -769,7 +768,6 @@ router.post(
           }
         }
 
-        console.log(`[reportCards] Stored ${students.length} report cards and sent notifications.`);
       } catch (err) {
         console.error('[reportCards] Error storing/notifying report cards:', err);
       }
@@ -777,8 +775,6 @@ router.post(
   });
   }
 );
-
-// ── PDF builder ───────────────────────────────────────────────────────────────
 
 interface PdfOptions {
   school: SchoolRow;

@@ -150,110 +150,131 @@ async function handleSubmitBatch(req: Request, res: Response): Promise<void> {
   // ── Background processing ─────────────────────────────────────────────────
   setImmediate(async () => {
     try {
-      // 1. Fetch all active students with a parent_phone
-      const { data: students, error: stuErr } = await supabaseAdmin
-        .from('students')
-        .select('id, full_name, parent_phone, school_id')
-        .eq('is_deleted', false)
-        .not('parent_phone', 'is', null);
+      // FIX 4: Process schools one at a time instead of fetching all students
+      // across all schools in one unbounded query (can be 100k+ rows at scale).
 
-      if (stuErr) {
-        console.error('[cron/monthly/submit-batch] Failed to fetch students:', stuErr.message);
+      // 1. Fetch all active school IDs
+      const { data: schools, error: schoolErr } = await supabaseAdmin
+        .from('schools')
+        .select('id')
+        .eq('is_active', true);
+
+      if (schoolErr) {
+        console.error('[cron/monthly/submit-batch] Failed to fetch schools:', schoolErr.message);
         return;
       }
 
-      const studentRows = (students ?? []) as Array<{
-        id: string; full_name: string; parent_phone: string; school_id: string;
-      }>;
+      const schoolRows = (schools ?? []) as Array<{ id: string }>;
+      console.log(`[cron/monthly/submit-batch] Processing ${schoolRows.length} schools for ${monthLabel}`);
 
-      const totalStudents = studentRows.length;
-      console.log(`[cron/monthly/submit-batch] ${totalStudents} students to process`);
+      for (const school of schoolRows) {
+        const schoolId = school.id;
 
-      if (totalStudents === 0) {
-        console.log('[cron/monthly/submit-batch] No students found — nothing to do');
-        return;
-      }
+        // 2. Fetch only this school's students with a parent_phone
+        const { data: students, error: stuErr } = await supabaseAdmin
+          .from('students')
+          .select('id, full_name, parent_phone, school_id')
+          .eq('school_id', schoolId)
+          .eq('is_deleted', false)
+          .not('parent_phone', 'is', null);
 
-      // 2. Gather monthly data for each student
-      const allStudentData: StudentMonthlyData[] = [];
-      for (const s of studentRows) {
-        try {
-          const data = await getStudentMonthlyData(s.id, monthStartDate);
-          allStudentData.push(data);
-        } catch (err) {
-          console.warn(
-            `[cron/monthly/submit-batch] getStudentMonthlyData failed for ${s.id}:`,
-            err instanceof Error ? err.message : err
-          );
-        }
-      }
-
-      // 3. Try Gemini Batch submission
-      const batchJobId = await submitGeminiBatch(allStudentData, monthLabel, monthStartDate);
-
-      if (batchJobId) {
-        // Batch submitted — record it in monthly_report_batches
-        const { error: insertErr } = await supabaseAdmin
-          .from('monthly_report_batches')
-          .insert({
-            batch_job_id:     batchJobId,
-            month_start_date: monthStartDate.toISOString().slice(0, 10),
-            status:           'submitted',
-            total_students:   totalStudents,
-          });
-
-        if (insertErr) {
-          console.error(
-            '[cron/monthly/submit-batch] Failed to insert monthly_report_batches row:',
-            insertErr.message
-          );
+        if (stuErr) {
+          console.error(`[cron/monthly/submit-batch] Failed to fetch students for school ${schoolId}:`, stuErr.message);
+          continue;
         }
 
-        console.log(
-          `[cron/monthly/submit-batch] Batch submitted — jobId: ${batchJobId}, students: ${totalStudents}`
-        );
-        return;
-      }
+        const studentRows = (students ?? []) as Array<{
+          id: string; full_name: string; parent_phone: string; school_id: string;
+        }>;
 
-      // 4. Batch disabled or failed — process sequentially (max 50 at a time)
-      console.log('[cron/monthly/submit-batch] Batch disabled/failed — processing sequentially');
+        if (studentRows.length === 0) continue;
 
-      const CHUNK_SIZE = 50;
-      let processed = 0;
+        console.log(`[cron/monthly/submit-batch] School ${schoolId}: ${studentRows.length} students`);
 
-      for (let i = 0; i < allStudentData.length; i += CHUNK_SIZE) {
-        const chunk = allStudentData.slice(i, i + CHUNK_SIZE);
-
-        for (const data of chunk) {
+        // 3. Gather monthly data for each student in this school
+        const allStudentData: StudentMonthlyData[] = [];
+        for (const s of studentRows) {
           try {
-            const content = await generateMonthlyReport(data, monthLabel);
-            const msg     = assembleWhatsAppMessage(data.studentName, monthLabel, content);
-
-            await saveAndSendReport(
-              data.studentId,
-              monthStartDate,
-              JSON.stringify(content),
-              msg,
-              data.parentPhone,
-              true // send WhatsApp
-            );
-
-            processed++;
+            const data = await getStudentMonthlyData(s.id, monthStartDate);
+            allStudentData.push(data);
           } catch (err) {
             console.warn(
-              `[cron/monthly/submit-batch] Sequential error for student ${data.studentId}:`,
+              `[cron/monthly/submit-batch] getStudentMonthlyData failed for ${s.id}:`,
               err instanceof Error ? err.message : err
             );
           }
-
-          // Throttle between sends to respect Meta rate limits
-          await sleep(100);
         }
+
+        // 4. Try Gemini Batch submission for this school
+        const batchJobId = await submitGeminiBatch(allStudentData, monthLabel, monthStartDate);
+
+        if (batchJobId) {
+          // 4a. Record batch job scoped to this school
+          const { error: insertErr } = await supabaseAdmin
+            .from('monthly_report_batches')
+            .insert({
+              batch_job_id:     batchJobId,
+              month_start_date: monthStartDate.toISOString().slice(0, 10),
+              status:           'submitted',
+              total_students:   studentRows.length,
+              school_id:        schoolId,
+            });
+
+          if (insertErr) {
+            console.error(
+              `[cron/monthly/submit-batch] Failed to insert batch row for school ${schoolId}:`,
+              insertErr.message
+            );
+          }
+
+          console.log(
+            `[cron/monthly/submit-batch] School ${schoolId}: batch submitted — jobId: ${batchJobId}, students: ${studentRows.length}`
+          );
+          continue;
+        }
+
+        // 4b. Batch disabled or failed — process sequentially (max 50 at a time)
+        console.log(`[cron/monthly/submit-batch] School ${schoolId}: batch disabled/failed — processing sequentially`);
+
+        const CHUNK_SIZE = 50;
+        let processed = 0;
+
+        for (let i = 0; i < allStudentData.length; i += CHUNK_SIZE) {
+          const chunk = allStudentData.slice(i, i + CHUNK_SIZE);
+
+          for (const data of chunk) {
+            try {
+              const content = await generateMonthlyReport(data, monthLabel);
+              const msg     = assembleWhatsAppMessage(data.studentName, monthLabel, content);
+
+              await saveAndSendReport(
+                data.studentId,
+                monthStartDate,
+                JSON.stringify(content),
+                msg,
+                data.parentPhone,
+                true // send WhatsApp
+              );
+
+              processed++;
+            } catch (err) {
+              console.warn(
+                `[cron/monthly/submit-batch] Sequential error for student ${data.studentId}:`,
+                err instanceof Error ? err.message : err
+              );
+            }
+
+            // Throttle between sends to respect Meta rate limits
+            await sleep(100);
+          }
+        }
+
+        console.log(
+          `[cron/monthly/submit-batch] School ${schoolId}: sequential complete — processed: ${processed}/${studentRows.length}`
+        );
       }
 
-      console.log(
-        `[cron/monthly/submit-batch] Sequential complete — processed: ${processed}/${totalStudents}`
-      );
+      console.log(`[cron/monthly/submit-batch] All schools processed for ${monthLabel}`);
     } catch (err) {
       console.error('[cron/monthly/submit-batch] Fatal background error:', err);
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
@@ -283,6 +304,38 @@ async function handleDeliver(req: Request, res: Response): Promise<void> {
       let checkedBatches = 0;
       let processedTotal = 0;
 
+      // ── FIX 2: Idempotency guard — skip if already delivered this month ───
+      // If any monthly_reports row for the current month already has
+      // whatsapp_sent_at set, the deliver job already ran. Skip to prevent
+      // duplicate WhatsApp messages when the cron fires multiple times.
+      const monthStartDate = getCurrentMonthStart();
+      const monthStartIso  = monthStartDate.toISOString().slice(0, 10);
+
+      const { count: alreadyDeliveredCount, error: idempotencyErr } = await supabaseAdmin
+        .from('monthly_reports')
+        .select('id', { count: 'exact', head: true })
+        .eq('month_start_date', monthStartIso)
+        .not('whatsapp_sent_at', 'is', null);
+
+      if (!idempotencyErr && (alreadyDeliveredCount ?? 0) > 0) {
+        console.log(
+          `[cron/monthly/deliver] Already delivered ${alreadyDeliveredCount} reports for ${monthStartIso} — skipping to prevent duplicates`
+        );
+        return;
+      }
+
+      // ── Step 3: Stale lock cleanup — release locks older than 30 minutes ──
+      // A crashed previous run may have left deliver_locked_at set.
+      // Releasing it here allows the current run to claim those batches.
+      const thirtyMinsAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      await supabaseAdmin
+        .from('monthly_report_batches')
+        .update({ deliver_locked_at: null, deliver_lock_id: null })
+        .eq('status', 'submitted')
+        .lt('deliver_locked_at', thirtyMinsAgo);
+
+      console.log('[cron/monthly/deliver] Stale lock cleanup complete');
+
       // ── 1. Poll pending/processing batch jobs ─────────────────────────────
       const { data: pendingBatches, error: batchErr } = await supabaseAdmin
         .from('monthly_report_batches')
@@ -300,6 +353,24 @@ async function handleDeliver(req: Request, res: Response): Promise<void> {
         };
 
         checkedBatches++;
+
+        // ── Step 2: Optimistic lock — atomic claim via WHERE deliver_locked_at IS NULL ──
+        const lockId = crypto.randomUUID();
+        const now    = new Date().toISOString();
+
+        const { data: locked, error: lockError } = await supabaseAdmin
+          .from('monthly_report_batches')
+          .update({ deliver_locked_at: now, deliver_lock_id: lockId })
+          .eq('id', b.id)
+          .eq('status', 'submitted')
+          .is('deliver_locked_at', null) // only claim if not already locked
+          .select('id')
+          .single();
+
+        if (lockError || !locked) {
+          console.log(`[cron/monthly/deliver] Batch ${b.id} already locked by another process — skipping`);
+          continue;
+        }
 
         try {
           const result = await checkGeminiBatch(b.batch_job_id);
@@ -330,6 +401,18 @@ async function handleDeliver(req: Request, res: Response): Promise<void> {
           const monthLabel     = getMonthLabel(monthStartDate);
           let   processed      = 0;
 
+          // ── Step 2 (verify): confirm we still hold the lock before sending ──
+          const { data: verify } = await supabaseAdmin
+            .from('monthly_report_batches')
+            .select('deliver_lock_id')
+            .eq('id', b.id)
+            .single();
+
+          if ((verify as { deliver_lock_id: string | null } | null)?.deliver_lock_id !== lockId) {
+            console.log(`[cron/monthly/deliver] Batch ${b.id} lock stolen — skipping`);
+            continue;
+          }
+
           for (const item of result.results ?? []) {
             try {
               // Fetch student data for phone number
@@ -347,6 +430,19 @@ async function handleDeliver(req: Request, res: Response): Promise<void> {
               const sr      = studentRow as { full_name: string; parent_phone: string | null };
               const msg     = assembleWhatsAppMessage(sr.full_name, monthLabel, item.content);
               const sendNow = isAfter9AmIST;
+
+              // ── Step 4: WhatsApp dedup guard — skip if already sent this month ──
+              const { data: existing } = await supabaseAdmin
+                .from('monthly_reports')
+                .select('whatsapp_sent_at')
+                .eq('student_id', item.studentId)
+                .eq('month_start_date', b.month_start_date)
+                .single();
+
+              if ((existing as { whatsapp_sent_at: string | null } | null)?.whatsapp_sent_at) {
+                console.log(`[cron/monthly/deliver] WhatsApp already sent for student ${item.studentId} — skipping duplicate`);
+                continue;
+              }
 
               await saveAndSendReport(
                 item.studentId,
@@ -422,6 +518,19 @@ async function handleDeliver(req: Request, res: Response): Promise<void> {
             if (!parentPhone) continue;
 
             const monthStartDate = new Date(`${r.month_start_date}T00:00:00.000Z`);
+
+            // ── Step 4: WhatsApp dedup guard (delayed-send path) ──────────────
+            const { data: existingDelayed } = await supabaseAdmin
+              .from('monthly_reports')
+              .select('whatsapp_sent_at')
+              .eq('student_id', r.student_id)
+              .eq('month_start_date', r.month_start_date)
+              .single();
+
+            if ((existingDelayed as { whatsapp_sent_at: string | null } | null)?.whatsapp_sent_at) {
+              console.log(`[cron/monthly/deliver] WhatsApp already sent for student ${r.student_id} — skipping duplicate`);
+              continue;
+            }
 
             await saveAndSendReport(
               r.student_id,

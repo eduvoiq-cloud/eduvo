@@ -34,12 +34,16 @@ const ROLE_PREFIXES: Record<string, string> = {
   superadmin: '/superadmin',
   schooladmin: '/admin',
   teacher: '/teacher',
+  student: '/student',
+  parent: '/student',
 };
 
 const ROLE_DASHBOARDS: Record<string, string> = {
   superadmin: '/superadmin/dashboard',
   schooladmin: '/admin/dashboard',
   teacher: '/teacher/dashboard',
+  student: '/student/dashboard',
+  parent: '/student/dashboard',
 };
 
 export function middleware(req: NextRequest) {

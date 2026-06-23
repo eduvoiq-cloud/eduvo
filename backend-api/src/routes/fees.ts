@@ -533,7 +533,7 @@ router.post('/send-reminder', requireRole('superadmin', 'schooladmin', 'teacher'
     // (the notifications GET endpoint resolves recipient_id from req.student.id)
     const { error: notifErr } = await supabaseAdmin.from('notifications').insert({
       title: 'Fee Reminder',
-      message,
+      body: message,
       type: 'fee_reminder',
       recipient_id: student.id,
       sender_id: req.user!.id,

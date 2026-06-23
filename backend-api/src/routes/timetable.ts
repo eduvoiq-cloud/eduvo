@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
+import { fromBuffer as fileTypeFromBuffer } from 'file-type';
 import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent, authenticateAny } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
@@ -692,6 +693,16 @@ router.post(
   async (req: Request, res: Response) => {
     if (!req.file) {
       sendError(res, 'No file provided.', 400);
+      return;
+    }
+
+    // ── Magic byte check: verify actual file content, not just the client-supplied MIME label ──
+    const allowedTimetableMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    // First filter: client-supplied mimetype (already validated by multer fileFilter above)
+    // Second filter: actual file signature — cannot be spoofed by the client
+    const detectedTimetable = await fileTypeFromBuffer(req.file.buffer);
+    if (!detectedTimetable || !allowedTimetableMimeTypes.includes(detectedTimetable.mime)) {
+      sendError(res, 'Only JPEG, PNG, WebP images and PDF files are allowed. Please upload a valid file.', 400);
       return;
     }
 

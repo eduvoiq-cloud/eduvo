@@ -356,11 +356,17 @@ router.put('/:id/postpone', async (req: Request, res: Response) => {
   const { new_test_date, postpone_reason } = parsed.data;
   const newRecoveryPackDate = subtractDaysFromDateStr(new_test_date, 7);
 
+  // Guard: if the computed pack date is in the past, set it to today
+  // and flag that pack generation should happen immediately.
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const packDateIsInPast = newRecoveryPackDate < todayStr;
+  const resolvedPackDate = packDateIsInPast ? todayStr : newRecoveryPackDate;
+
   const { data, error } = await supabaseAdmin
     .from('monthly_recovery_schedules')
     .update({
       scheduled_test_date: new_test_date,
-      recovery_pack_date: newRecoveryPackDate,
+      recovery_pack_date: resolvedPackDate,
       status: 'approved',
       teacher_decision: 'postpone',
       postpone_reason,
@@ -376,10 +382,33 @@ router.put('/:id/postpone', async (req: Request, res: Response) => {
     return;
   }
 
+  // If pack date was in the past, trigger immediate pack generation
+  if (packDateIsInPast) {
+    setImmediate(async () => {
+      const apiBase = process.env.INTERNAL_API_BASE ?? `http://localhost:${process.env.PORT ?? 3001}`;
+      const authHeader = req.headers.authorization ?? '';
+      try {
+        await fetch(`${apiBase}/api/recovery/start-pack`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: authHeader,
+          },
+          body: JSON.stringify({
+            class:   schedule.class   as string,
+            section: schedule.section as string,
+          }),
+        });
+      } catch (genErr) {
+        console.error('[recovery-schedules/postpone] Immediate pack generation trigger failed:', genErr instanceof Error ? genErr.message : genErr);
+      }
+    });
+  }
+
   sendSuccess(
     res,
     data,
-    `Recovery test postponed to ${new_test_date} for ${schedule.subject as string}`
+    `Recovery test postponed to ${new_test_date} for ${schedule.subject as string}${packDateIsInPast ? ' — pack generation started immediately' : ''}`
   );
 });
 

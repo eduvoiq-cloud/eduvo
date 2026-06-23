@@ -110,7 +110,13 @@ async function runModel(modelId: string, label: string, apiKey: string): Promise
   console.log(`${'─'.repeat(60)}`);
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: modelId, systemInstruction: SYSTEM_INSTRUCTION });
+  const model = genAI.getGenerativeModel({
+    model: modelId,
+    systemInstruction: SYSTEM_INSTRUCTION,
+    generationConfig: {
+      responseMimeType: 'application/json',
+    },
+  });
 
   const prompt = buildPrompt();
   const t0 = performance.now();

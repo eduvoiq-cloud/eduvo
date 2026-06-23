@@ -393,6 +393,48 @@ async function startServer() {
     });
   });
 
+  // ── Startup config warnings ───────────────────────────────────────────────────
+  // Runs after the server is listening so the port line always appears first.
+  // Non-fatal — missing optional integrations (SMS, WhatsApp, AI, push) should
+  // not crash the server, but must be visible immediately in Railway logs.
+  function validateStartupConfig(): void {
+    const warnings: string[] = [];
+
+    // SMS check
+    if (
+      !process.env.MSG91_API_KEY ||
+      process.env.MSG91_API_KEY.includes('your_') ||
+      process.env.MSG91_API_KEY.includes('placeholder')
+    ) {
+      warnings.push('MSG91_API_KEY is not configured — SMS notifications disabled');
+    }
+
+    // WhatsApp check
+    if (process.env.WHATSAPP_ENABLED === 'true' && !process.env.WHATSAPP_ACCESS_TOKEN) {
+      warnings.push('WHATSAPP_ENABLED is true but WHATSAPP_ACCESS_TOKEN is missing — WhatsApp will fail');
+    }
+
+    // Gemini check
+    if (!process.env.GEMINI_API_KEY) {
+      warnings.push('GEMINI_API_KEY missing — all AI features will fail');
+    }
+
+    // Firebase check
+    if (!process.env.FIREBASE_PROJECT_ID) {
+      warnings.push('FIREBASE_PROJECT_ID missing — push notifications disabled');
+    }
+
+    if (warnings.length > 0) {
+      console.warn('\n⚠️  STARTUP CONFIG WARNINGS:');
+      warnings.forEach((w) => console.warn(`   • ${w}`));
+      console.warn('Update .env to fix these.\n');
+    } else {
+      console.log('✅ All integrations configured');
+    }
+  }
+
+  validateStartupConfig();
+
   return app;
 }
 

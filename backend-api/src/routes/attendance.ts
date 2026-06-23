@@ -85,7 +85,7 @@ router.use(authenticateAny);
  */
 router.get(
   '/',
-  requireRole('superadmin', 'schooladmin', 'teacher', 'parent', 'student'),
+  requireRole('superadmin', 'schooladmin', 'teacher', 'student'),
   async (req: Request, res: Response) => {
     const { student_id, date } = req.query as Record<string, string>;
 
@@ -713,7 +713,7 @@ router.put(
     if (notifyStudent?.parent_id) {
       await supabaseAdmin.from('notifications').insert({
         title: 'Attendance Correction',
-        message: `${notifyStudent.full_name}'s attendance for ${original.date} was corrected from ${oldStatus} to ${new_status}. Reason: ${reason}`,
+        body: `${notifyStudent.full_name}'s attendance for ${original.date} was corrected from ${oldStatus} to ${new_status}. Reason: ${reason}`,
         type: 'attendance',
         recipient_id: notifyStudent.parent_id,
         sender_id: userId,
@@ -734,28 +734,13 @@ router.put(
  */
 router.get(
   '/history',
-  requireRole('superadmin', 'schooladmin', 'teacher', 'parent', 'student'),
+  requireRole('superadmin', 'schooladmin', 'teacher', 'student'),
   async (req: Request, res: Response) => {
     const { student_id, start_date, end_date } = req.query as Record<string, string>;
 
     if (!student_id || !start_date || !end_date) {
       sendError(res, 'student_id, start_date, and end_date are required', 400);
       return;
-    }
-
-    // Parents can only query their own children
-    if (req.user?.role === 'parent') {
-      const { data: child } = await supabaseAdmin
-        .from('students')
-        .select('id')
-        .eq('id', student_id)
-        .eq('parent_id', req.user!.id)
-        .maybeSingle();
-
-      if (!child) {
-        sendError(res, 'Access denied', 403);
-        return;
-      }
     }
 
     // Student token: can only query their own record

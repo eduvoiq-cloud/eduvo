@@ -49,15 +49,24 @@ const updateMarkSchema = createMarkSchema.partial();
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/marks?student_id=&subject=&term= */
+/** GET /api/marks?student_id=&subject=&term=&limit=&offset=&from_date= */
 router.get('/', async (req: Request, res: Response) => {
   const { student_id, subject, term } = req.query as Record<string, string>;
 
-  // Pagination support: ?page=1&limit=100 (default 100, max 500 for marks)
-  const rawPage  = parseInt((req.query.page  as string) ?? '1',   10);
-  const rawLimit = parseInt((req.query.limit as string) ?? '100', 10);
-  const page  = isNaN(rawPage)  || rawPage  < 1 ? 1   : rawPage;
-  const limit = isNaN(rawLimit) || rawLimit < 1 ? 100 : Math.min(rawLimit, 500);
+  // Pagination support: ?limit=100&offset=0 (default limit 100, max 500)
+  // Also accepts ?page=N for backwards compatibility.
+  const rawLimit  = parseInt((req.query.limit  as string) ?? '100', 10);
+  const rawOffset = parseInt((req.query.offset as string) ?? '0',   10);
+  const rawPage   = parseInt((req.query.page   as string) ?? '1',   10);
+
+  const limit  = isNaN(rawLimit)  || rawLimit  < 1 ? 100 : Math.min(rawLimit, 500);
+  // offset wins over page when both are supplied; page is the legacy alias
+  const offset = !isNaN(rawOffset) && rawOffset >= 0
+    ? rawOffset
+    : (isNaN(rawPage) || rawPage < 1 ? 0 : (rawPage - 1) * limit);
+
+  // Optional ISO date filter: from_date=YYYY-MM-DD
+  const fromDate = (req.query.from_date as string | undefined)?.trim() ?? null;
 
   // ── Student token: simple select, no join needed — we already have their ID ──
   if (req.tokenType === 'student') {
@@ -66,9 +75,10 @@ router.get('/', async (req: Request, res: Response) => {
       .select('*', { count: 'exact' })
       .eq('student_id', req.student!.id)
       .order('created_at', { ascending: false })
-      .range((page - 1) * limit, page * limit - 1);
+      .range(offset, offset + limit - 1);
 
-    if (subject) studentQuery = studentQuery.eq('subject', subject);
+    if (subject)   studentQuery = studentQuery.eq('subject', subject);
+    if (fromDate)  studentQuery = studentQuery.gte('created_at', `${fromDate}T00:00:00.000Z`);
 
     if (term) {
       const termValues = termFilterValues(term);
@@ -87,11 +97,10 @@ router.get('/', async (req: Request, res: Response) => {
 
     const total = studentCount ?? 0;
     sendSuccess(res, {
-      data: studentData ?? [],
+      data:   studentData ?? [],
       total,
-      page,
       limit,
-      total_pages: Math.ceil(total / limit),
+      offset,
     });
     return;
   }
@@ -101,9 +110,10 @@ router.get('/', async (req: Request, res: Response) => {
     .from('marks')
     .select('*, students!inner(full_name, school_id)', { count: 'exact' })
     .order('created_at', { ascending: false })
-    .range((page - 1) * limit, page * limit - 1);
+    .range(offset, offset + limit - 1);
 
-  if (subject) query = query.eq('subject', subject);
+  if (subject)  query = query.eq('subject', subject);
+  if (fromDate) query = query.gte('created_at', `${fromDate}T00:00:00.000Z`);
 
   // Accept both term formats (term_1 or Term 1) by matching all equivalents
   if (term) {
@@ -139,22 +149,9 @@ router.get('/', async (req: Request, res: Response) => {
     if (studentRecord) {
       query = query.eq('student_id', studentRecord.id);
     } else {
-      sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
+      sendSuccess(res, { data: [], total: 0, limit, offset });
       return;
     }
-  } else if (role === 'parent') {
-    // Parents can only see their children's marks
-    const { data: children } = await supabaseAdmin
-      .from('students')
-      .select('id')
-      .eq('parent_id', req.user!.id);
-
-    const childIds = (children ?? []).map((c: { id: string }) => c.id);
-    if (childIds.length === 0) {
-      sendSuccess(res, { data: [], total: 0, page, limit, total_pages: 0 });
-      return;
-    }
-    query = query.in('student_id', childIds);
   }
 
   const { data, error, count } = await query;
@@ -166,7 +163,7 @@ router.get('/', async (req: Request, res: Response) => {
   }
 
   const total = count ?? 0;
-  sendSuccess(res, { data: data ?? [], total, page, limit, total_pages: Math.ceil(total / limit) });
+  sendSuccess(res, { data: data ?? [], total, limit, offset });
 });
 
 /** POST /api/marks — schooladmin, teacher */
@@ -230,7 +227,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
         // In-app notification for the student
         await supabaseAdmin.from('notifications').insert({
           title:        '📊 Marks Uploaded',
-          message:      `Your ${subject} marks for ${markTerm} ${exam_type.replace('_', ' ')} have been uploaded: ${score}/${max_score} (${pct}%)`,
+          body:         `Your ${subject} marks for ${markTerm} ${exam_type.replace('_', ' ')} have been uploaded: ${score}/${max_score} (${pct}%)`,
           type:         'marks',
           recipient_id: student_id,
           sender_id:    senderId,
@@ -260,7 +257,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
         if (sr?.parent_id) {
           await supabaseAdmin.from('notifications').insert({
             title:        '📊 Marks Uploaded',
-            message:      `${sr.full_name}'s ${subject} marks for ${markTerm} ${exam_type.replace('_', ' ')}: ${score}/${max_score} (${pct}%)`,
+            body:         `${sr.full_name}'s ${subject} marks for ${markTerm} ${exam_type.replace('_', ' ')}: ${score}/${max_score} (${pct}%)`,
             type:         'marks',
             recipient_id: sr.parent_id,
             sender_id:    senderId,

@@ -469,39 +469,25 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
   }
 
   // Insert all questions.
-  // Fallback chain handles columns that may be missing in older DB deployments:
-  //   Level 1 (full):  order_index + explanation + reasoning
-  //   Level 2:         order_index only (no explanation/reasoning)
-  //   Level 3 (bare):  no order_index, no explanation/reasoning
-  const makeRows = (opts: { withOrderIndex: boolean; withExplanation: boolean }) =>
-    questions.map((q, idx) => ({
-      test_id: test.id,
-      ...(opts.withOrderIndex ? { order_index: idx } : {}),
-      question_text: q.question_text,
-      question_type: q.question_type,
-      option_a: q.option_a ?? null,
-      option_b: q.option_b ?? null,
-      option_c: q.option_c ?? null,
-      option_d: q.option_d ?? null,
-      correct_option: q.question_type === 'mcq' ? (q.correct_option ?? null) : null,
-      marks: q.marks,
-      ...(opts.withExplanation ? { explanation: q.explanation ?? null, reasoning: q.reasoning ?? null } : {}),
-    }));
+  // Schema drift fallback removed — 2026-06-23. Schema confirmed stable.
+  // questions table has: test_id, order_index, question_text, question_type,
+  // option_a/b/c/d, correct_option, marks, explanation, reasoning
+  const questionRows = questions.map((q, idx) => ({
+    test_id: test.id,
+    order_index: idx,
+    question_text: q.question_text,
+    question_type: q.question_type,
+    option_a: q.option_a ?? null,
+    option_b: q.option_b ?? null,
+    option_c: q.option_c ?? null,
+    option_d: q.option_d ?? null,
+    correct_option: q.question_type === 'mcq' ? (q.correct_option ?? null) : null,
+    marks: q.marks,
+    explanation: q.explanation ?? null,
+    reasoning: q.reasoning ?? null,
+  }));
 
-  // Attempt 1: full insert (order_index + explanation + reasoning)
-  let qErr = (await supabaseAdmin.from('questions').insert(makeRows({ withOrderIndex: true, withExplanation: true }))).error;
-
-  // Attempt 2: missing explanation/reasoning columns
-  if (qErr && (qErr.message.includes('explanation') || qErr.message.includes('reasoning'))) {
-    console.warn('[tests/create] explanation/reasoning columns missing, retrying without them');
-    qErr = (await supabaseAdmin.from('questions').insert(makeRows({ withOrderIndex: true, withExplanation: false }))).error;
-  }
-
-  // Attempt 3: missing order_index column (schema cache not refreshed yet)
-  if (qErr && qErr.message.includes('order_index')) {
-    console.warn('[tests/create] order_index column missing from schema cache, retrying without it');
-    qErr = (await supabaseAdmin.from('questions').insert(makeRows({ withOrderIndex: false, withExplanation: false }))).error;
-  }
+  const { error: qErr } = await supabaseAdmin.from('questions').insert(questionRows);
 
   if (qErr) {
     console.error('[tests/create] insert questions error:', qErr.message);
@@ -540,7 +526,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
         const senderId = req.user!.id;
         const notifRows = studentIds.map((recipient_id: string) => ({
           title: 'New Test Available',
-          message: `A new test "${testFields.title}" has been assigned to your class.`,
+          body: `A new test "${testFields.title}" has been assigned to your class.`,
           // Use a dedicated type so the mobile app can show a test icon and group it clearly.
           type: 'test',
           recipient_id,
@@ -559,9 +545,11 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
             'New Test Available',
             `A new test "${testFields.title}" has been assigned. Good luck!`
           );
-          console.log(
-            `[FCM] Test notification — sent: ${successCount}, failed: ${failureCount}, test: ${test.id}`
-          );
+          if (failureCount > 0) {
+            console.error(
+              `[FCM] Test notification — sent: ${successCount}, failed: ${failureCount}, test: ${test.id}`
+            );
+          }
         }
       } catch (err) {
         console.error('[FCM] Failed to send test assignment notifications:', err);
@@ -651,19 +639,33 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     return;
   }
 
+  // ── Pagination + date filter ────────────────────────────────────────────────
+  // limit: default 20, max 50 — prevents returning hundreds of old tests
+  // offset: default 0
+  // from_date: optional ISO date string to filter tests on or after a date
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+  const offset = parseInt(req.query.offset as string) || 0;
+  const fromDate = req.query.from_date as string | undefined;
+
   // Fetch tests — no correct_option, no shuffle config exposed
-  // Only return tests that are enabled for web attempt (web student portal)
-  const { data: tests, error: tErr } = await supabaseAdmin
+  let testsQuery = supabaseAdmin
     .from('tests')
     .select(`
       id, title, subject_id, date, term, time_limit_minutes,
       available_from, available_until, require_camera, allow_web_attempt,
       subject:subjects(name)
-    `)
+    `, { count: 'exact' })
     .eq('school_id', studentRecord.school_id)
     .ilike('class', studentRecord.class_name)
     .ilike('section', studentRecord.section)
-    .order('date', { ascending: false });
+    .order('date', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (fromDate) {
+    testsQuery = testsQuery.gte('date', fromDate);
+  }
+
+  const { data: tests, error: tErr, count: testsCount } = await testsQuery;
 
   if (tErr) { sendError(res, tErr.message, 500); return; }
 
@@ -689,7 +691,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   });
 
   if (result.length === 0) {
-    sendSuccess(res, []);
+    sendSuccess(res, { data: [], total: testsCount ?? 0, limit, offset });
     return;
   }
 
@@ -820,7 +822,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     };
   });
 
-  sendSuccess(res, enriched);
+  sendSuccess(res, { data: enriched, total: testsCount ?? 0, limit, offset });
 });
 
 // ── POST /api/tests/attempt/start ────────────────────────────────────────────
@@ -995,33 +997,21 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
       return;
     }
 
-    // Existing in-progress attempt: always reset to a fresh start.
-    // Resuming a stale attempt causes the client to compute near-zero remaining
-    // time (based on the original started_at), which triggers an instant auto-submit.
-    // We reset started_at to now and wipe any saved answers so the student
-    // always gets a clean full-duration attempt every time they press Start.
-    const { data: resetAttempt, error: resetErr } = await supabaseAdmin
+    // Existing in-progress attempt: return it with the ORIGINAL started_at so the
+    // student never gets fresh time by closing and reopening the test.
+    // Do NOT update started_at — it was set on the first open and is immutable.
+    const { data: resumedAttempt, error: resumeErr } = await supabaseAdmin
       .from('test_attempts')
-      .update({
-        started_at: new Date().toISOString(),
-        is_submitted: false,
-      })
-      .eq('id', existingAttempt.id)
       .select('id, started_at')
+      .eq('id', existingAttempt.id)
       .single();
 
-    if (resetErr || !resetAttempt) {
-      sendError(res, 'Failed to reset attempt', 500);
+    if (resumeErr || !resumedAttempt) {
+      sendError(res, 'Failed to resume attempt', 500);
       return;
     }
 
-    // Clear any previously saved answers so the student starts blank
-    await supabaseAdmin
-      .from('student_answers')
-      .delete()
-      .eq('attempt_id', existingAttempt.id);
-
-    // Return early with the reset attempt — no need to fall through.
+    // Return early with the existing attempt — no need to fall through.
     // Fetch questions for this test.
     let resetRawQuestions = null;
     const { data: tqResetData, error: tqResetErr } = await supabaseAdmin
@@ -1046,19 +1036,21 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
       return;
     }
 
-    // Compute remaining seconds server-side so the client never has to do
-    // clock arithmetic with its own (potentially skewed) clock.
-    // This is a fresh reset — always give the full time limit.
-    const resetSecondsRemaining = test.time_limit_minutes * 60;
+    // Compute remaining seconds based on the ORIGINAL started_at so the student
+    // cannot gain extra time by reopening the test.
+    const elapsedSec = Math.floor(
+      (Date.now() - new Date(resumedAttempt.started_at).getTime()) / 1000
+    );
+    const resumeSecondsRemaining = Math.max(test.time_limit_minutes * 60 - elapsedSec, 0);
 
     sendSuccess(res, {
-      attempt_id: resetAttempt.id,
+      attempt_id: resumedAttempt.id,
       time_limit_minutes: test.time_limit_minutes,
-      started_at: resetAttempt.started_at,
-      seconds_remaining: test.time_limit_minutes > 0 ? resetSecondsRemaining : null,
-      resumed: false,
+      started_at: resumedAttempt.started_at,
+      seconds_remaining: test.time_limit_minutes > 0 ? resumeSecondsRemaining : null,
+      resumed: true,
       questions: resetRawQuestions,
-    }, 'Test started');
+    }, 'Test resumed');
     return;
   }
 
@@ -1175,6 +1167,14 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
  * Auto-submits if time limit exceeded.
  */
 router.post('/attempt/submit', authenticateStudent, requireRole('student'), testSubmitRateLimit, async (req: Request, res: Response) => {
+  // FIX 18: Reject an empty submission before any schema parsing.
+  // If the student submitted a form with zero answers selected, return a clear
+  // 400 so they know nothing was recorded. The attempt is NOT consumed.
+  const submittedAnswers = req.body?.answers;
+  if (!submittedAnswers || !Array.isArray(submittedAnswers) || submittedAnswers.length === 0) {
+    return sendError(res, 'Please answer at least one question before submitting.', 400);
+  }
+
   const parsed = submitAttemptSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -1278,23 +1278,37 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
     return acc;
   }, []);
 
+  // FIX 18: Guard against a submission where all submitted question_ids are
+  // unrecognised (none matched any known question in questionMap). This means
+  // the client sent answers but none could be mapped — likely a question ID
+  // mismatch or a stale attempt. Do NOT mark as submitted; return a clear 400
+  // so the student knows their answers were not recorded and can retry.
+  if (answerRows.length === 0) {
+    console.error(
+      `[tests] attempt/submit: empty answerRows for attempt ${attempt_id} — possible question ID mismatch or empty submission`
+    );
+    return sendError(
+      res,
+      'No valid answers were received. Please try submitting again. If this keeps happening, contact your school.',
+      400
+    );
+  }
+
   // Delete any previously saved answers for this attempt (handles retry safely)
   // then re-insert fresh — avoids needing a unique constraint for upsert
-  if (answerRows.length > 0) {
-    await supabaseAdmin
-      .from('student_answers')
-      .delete()
-      .eq('attempt_id', attempt_id);
+  await supabaseAdmin
+    .from('student_answers')
+    .delete()
+    .eq('attempt_id', attempt_id);
 
-    const { error: insertErr } = await supabaseAdmin
-      .from('student_answers')
-      .insert(answerRows);
+  const { error: insertErr } = await supabaseAdmin
+    .from('student_answers')
+    .insert(answerRows);
 
-    if (insertErr) {
-      console.error('[SUBMIT] student_answers insert error:', JSON.stringify(insertErr, null, 2));
-      sendError(res, `Failed to save answers: ${insertErr.message}`, 500);
-      return;
-    }
+  if (insertErr) {
+    console.error('[SUBMIT] student_answers insert error:', JSON.stringify(insertErr, null, 2));
+    sendError(res, `Failed to save answers: ${insertErr.message}`, 500);
+    return;
   }
 
   // For pure-MCQ tests (no theory questions in this test), total_score = mcq_score
@@ -2977,6 +2991,20 @@ interface WebIntegrityExtras {
   multiple_faces_count?: number;
 }
 
+// ── Integrity score hardcoded defaults ───────────────────────────────────────
+// Used as a fallback if the integrity_score_config table is empty or unreachable.
+// DB values override these defaults when present.
+const INTEGRITY_DEFAULTS = {
+  base_score: 100,
+  exit_deduction_per_exit: 5,
+  long_exit_threshold_seconds: 120,
+  long_exit_extra_deduction: 10,
+  suspicious_exit_count_threshold: 5,
+  suspicious_duration_threshold_seconds: 300,
+  suspicious_rapid_exit_count: 3,
+  minimum_score: 0,
+};
+
 function calculateIntegrityScore(data: IntegrityData, config: IntegrityConfig, web?: WebIntegrityExtras): IntegrityResult {
   let score = config.base_score;
 
@@ -3108,15 +3136,16 @@ router.post('/student/test-integrity', authenticateStudent, requireRole('student
     {}
   );
 
+  // Merge DB values over hardcoded defaults — table empty = defaults win
   const config: IntegrityConfig = {
-    base_score:                         rawConfig['base_score']                          ?? 100,
-    exit_deduction_per_exit:             rawConfig['exit_deduction_per_exit']              ?? 5,
-    long_exit_threshold_seconds:         rawConfig['long_exit_threshold_seconds']          ?? 120,
-    long_exit_extra_deduction:           rawConfig['long_exit_extra_deduction']            ?? 10,
-    suspicious_exit_count_threshold:     rawConfig['suspicious_exit_count_threshold']      ?? 5,
-    suspicious_duration_threshold_seconds: rawConfig['suspicious_duration_threshold_seconds'] ?? 300,
-    suspicious_rapid_exit_count:         rawConfig['suspicious_rapid_exit_count']          ?? 3,
-    minimum_score:                       rawConfig['minimum_score']                       ?? 0,
+    base_score:                           rawConfig['base_score']                            ?? INTEGRITY_DEFAULTS.base_score,
+    exit_deduction_per_exit:              rawConfig['exit_deduction_per_exit']               ?? INTEGRITY_DEFAULTS.exit_deduction_per_exit,
+    long_exit_threshold_seconds:          rawConfig['long_exit_threshold_seconds']           ?? INTEGRITY_DEFAULTS.long_exit_threshold_seconds,
+    long_exit_extra_deduction:            rawConfig['long_exit_extra_deduction']             ?? INTEGRITY_DEFAULTS.long_exit_extra_deduction,
+    suspicious_exit_count_threshold:      rawConfig['suspicious_exit_count_threshold']       ?? INTEGRITY_DEFAULTS.suspicious_exit_count_threshold,
+    suspicious_duration_threshold_seconds: rawConfig['suspicious_duration_threshold_seconds'] ?? INTEGRITY_DEFAULTS.suspicious_duration_threshold_seconds,
+    suspicious_rapid_exit_count:          rawConfig['suspicious_rapid_exit_count']           ?? INTEGRITY_DEFAULTS.suspicious_rapid_exit_count,
+    minimum_score:                        rawConfig['minimum_score']                         ?? INTEGRITY_DEFAULTS.minimum_score,
   };
 
   // 3. Calculate score

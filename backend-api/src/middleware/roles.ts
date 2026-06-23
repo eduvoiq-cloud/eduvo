@@ -8,7 +8,6 @@ import type { AppRole } from './auth';
  *   superadmin  — full platform access
  *   schooladmin — manages a single school
  *   teacher     — manages classes, marks, attendance within their school
- *   parent      — read-only access to their own children's data
  *   student     — read-only access to their own data
  */
 
