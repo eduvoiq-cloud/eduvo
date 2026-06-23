@@ -197,7 +197,10 @@ Each activity must:
 
 type must be one of: "verbal", "written", "physical"`;
 
-    const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+    const modelName = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
+    // Flash Lite is fast and cheap for activity generation.
+    // Falls back to full Flash (GEMINI_MODEL) if Lite is overloaded.
+    // Override via GEMINI_MODEL_QUESTIONS if needed.
 
     // Structured output schema — keep simple (no nested enum) for compatibility
     // with gemini-2.0-flash. Type values are validated/normalised below anyway.
@@ -221,33 +224,54 @@ type must be one of: "verbal", "written", "physical"`;
 
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema,
-        } as Record<string, unknown>,
-      });
 
-      // Build content parts — include file if provided
-      const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
-        { text: prompt },
-      ];
-      if (file_data && file_mime) {
-        contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+      // Try Flash Lite first, fall back to full Flash on 503/429
+      const fallbackModelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+      const activityModels = modelName === fallbackModelName ? [modelName] : [modelName, fallbackModelName];
+
+      let parsed2: { activities: Array<{ instruction: string; type: string }> } | null = null;
+      let lastActivityErr: unknown = null;
+
+      for (const actModel of activityModels) {
+        try {
+          const model = genAI.getGenerativeModel({
+            model: actModel,
+            generationConfig: {
+              responseMimeType: 'application/json',
+              responseSchema,
+            } as Record<string, unknown>,
+          });
+
+          const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+            { text: prompt },
+          ];
+          if (file_data && file_mime) {
+            contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+          }
+
+          const result = await model.generateContent(contentParts);
+          const raw = result.response.text().trim();
+
+          try {
+            parsed2 = JSON.parse(raw);
+          } catch {
+            sendError(res, 'AI returned invalid format. Please try again.', 500);
+            return;
+          }
+          lastActivityErr = null;
+          break; // success
+        } catch (err) {
+          lastActivityErr = err;
+          const status = (err as Record<string, unknown>)?.status as number | undefined;
+          if ((status === 503 || status === 429) && actModel !== fallbackModelName) {
+            console.warn(`[activity-packs/generate] ${actModel} returned ${status}, trying fallback…`);
+            continue;
+          }
+          throw err; // non-retryable
+        }
       }
 
-      const result = await model.generateContent(contentParts);
-      const raw = result.response.text().trim();
-
-      let parsed2: { activities: Array<{ instruction: string; type: string }> };
-
-      try {
-        parsed2 = JSON.parse(raw);
-      } catch {
-        sendError(res, 'AI returned invalid format. Please try again.', 500);
-        return;
-      }
+      if (lastActivityErr) throw lastActivityErr;
 
       if (!Array.isArray(parsed2.activities) || parsed2.activities.length === 0) {
         sendError(res, 'AI did not return valid activities. Please try again.', 500);

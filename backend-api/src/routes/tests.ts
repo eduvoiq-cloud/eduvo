@@ -282,9 +282,11 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
   }
 
-  // Try primary model, fall back to gemini-2.0-flash on 503 (overloaded)
-  const primaryModel  = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-  const fallbackModel = 'gemini-2.0-flash';
+  // Question generation is lightweight — use Flash Lite (cheap + fast).
+  // Falls back to gemini-2.5-flash if Lite is overloaded (503).
+  // Override via GEMINI_MODEL_QUESTIONS env var if needed.
+  const primaryModel  = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
+  const fallbackModel = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
   const modelsToTry   = primaryModel === fallbackModel ? [primaryModel] : [primaryModel, fallbackModel];
 
   const genAI = new GoogleGenerativeAI(apiKey);

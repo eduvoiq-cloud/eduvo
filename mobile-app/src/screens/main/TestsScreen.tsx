@@ -504,7 +504,9 @@ export default function TestsScreen() {
     setError(null);
     try {
       const response = await apiClient.get('/api/tests/student');
-      const tests: TestRecord[] = response.data?.data ?? [];
+      // sendSuccess wraps payload as { data: { data: [...], total, ... } }
+      // so the array lives at response.data.data.data
+      const tests: TestRecord[] = response.data?.data?.data ?? [];
       setTestsData({ tests });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load tests');
