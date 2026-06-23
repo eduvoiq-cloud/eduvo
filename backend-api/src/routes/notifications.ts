@@ -23,7 +23,8 @@ const createNotificationSchema = z.object({
 // -- Helpers ------------------------------------------------------------------
 
 /**
- * The live DB has a 'message' column (NOT NULL) instead of 'body'.
+ * The live DB has both a 'body' column (schema default) and a legacy 'message'
+ * column (kept for backwards compatibility via fix-all-missing-columns.sql).
  * We normalise rows coming back from the DB so the API always returns 'body'.
  * Returns a new object — never mutates the original Supabase response object.
  * Both 'body' and 'message' are returned so legacy clients reading .message still work.
@@ -107,9 +108,12 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   const { title, body, recipient_ids, type } = parsed.data;
 
   // Fan out: one row per recipient.
-  // DB column is 'message' (NOT NULL) — write there; 'body' column is nullable extra.
+  // Write to both 'body' (schema column) and 'message' (legacy column, kept for
+  // backwards compatibility — see fix-all-missing-columns.sql) so neither
+  // normaliseRow nor legacy clients reading .message get a null value.
   const rows = recipient_ids.map((recipient_id) => ({
     title,
+    body,
     message: body,
     type,
     recipient_id,
