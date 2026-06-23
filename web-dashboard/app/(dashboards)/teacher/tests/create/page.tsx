@@ -76,7 +76,7 @@ interface ChapterOption {
   id: string;
   chapter_number: number;
   chapter_name: string;
-  topics: string;
+  topics: string[] | string; // API returns string[], but guard for legacy string
 }
 
 // Topic source mode for the AI section
@@ -117,7 +117,11 @@ const EXAM_TYPE_LABELS: Record<ExamTypeValue, string> = {
 const LANGUAGES = ['English', 'Gujarati', 'Hindi', 'Marathi', 'Bengali', 'Tamil', 'Telugu', 'Kannada', 'Punjabi', 'Sanskrit'] as const;
 
 function getTodayDateString() {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 const EMPTY_DETAILS: TestDetails = {
@@ -659,26 +663,6 @@ export default function CreateTestPage() {
       const json = await res.json() as { success: boolean; data: { subjects: string[] } };
       const subjects = json.success ? (json.data.subjects ?? []) : [];
       setLibSubjects(subjects);
-      // Auto-resolve library subject from the teacher's selected subject (fuzzy match)
-      if (details.subject && subjects.length > 0) {
-        const matched = fuzzyMatchSubject(details.subject, subjects);
-        if (matched) {
-          setLibSelection((prev) => {
-            if (prev.subject === matched) return prev;
-            return {
-              ...prev,
-              subject: matched,
-              chapterId: '',
-              chapterNumber: 0,
-              chapterName: '',
-              allTopics: [],
-              checkedTopics: new Set(),
-              customTopicChecked: false,
-              customTopicText: '',
-            };
-          });
-        }
-      }
     } catch { setLibSubjects([]); }
     finally { setLibSubjectsLoading(false); }
   }, []);
@@ -1005,6 +989,7 @@ export default function CreateTestPage() {
     if (!subject) { setDetailsError('Please select a subject.'); return; }
     if (!term) { setDetailsError('Please select a term.'); return; }
     if (!date) { setDetailsError('Please select a test date.'); return; }
+    if (date < getTodayDateString()) { setDetailsError('Test date cannot be in the past.'); return; }
     setStep(2);
   }
 
@@ -1262,7 +1247,7 @@ export default function CreateTestPage() {
               <FormField label="Test Date" htmlFor="d-date" required>
                 <input
                   id="d-date" type="date" className={inputClass}
-                  min={new Date().toISOString().slice(0, 10)}
+                  min={getTodayDateString()}
                   value={details.date}
                   onChange={(e) => setDetails((d) => ({ ...d, date: e.target.value, start_time: '', end_time: '' }))}
                 />
@@ -1284,13 +1269,13 @@ export default function CreateTestPage() {
                 <FormField label="Opens at" htmlFor="d-start-time">
                   <input
                     id="d-start-time" type="time" className={inputClass}
-                    min={details.date === new Date().toISOString().slice(0, 10)
+                    min={details.date === getTodayDateString()
                       ? new Date().toTimeString().slice(0, 5)
                       : undefined}
                     value={details.start_time}
                     onChange={(e) => {
                       const val = e.target.value;
-                      const today = new Date().toISOString().slice(0, 10);
+                      const today = getTodayDateString();
                       if (details.date === today && val) {
                         const now = new Date().toTimeString().slice(0, 5);
                         if (val < now) { setDetailsError('"Opens at" cannot be in the past.'); return; }
@@ -1547,9 +1532,10 @@ export default function CreateTestPage() {
                               setLibSelection((prev) => ({ ...prev, chapterId: '', chapterNumber: 0, chapterName: '', allTopics: [], checkedTopics: new Set() }));
                               return;
                             }
-                            const topicList = ch.topics
-                              ? ch.topics.split(',').map((t) => t.trim()).filter(Boolean)
-                              : [];
+                            // topics can be string[] (from API) or a comma-separated string (legacy)
+                            const topicList: string[] = Array.isArray(ch.topics)
+                              ? ch.topics.filter(Boolean)
+                              : (ch.topics ? (ch.topics as string).split(',').map((t) => t.trim()).filter(Boolean) : []);
                             setLibSelection((prev) => ({
                               ...prev,
                               chapterId: chId,
