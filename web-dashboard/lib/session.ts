@@ -44,6 +44,20 @@ async function setServerCookies(
   }
 }
 
+/**
+ * Ensures the HttpOnly auth cookies are set server-side before navigating.
+ * Call this after saveSession() when you are about to do a router.push() so
+ * the Next.js edge middleware can read the cookies on the very next request.
+ */
+export async function flushSessionCookies(
+  token: string,
+  role: string,
+  refreshToken?: string,
+  expiresAt?: number
+): Promise<void> {
+  await setServerCookies(token, role, refreshToken, expiresAt);
+}
+
 /** Call the Next.js API route that expires all auth cookies server-side. */
 async function clearServerCookies(): Promise<void> {
   try {

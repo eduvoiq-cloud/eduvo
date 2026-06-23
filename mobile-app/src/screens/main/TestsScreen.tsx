@@ -17,6 +17,156 @@ import apiClient from '../../api/client';
 import { MainStackParamList } from '../../navigation/AppNavigator';
 import { toMinutes, formatHHMM, nowISTMinutes, nowIST } from '../../utils/dateUtils';
 
+// ── Leaderboard types & component ────────────────────────────────────────────
+
+interface LeaderboardEntry {
+  rank: number;
+  first_name: string;
+  score: number;
+  max_score: number;
+  is_self: boolean;
+}
+
+function TestLeaderboard({ testId }: { testId: string }) {
+  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiClient
+      .get(`/api/tests/${testId}/leaderboard`)
+      .then((res) => {
+        if (cancelled) return;
+        const data = res.data?.data?.leaderboard ?? [];
+        setEntries(data);
+      })
+      .catch(() => {
+        if (!cancelled) setError('unavailable');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [testId]);
+
+  if (loading) {
+    return (
+      <View style={lbStyles.container}>
+        <ActivityIndicator size="small" color="#F59E0B" />
+      </View>
+    );
+  }
+
+  // If error or no entries yet, don't render the section
+  if (error || entries.length === 0) return null;
+
+  const MEDALS = ['🥇', '🥈', '🥉'];
+
+  return (
+    <View style={lbStyles.container}>
+      <TouchableOpacity
+        style={lbStyles.header}
+        onPress={() => setExpanded((v) => !v)}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? 'Collapse leaderboard' : 'Expand leaderboard'}
+      >
+        <Text style={lbStyles.headerText}>🏆 Top 3 Leaderboard</Text>
+        <Text style={lbStyles.chevron}>{expanded ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+
+      {expanded && (
+        <View style={lbStyles.list}>
+          {entries.map((entry) => {
+            const pct = entry.max_score > 0
+              ? Math.round((entry.score / entry.max_score) * 100)
+              : 0;
+            const medal = MEDALS[entry.rank - 1] ?? `#${entry.rank}`;
+            return (
+              <View
+                key={entry.rank}
+                style={[lbStyles.row, entry.is_self && lbStyles.rowSelf]}
+              >
+                <Text style={lbStyles.medal}>{medal}</Text>
+                <Text style={[lbStyles.name, entry.is_self && lbStyles.nameSelf]} numberOfLines={1}>
+                  {entry.first_name}{entry.is_self ? ' (You)' : ''}
+                </Text>
+                <View style={lbStyles.scoreWrap}>
+                  <Text style={[lbStyles.score, entry.is_self && lbStyles.scoreSelf]}>
+                    {entry.score}/{entry.max_score}
+                  </Text>
+                  <Text style={lbStyles.pct}>{pct}%</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
+const lbStyles = StyleSheet.create({
+  container: {
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    marginTop: 2,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    backgroundColor: '#FFFBEB',
+  },
+  headerText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  chevron: { fontSize: 11, color: '#92400E' },
+  list: {
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+    paddingTop: 4,
+    backgroundColor: '#FFFBEB',
+    gap: 6,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  rowSelf: {
+    borderColor: '#1D4ED8',
+    backgroundColor: '#EFF6FF',
+  },
+  medal: { fontSize: 18, marginRight: 10, width: 26 },
+  name: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  nameSelf: { color: '#1D4ED8' },
+  scoreWrap: { alignItems: 'flex-end' },
+  score: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  scoreSelf: { color: '#1D4ED8' },
+  pct: { fontSize: 10, color: '#9CA3AF', marginTop: 1 },
+});
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface TestRecord {
@@ -127,6 +277,14 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
 
   // Check if the time window has already closed (only relevant for today's not-started tests)
   const windowClosed = !isMissed && !isFuture && status === 'not_started' && isWindowClosed(test.available_until, test.available_from);
+
+  // Leaderboard is shown when no one can attempt the test anymore:
+  // - test date is in the past (any status), OR
+  // - today's test window has already closed (status = not_started or completed)
+  const showLeaderboard = Boolean(
+    (testDay && testDay < todayStart) ||  // test date has passed
+    (windowClosed)                        // today's window is over
+  );
 
   return (
     <TouchableOpacity
@@ -254,6 +412,9 @@ function TestCard({ test, onPress }: { test: TestRecord; onPress: () => void }) 
           </Text>
         </View>
       )}
+
+      {/* Leaderboard — shown only after the test window is closed / test date has passed */}
+      {showLeaderboard && <TestLeaderboard testId={test.id} />}
     </TouchableOpacity>
   );
 }
