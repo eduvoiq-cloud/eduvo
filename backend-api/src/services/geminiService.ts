@@ -287,7 +287,9 @@ Return this exact JSON structure:
   };
 
   const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
-  const fallbackModelId = "gemini-2.0-flash";
+  const fallbackModelId = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-1.5-flash";
+  // NOTE: gemini-2.0-flash was deprecated by Google — do NOT use it as a fallback.
+  // geminiService handles complex doc understanding — keep on full Flash, not Lite.
   const modelsToTry = modelId === fallbackModelId ? [modelId] : [modelId, fallbackModelId];
 
   const genAI = new GoogleGenerativeAI(apiKey);

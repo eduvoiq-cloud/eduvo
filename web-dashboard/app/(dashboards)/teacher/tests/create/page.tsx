@@ -928,13 +928,30 @@ export default function CreateTestPage() {
         } : {}),
       };
 
-      const res = await fetch(`${BASE_URL}/api/tests/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.message ?? 'Generation failed');
+      // Auto-retry up to 4 times on 500/503 (Gemini overload is transient)
+      const MAX_RETRIES = 4;
+      const RETRY_DELAYS = [1500, 3000, 5000, 8000]; // ms between retries
+      let json: Record<string, unknown> = {};
+      let lastStatus = 0;
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt - 1]));
+        }
+        const res = await fetch(`${BASE_URL}/api/tests/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        });
+        json = await res.json() as Record<string, unknown>;
+        lastStatus = res.status;
+        if (res.ok) break; // success — stop retrying
+        // Only retry on server errors (5xx); 4xx are definitive failures
+        if (res.status < 500) break;
+        if (attempt < MAX_RETRIES) continue;
+      }
+
+      if (lastStatus >= 400) throw new Error((json.message as string) ?? 'Generation failed');
 
       // Map returned questions to MCQDraft format
       type GeneratedQ = {
@@ -942,7 +959,7 @@ export default function CreateTestPage() {
         option_c: string; option_d: string; correct_option: 'a'|'b'|'c'|'d'; marks: number;
         reasoning?: string; explanation?: string;
       };
-      const generated: MCQDraft[] = (json.data.questions as GeneratedQ[]).map((q) => ({
+      const generated: MCQDraft[] = ((json.data as Record<string, unknown>).questions as GeneratedQ[]).map((q) => ({
         type: 'mcq' as const,
         text: q.question_text,
         marks: String(q.marks ?? 1),
@@ -956,8 +973,8 @@ export default function CreateTestPage() {
 
       // Store library references for use when saving the test
       if (isLibrary) {
-        setSavedChapterLibraryId(json.data.chapter_library_id ?? libSelection.chapterId);
-        setSavedSelectedTopics(json.data.selected_topics ?? finalTopics);
+        setSavedChapterLibraryId((json.data as Record<string, unknown>).chapter_library_id as string ?? libSelection.chapterId);
+        setSavedSelectedTopics((json.data as Record<string, unknown>).selected_topics as string ?? finalTopics);
       } else {
         setSavedChapterLibraryId(null);
         setSavedSelectedTopics(null);
