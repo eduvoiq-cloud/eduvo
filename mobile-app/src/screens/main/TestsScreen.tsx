@@ -504,9 +504,16 @@ export default function TestsScreen() {
     setError(null);
     try {
       const response = await apiClient.get('/api/tests/student');
-      // sendSuccess wraps payload as { data: { data: [...], total, ... } }
-      // so the array lives at response.data.data.data
-      const tests: TestRecord[] = response.data?.data?.data ?? [];
+      // Backend returns sendSuccess(res, payload) which wraps as { data: payload }.
+      // Two possible shapes depending on backend version:
+      //   Paginated:  response.data.data = { data: [...], total, limit, offset }
+      //   Direct:     response.data.data = [...]
+      const payload = response.data?.data;
+      const tests: TestRecord[] = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.data)
+          ? payload.data
+          : [];
       setTestsData({ tests });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load tests');
