@@ -239,10 +239,17 @@ export default function SchoolAdminDashboard() {
           // Fee defaulters: students with fee_paid = false
           const feeDefaulters = fees.filter((f) => !f.fee_paid).length;
 
-          // Active tests: tests scheduled today or in the future
+          // Active tests: tests scheduled today or in the future,
+          // but exclude today's tests whose available_until window has already passed.
+          const nowIST = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+          const nowHHMM = `${String(nowIST.getUTCHours()).padStart(2, '0')}:${String(nowIST.getUTCMinutes()).padStart(2, '0')}`;
           const activeTests = tests.filter((t) => {
             if (!t.date) return false;
-            return t.date >= today;
+            if (t.date > today) return true;
+            if (t.date < today) return false;
+            // t.date === today: exclude if available_until has already passed
+            if (t.available_until && nowHHMM > t.available_until) return false;
+            return true;
           }).length;
 
           setStats({

@@ -147,7 +147,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const activeSchoolId = getActiveSchoolId() ?? user.school_id;
     setState({ user, token, loading: true, subscriptionExpired: false, schools: [], activeSchoolId });
 
-    authApi.me(token)
+    // Wrap /me in a 8-second timeout so a slow/dead backend never leaves
+    // the spinner stuck forever — the cached user is good enough to proceed.
+    const meWithTimeout = Promise.race([
+      authApi.me(token),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('me_timeout')), 8000)
+      ),
+    ]);
+
+    meWithTimeout
       .then((res) => {
         // /me returns { token_type: 'staff', user: {...}, schools: [...] }
         const freshUser: UserProfile = res.data.user;
@@ -172,7 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (freshUser.must_reset_password && !window.location.pathname.includes('force-reset-password')) {
-          setState({ user: freshUser, token, loading: true, subscriptionExpired: false, schools: freshSchools, activeSchoolId });
+          setState({ user: freshUser, token, loading: false, subscriptionExpired: false, schools: freshSchools, activeSchoolId });
           window.location.replace('/force-reset-password');
           return;
         }
@@ -195,7 +204,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .then((res) => {
               const { token: newToken, refresh_token: newRefreshToken, expires_at: newExpiresAt } = res.data;
               saveSession(newToken, user, newRefreshToken, newExpiresAt);
-              setState({ user, token: newToken, loading: false, subscriptionExpired: false, schools: state.schools, activeSchoolId: state.activeSchoolId });
+              setState({ user, token: newToken, loading: false, subscriptionExpired: false, schools: [], activeSchoolId: state.activeSchoolId });
               scheduleRefresh(newExpiresAt, newRefreshToken, user);
             })
             .catch(() => {
@@ -208,8 +217,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setState({ user: null, token: null, loading: false, subscriptionExpired: false, schools: [], activeSchoolId: null });
           router.push('/login');
         } else {
-          // Network / server error — keep cached user, mark loading done
-          setState({ user, token, loading: false, subscriptionExpired: false, schools: state.schools, activeSchoolId: state.activeSchoolId });
+          // Network / server error (or timeout) — keep cached user, mark loading done
+          setState((s) => ({ ...s, user, token, loading: false }));
         }
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
