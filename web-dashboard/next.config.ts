@@ -62,17 +62,18 @@ const nextConfig: NextConfig = {
       return [];
     }
 
-    return [
-      {
-        // /api/session/* must stay local (Next.js App Router routes that set
-        // HttpOnly cookies). All other /api/* calls are proxied to Railway.
-        source: "/api/:path*",
-        destination: `${RAILWAY_API_URL}/api/:path*`,
-        // Exclude the session helper routes — they are handled by Next.js itself
-        // and must NOT be forwarded to Railway. The App Router matches them before
-        // the rewrite fires because Next.js resolves internal API routes first.
-      },
-    ];
+    // Use the afterFiles bucket so Next.js checks its own App Router handlers
+    // (including /api/session/set and /api/session/clear) BEFORE these rewrites
+    // fire. Anything that resolves to an internal route handler is served
+    // locally; everything else falls through and is proxied to Railway.
+    return {
+      afterFiles: [
+        {
+          source: "/api/:path*",
+          destination: `${RAILWAY_API_URL}/api/:path*`,
+        },
+      ],
+    };
   },
 };
 
