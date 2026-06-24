@@ -128,6 +128,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // to /login even though we have a valid token in localStorage.
     // We fire-and-forget here; this is best-effort to keep cookie in sync.
     void flushSessionCookies(token, user.role, refreshToken ?? undefined, expiresAt ?? undefined);
+
+    // If the browser is offline, skip all network calls and use the cached user
+    // immediately. Prevents an infinite spinner when the page loads without
+    // internet — the session is still valid, we just can't verify it right now.
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const activeSchoolId = getActiveSchoolId() ?? user.school_id;
+      setState({ user, token, loading: false, subscriptionExpired: false, schools: [], activeSchoolId });
+      if (expiresAt && refreshToken) scheduleRefresh(expiresAt, refreshToken, user);
+      return;
+    }
+
     // If token is already expired (or about to expire), try to refresh immediately
     const tokenExpiredOrSoon = expiresAt !== null && Date.now() >= expiresAt * 1000 - REFRESH_BUFFER_MS;
 

@@ -47,6 +47,12 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // Prevent browsers from caching dashboard pages offline — a stale
+        // offline cache causes an infinite spinner on the next load.
+        source: '/(superadmin|admin|teacher|student)/:path*',
+        headers: [{ key: 'Cache-Control', value: 'no-store' }],
+      },
+      {
         // Apply security headers to all routes
         source: '/(.*)',
         headers: securityHeaders,
