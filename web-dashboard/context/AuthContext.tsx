@@ -132,7 +132,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const tokenExpiredOrSoon = expiresAt !== null && Date.now() >= expiresAt * 1000 - REFRESH_BUFFER_MS;
 
     if (tokenExpiredOrSoon && refreshToken) {
-      authApi.refresh(refreshToken)
+      Promise.race([
+        authApi.refresh(refreshToken),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('refresh_timeout')), 8000)
+        ),
+      ])
         .then((res) => {
           const { token: newToken, refresh_token: newRefreshToken, expires_at: newExpiresAt } = res.data;
           saveSession(newToken, user, newRefreshToken, newExpiresAt);
@@ -207,7 +212,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           message.toLowerCase().includes('expired');
 
         if (isAuthError && refreshToken) {
-          authApi.refresh(refreshToken)
+          // Wrap refresh in a timeout so a dead backend never hangs the spinner
+          Promise.race([
+            authApi.refresh(refreshToken),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('refresh_timeout')), 8000)
+            ),
+          ])
             .then((res) => {
               const { token: newToken, refresh_token: newRefreshToken, expires_at: newExpiresAt } = res.data;
               saveSession(newToken, user, newRefreshToken, newExpiresAt);

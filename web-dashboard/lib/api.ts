@@ -107,10 +107,21 @@ async function request<T>(
     headers['X-School-ID'] = activeSchoolId;
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  // Abort the request after 15 seconds so a stalled connection (e.g. Railway
+  // cold-start or dead response body) never leaves the UI in a spinner forever.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const json = await res.json();
 
