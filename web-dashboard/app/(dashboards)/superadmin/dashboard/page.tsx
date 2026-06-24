@@ -98,7 +98,7 @@ async function apiFetch<T>(path: string, token: string, options?: RequestInit): 
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function SuperAdminDashboard() {
-  const { user } = useAuth();
+  const { user, token: authToken } = useAuth();
   const [schools, setSchools] = useState<SuperAdminSchool[]>([]);
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -139,8 +139,9 @@ export default function SuperAdminDashboard() {
   // ── Data fetching ───────────────────────────────────────────────────────────
 
   const fetchSchools = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
+    const token = authToken ?? getToken();
+    if (!token) { setLoading(false); return; }
+    setLoading(true);
     try {
       // Backend returns a pagination envelope: { data: [...], total, page, ... }
       const result = await apiFetch<SchoolsPageResponse>('/api/superadmin/schools', token);
@@ -150,11 +151,12 @@ export default function SuperAdminDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authToken]);
 
   const fetchStats = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
+    const token = authToken ?? getToken();
+    if (!token) { setStatsLoading(false); return; }
+    setStatsLoading(true);
     try {
       const data = await apiFetch<PlatformStats>('/api/superadmin/stats', token);
       setStats(data);
@@ -163,11 +165,11 @@ export default function SuperAdminDashboard() {
     } finally {
       setStatsLoading(false);
     }
-  }, []);
+  }, [authToken]);
 
   const fetchAuditLogs = useCallback(async (schoolId?: string) => {
-    const token = getToken();
-    if (!token) return;
+    const token = authToken ?? getToken();
+    if (!token) { setLogsLoading(false); return; }
     setLogsLoading(true);
     try {
       const qs = new URLSearchParams({ page: '1' });
@@ -182,11 +184,11 @@ export default function SuperAdminDashboard() {
     } finally {
       setLogsLoading(false);
     }
-  }, []);
+  }, [authToken]);
 
   const fetchAiCost = useCallback(async () => {
-    const token = getToken();
-    if (!token) return;
+    const token = authToken ?? getToken();
+    if (!token) { setAiCostLoading(false); return; }
     setAiCostLoading(true);
     try {
       const data = await apiFetch<AiCostData>('/api/superadmin/ai-cost', token);
@@ -196,7 +198,7 @@ export default function SuperAdminDashboard() {
     } finally {
       setAiCostLoading(false);
     }
-  }, []);
+  }, [authToken]);
 
   useEffect(() => {
     fetchSchools();
