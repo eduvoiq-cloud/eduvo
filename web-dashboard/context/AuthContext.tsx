@@ -121,6 +121,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setState((s) => ({ ...s, loading: false }));
       return;
     }
+
+    // Re-sync the HttpOnly cookie in case it expired or was cleared (e.g. new
+    // browser tab, cookie cleared by browser, or first load after localStorage
+    // login). The middleware reads the cookie — if it's missing, it redirects
+    // to /login even though we have a valid token in localStorage.
+    // We fire-and-forget here; this is best-effort to keep cookie in sync.
+    void flushSessionCookies(token, user.role, refreshToken ?? undefined, expiresAt ?? undefined);
     // If token is already expired (or about to expire), try to refresh immediately
     const tokenExpiredOrSoon = expiresAt !== null && Date.now() >= expiresAt * 1000 - REFRESH_BUFFER_MS;
 

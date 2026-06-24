@@ -73,9 +73,11 @@ export function middleware(req: NextRequest) {
   // No token → send to login (unless already on a public page)
   if (!token) {
     if (isPublic) return NextResponse.next();
-    const url = req.nextUrl.clone();
-    url.pathname = '/login';
-    return NextResponse.redirect(url);
+    // Don't redirect immediately — let the client-side AuthContext handle it.
+    // The cookie may be missing because it expired server-side while
+    // localStorage still has a valid token (e.g. after browser restart).
+    // The client will redirect to /login itself if the token is truly invalid.
+    return NextResponse.next();
   }
 
   // Has token + on a public/login page → redirect to the appropriate dashboard
