@@ -505,7 +505,7 @@ async function notifyTeacher(teacherId: string, title: string, message: string):
   } catch { /* non-fatal */ }
 }
 
-// ── POST /api/cron/recovery/check-batch-jobs ──────────────────────────────────
+// ── GET|POST /api/cron/recovery/check-batch-jobs ─────────────────────────────
 /**
  * Every-2-hours cron: poll Gemini Batch API for recovery_cycles that are still
  * in 'generating_pack' or 'generating_tests' state.
@@ -522,7 +522,7 @@ async function notifyTeacher(teacherId: string, title: string, message: string):
  *
  * Railway cron schedule: 0 *\/2 * * *  (every 2 hours)
  */
-router.post('/check-batch-jobs', async (req: Request, res: Response) => {
+async function runCheckBatchJobs(req: Request, res: Response): Promise<void> {
   if (!verifyCronSecret(req, res)) return;
 
   const startedAt = new Date().toISOString();
@@ -784,7 +784,12 @@ router.post('/check-batch-jobs', async (req: Request, res: Response) => {
       if (process.env.SENTRY_DSN) Sentry.captureException(err);
     }
   });
-});
+}
+
+// - GET  → cron-job.org free plan uses GET + ?secret= query param
+// - POST → GitHub Actions / paid cron services use POST + x-cron-secret header
+router.get('/check-batch-jobs',  runCheckBatchJobs);
+router.post('/check-batch-jobs', runCheckBatchJobs);
 
 // ── GET|POST /api/cron/recovery/activate-tests ───────────────────────────────
 /**

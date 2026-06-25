@@ -351,6 +351,9 @@ function getGeminiModel() {
     model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
     generationConfig: {
       responseMimeType: 'application/json',
+      // Disable thinking tokens — homework grading is straightforward evaluation,
+      // not open-ended reasoning. Thinking adds 8k–20k tokens per submission.
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 }

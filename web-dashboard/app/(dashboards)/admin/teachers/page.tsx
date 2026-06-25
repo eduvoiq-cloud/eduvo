@@ -11,30 +11,11 @@ import FormField, { inputClass } from '@/components/FormField';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface AddTeacherForm { name: string; email: string; password: string; }
-interface AssignForm { class_name: string; section: string; subject: string; }
+interface AddTeacherForm { name: string; email: string; phone: string; }
+interface AssignRow { class_name: string; section: string; subject: string; }
 
-const EMPTY_TEACHER: AddTeacherForm = { name: '', email: '', password: '' };
-const EMPTY_ASSIGN: AssignForm = { class_name: '', section: '', subject: '' };
-
-// ── Eye icons ─────────────────────────────────────────────────────────────────
-
-function EyeOn() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-    </svg>
-  );
-}
-
-function EyeOff() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-    </svg>
-  );
-}
+const EMPTY_TEACHER: AddTeacherForm = { name: '', email: '', phone: '' };
+const EMPTY_ROW: AssignRow = { class_name: '', section: '', subject: '' };
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -55,12 +36,9 @@ function TeachersPageInner() {
 
   // Forms
   const [teacherForm, setTeacherForm] = useState<AddTeacherForm>(EMPTY_TEACHER);
-  const [assignForm, setAssignForm] = useState<AssignForm>(EMPTY_ASSIGN);
+  const [assignRows, setAssignRows] = useState<AssignRow[]>([{ ...EMPTY_ROW }]);
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-
-  // Password visibility toggle for Add Teacher modal
-  const [showPassword, setShowPassword] = useState(false);
 
   // Open add modal from URL param
   useEffect(() => {
@@ -106,8 +84,12 @@ function TeachersPageInner() {
   async function handleAddTeacher(e: React.FormEvent) {
     e.preventDefault();
     setFormError('');
-    if (!teacherForm.name.trim() || !teacherForm.email.trim() || teacherForm.password.length < 8) {
-      setFormError('All fields required. Password must be at least 8 characters.');
+    if (!teacherForm.name.trim() || !teacherForm.email.trim()) {
+      setFormError('Name and email are required.');
+      return;
+    }
+    if (!/^\d{10}$/.test(teacherForm.phone)) {
+      setFormError('Phone number must be exactly 10 digits.');
       return;
     }
     const token = getToken();
@@ -117,13 +99,12 @@ function TeachersPageInner() {
       await authApi.createUser(token, {
         name: teacherForm.name.trim(),
         email: teacherForm.email.trim(),
-        password: teacherForm.password,
+        phone: teacherForm.phone.trim(),
         role: 'teacher',
         school_id: user.school_id,
       });
       setShowAdd(false);
       setTeacherForm(EMPTY_TEACHER);
-      setShowPassword(false);
       await fetchAll();
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : 'Failed to create teacher');
@@ -134,26 +115,54 @@ function TeachersPageInner() {
 
   // ── Assign teacher ────────────────────────────────────────────────────────
 
+  function updateAssignRow(index: number, field: keyof AssignRow, value: string) {
+    setAssignRows((rows) => rows.map((r, i) => i === index ? { ...r, [field]: value } : r));
+  }
+
+  function addAssignRow() {
+    setAssignRows((rows) => [...rows, { ...EMPTY_ROW }]);
+  }
+
+  function removeAssignRow(index: number) {
+    setAssignRows((rows) => rows.filter((_, i) => i !== index));
+  }
+
   async function handleAssign(e: React.FormEvent) {
     e.preventDefault();
     setFormError('');
-    if (!assignForm.class_name.trim() || !assignForm.section.trim() || !assignForm.subject.trim()) {
-      setFormError('All fields are required.');
+
+    const filled = assignRows.filter(
+      (r) => r.class_name.trim() || r.section.trim() || r.subject.trim()
+    );
+    if (filled.length === 0) {
+      setFormError('Add at least one class assignment.');
       return;
     }
+    const incomplete = filled.find(
+      (r) => !r.class_name.trim() || !r.section.trim() || !r.subject.trim()
+    );
+    if (incomplete) {
+      setFormError('All fields (Class, Section, Subject) are required in each row.');
+      return;
+    }
+
     const token = getToken();
     if (!token || !assignTarget || !user?.school_id) return;
     setSubmitting(true);
     try {
-      await assignmentsApi.create(token, {
-        teacher_id: assignTarget.id,
-        school_id: user.school_id,
-        class_name: assignForm.class_name.trim(),
-        section: assignForm.section.trim(),
-        subject: assignForm.subject.trim(),
-      });
+      await Promise.all(
+        filled.map((r) =>
+          assignmentsApi.create(token, {
+            teacher_id: assignTarget.id,
+            school_id: user.school_id!,
+            class_name: r.class_name.trim(),
+            section: r.section.trim(),
+            subject: r.subject.trim(),
+          })
+        )
+      );
       setAssignTarget(null);
-      setAssignForm(EMPTY_ASSIGN);
+      setAssignRows([{ ...EMPTY_ROW }]);
       await fetchAll();
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : 'Failed to assign teacher');
@@ -234,7 +243,6 @@ function TeachersPageInner() {
               onClick={() => {
                 setTeacherForm(EMPTY_TEACHER);
                 setFormError('');
-                setShowPassword(false);
                 setShowAdd(true);
               }}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
@@ -285,7 +293,7 @@ function TeachersPageInner() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
-                      onClick={() => { setAssignForm(EMPTY_ASSIGN); setFormError(''); setAssignTarget(teacher); }}
+                      onClick={() => { setAssignRows([{ ...EMPTY_ROW }]); setFormError(''); setAssignTarget(teacher); }}
                       className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-md transition-colors"
                     >
                       Assign Class
@@ -333,7 +341,7 @@ function TeachersPageInner() {
       {/* ── Add Teacher Modal ──────────────────────────────────────────────── */}
       <Modal
         open={showAdd}
-        onClose={() => { setShowAdd(false); setShowPassword(false); }}
+        onClose={() => setShowAdd(false)}
         title="Add Teacher"
       >
         <form onSubmit={handleAddTeacher} className="space-y-4">
@@ -356,32 +364,20 @@ function TeachersPageInner() {
               required
             />
           </FormField>
-          <FormField label="Temporary Password" htmlFor="t-pass" required>
-            <div className="relative">
-              <input
-                id="t-pass"
-                type={showPassword ? 'text' : 'password'}
-                className={`${inputClass} pr-10`}
-                placeholder="Min. 8 characters"
-                value={teacherForm.password}
-                onChange={(e) => setTeacherForm((f) => ({ ...f, password: e.target.value }))}
-                minLength={8}
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? <EyeOff /> : <EyeOn />}
-              </button>
-            </div>
+          <FormField label="Phone Number" htmlFor="t-phone" required>
+            <input
+              id="t-phone" type="tel" className={inputClass} placeholder="10-digit mobile number"
+              value={teacherForm.phone}
+              onChange={(e) => setTeacherForm((f) => ({ ...f, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+              maxLength={10}
+              required
+            />
+            <p className="mt-1 text-xs text-gray-400">This will be the teacher&apos;s default login password.</p>
           </FormField>
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
-              onClick={() => { setShowAdd(false); setShowPassword(false); }}
+              onClick={() => setShowAdd(false)}
               className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Cancel
@@ -399,42 +395,79 @@ function TeachersPageInner() {
       {/* ── Assign Class Modal ─────────────────────────────────────────────── */}
       <Modal
         open={!!assignTarget}
-        onClose={() => setAssignTarget(null)}
+        onClose={() => { setAssignTarget(null); setAssignRows([{ ...EMPTY_ROW }]); }}
         title={`Assign Class — ${assignTarget?.name ?? ''}`}
       >
         <form onSubmit={handleAssign} className="space-y-4">
           {formError && (
             <div className="px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{formError}</div>
           )}
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Class" htmlFor="a-class" required>
-              <input
-                id="a-class" type="text" className={inputClass} placeholder="e.g. 10"
-                value={assignForm.class_name}
-                onChange={(e) => setAssignForm((f) => ({ ...f, class_name: e.target.value }))}
-                required
-              />
-            </FormField>
-            <FormField label="Section" htmlFor="a-section" required>
-              <input
-                id="a-section" type="text" className={inputClass} placeholder="e.g. A"
-                value={assignForm.section}
-                onChange={(e) => setAssignForm((f) => ({ ...f, section: e.target.value }))}
-                required
-              />
-            </FormField>
+
+          <div className="space-y-3">
+            {assignRows.map((row, idx) => (
+              <div key={idx} className="relative grid grid-cols-[1fr_1fr_1.5fr_auto] gap-2 items-end">
+                <FormField label={idx === 0 ? 'Class' : ''} htmlFor={`a-class-${idx}`} required={idx === 0}>
+                  <input
+                    id={`a-class-${idx}`}
+                    type="text"
+                    className={inputClass}
+                    placeholder="e.g. 10"
+                    value={row.class_name}
+                    onChange={(e) => updateAssignRow(idx, 'class_name', e.target.value)}
+                  />
+                </FormField>
+                <FormField label={idx === 0 ? 'Section' : ''} htmlFor={`a-section-${idx}`} required={idx === 0}>
+                  <input
+                    id={`a-section-${idx}`}
+                    type="text"
+                    className={inputClass}
+                    placeholder="e.g. A"
+                    value={row.section}
+                    onChange={(e) => updateAssignRow(idx, 'section', e.target.value)}
+                  />
+                </FormField>
+                <FormField label={idx === 0 ? 'Subject' : ''} htmlFor={`a-subject-${idx}`} required={idx === 0}>
+                  <input
+                    id={`a-subject-${idx}`}
+                    type="text"
+                    className={inputClass}
+                    placeholder="e.g. Mathematics"
+                    value={row.subject}
+                    onChange={(e) => updateAssignRow(idx, 'subject', e.target.value)}
+                  />
+                </FormField>
+                <div className={idx === 0 ? 'pb-0.5' : ''}>
+                  {assignRows.length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => removeAssignRow(idx)}
+                      className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                      aria-label="Remove row"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  ) : <div className="w-7" />}
+                </div>
+              </div>
+            ))}
           </div>
-          <FormField label="Subject" htmlFor="a-subject" required>
-            <input
-              id="a-subject" type="text" className={inputClass} placeholder="e.g. Mathematics"
-              value={assignForm.subject}
-              onChange={(e) => setAssignForm((f) => ({ ...f, subject: e.target.value }))}
-              required
-            />
-          </FormField>
+
+          <button
+            type="button"
+            onClick={addAssignRow}
+            className="flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 font-medium transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Add another class
+          </button>
+
           <div className="flex justify-end gap-3 pt-2">
             <button
-              type="button" onClick={() => setAssignTarget(null)}
+              type="button" onClick={() => { setAssignTarget(null); setAssignRows([{ ...EMPTY_ROW }]); }}
               className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               Cancel
@@ -443,7 +476,7 @@ function TeachersPageInner() {
               type="submit" disabled={submitting}
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 rounded-lg transition-colors"
             >
-              {submitting ? 'Saving…' : 'Save Assignment'}
+              {submitting ? 'Saving…' : `Save ${assignRows.filter(r => r.class_name.trim()).length > 1 ? 'Assignments' : 'Assignment'}`}
             </button>
           </div>
         </form>

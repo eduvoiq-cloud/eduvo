@@ -355,6 +355,9 @@ Return as JSON: {"report_text": "<your summary here>"}`;
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema,
+        // Disable thinking tokens — weekly report is a 150-word summary from
+        // pre-computed data. Thinking mode adds 8k–20k tokens per student call.
+        thinkingConfig: { thinkingBudget: 0 },
       } as Record<string, unknown>,
     });
 

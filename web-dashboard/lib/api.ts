@@ -482,11 +482,16 @@ export const authApi = {
   /** Create a new teacher account (school_admin only) */
   createUser: (
     token: string,
-    payload: { email: string; password: string; name: string; role: string; school_id?: string }
+    payload: { email: string; password?: string; phone?: string; name: string; role: string; school_id?: string }
   ) =>
     request<UserProfile>('/api/admin/teachers', {
       method: 'POST',
-      body: JSON.stringify({ name: payload.name, email: payload.email, password: payload.password }),
+      body: JSON.stringify({
+        name: payload.name,
+        email: payload.email,
+        ...(payload.phone ? { phone: payload.phone } : {}),
+        ...(payload.password ? { password: payload.password } : {}),
+      }),
     }, token),
 };
 

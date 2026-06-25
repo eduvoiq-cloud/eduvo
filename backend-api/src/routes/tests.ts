@@ -298,7 +298,14 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     try {
       const model = genAI.getGenerativeModel({
         model: modelName,
-        generationConfig: { responseMimeType: 'application/json', responseSchema } as Record<string, unknown>,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema,
+          // Disable thinking tokens — MCQ generation from a topic/chapter is
+          // simple extraction, not complex reasoning. Flash Lite + no thinking
+          // is ~20x cheaper than Flash with thinking.
+          thinkingConfig: { thinkingBudget: 0 },
+        } as Record<string, unknown>,
       });
       const result = await model.generateContent(contentParts);
       raw = result.response.text().trim();
@@ -2155,10 +2162,13 @@ router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'te
 
 // ── GET /api/tests/suspicious-activity ───────────────────────────────────────
 /**
- * Teacher views all suspicious test integrity logs for their school in the last 30 days.
+ * Teacher views suspicious test integrity logs for tests they created in the last 30 days.
+ * schooladmin / superadmin see all suspicious activity for their school.
  */
 router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
   const schoolId = req.user!.school_id ?? '';
+  const teacherId = req.user!.id;
+  const isTeacher = req.user!.role === 'teacher';
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: logs, error } = await supabaseAdmin
@@ -2186,14 +2196,14 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     return;
   }
 
-  // Fetch attempt → test info for each log
+  // Fetch attempt → test info for each log (include created_by for teacher scoping)
   const attemptIds = logs.map((l: Record<string, unknown>) => l.test_attempt_id as string);
   const { data: attempts } = await supabaseAdmin
     .from('test_attempts')
-    .select('id, test_id, tests!test_attempts_test_id_fkey(title, subject, date)')
+    .select('id, test_id, tests!test_attempts_test_id_fkey(title, subject, date, created_by)')
     .in('id', attemptIds);
 
-  const attemptTestMap = new Map<string, { test_id: string; test_title: string | null; subject: string | null; date: string | null }>();
+  const attemptTestMap = new Map<string, { test_id: string; test_title: string | null; subject: string | null; date: string | null; created_by: string | null }>();
   for (const a of (attempts ?? []) as Array<Record<string, unknown>>) {
     const test = a['tests'] as Record<string, unknown> | null;
     attemptTestMap.set(a['id'] as string, {
@@ -2201,6 +2211,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
       test_title: test?.['title'] as string ?? null,
       subject: test?.['subject'] as string ?? null,
       date: test?.['date'] as string ?? null,
+      created_by: test?.['created_by'] as string ?? null,
     });
   }
 
@@ -2216,7 +2227,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     studentNameMap.set(s.id, s.full_name);
   }
 
-  const result = (logs as Array<Record<string, unknown>>).map((log) => {
+  const allRows = (logs as Array<Record<string, unknown>>).map((log) => {
     const attemptInfo = attemptTestMap.get(log['test_attempt_id'] as string);
     return {
       id: log['id'],
@@ -2227,6 +2238,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
       test_title: attemptInfo?.test_title ?? null,
       subject: attemptInfo?.subject ?? null,
       test_date: attemptInfo?.date ?? null,
+      created_by: attemptInfo?.created_by ?? null,
       exit_count: log['exit_count'],
       total_exit_duration_seconds: log['total_exit_duration_seconds'],
       integrity_score: log['integrity_score'],
@@ -2235,6 +2247,11 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
       created_at: log['created_at'],
     };
   });
+
+  // Teachers only see suspicious activity for tests they created
+  const result = isTeacher
+    ? allRows.filter((row) => row.created_by === teacherId)
+    : allRows;
 
   sendSuccess(res, result);
 });
