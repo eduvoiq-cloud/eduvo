@@ -307,6 +307,10 @@ Return this exact JSON structure:
         generationConfig: {
           responseMimeType: "application/json",
           responseSchema,
+          // Disable thinking tokens — question generation from a document is
+          // straightforward extraction, not complex reasoning. Thinking adds
+          // 8k–20k tokens per call with no benefit for this task.
+          thinkingConfig: { thinkingBudget: 0 },
         } as Record<string, unknown>,
       });
       t_gs3_geminiCallStart = performance.now();

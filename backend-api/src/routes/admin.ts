@@ -497,22 +497,22 @@ router.post('/students/restore/:id', async (req: Request, res: Response) => {
 // ── POST /api/admin/teachers ──────────────────────────────────────────────────
 /**
  * Create a teacher account.
+ * - Accepts phone number; uses it as the default password.
  * - Creates Supabase auth user.
- * - Inserts users row with role=teacher and school_id from admin.
- * - Sends welcome email via Supabase magic link (best-effort).
+ * - Inserts users row with role=teacher, phone, and must_reset_password=true.
  * - Logs to audit_logs.
  */
 router.post('/teachers', async (req: Request, res: Response) => {
   const schema = z.object({
-    name:     z.string().min(1),
-    email:    z.string().email(),
-    password: z.string().min(8).optional(),
+    name:  z.string().min(1),
+    email: z.string().email(),
+    phone: z.string().regex(/^\d{10}$/, 'Phone must be exactly 10 digits'),
   });
 
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-  const { name, email, password } = parsed.data;
+  const { name, email, phone } = parsed.data;
   const adminId  = req.user!.id;
   const schoolId = req.user!.school_id!;
 
@@ -529,7 +529,8 @@ router.post('/teachers', async (req: Request, res: Response) => {
     return;
   }
 
-  const tempPassword = password ?? generateTempPassword();
+  // Phone number is the default password
+  const tempPassword = phone;
 
   // Create Supabase auth user.
   // If a stale auth account exists (e.g. from a previously soft-deleted teacher),
@@ -541,8 +542,6 @@ router.post('/teachers', async (req: Request, res: Response) => {
   });
 
   if (authErr && authErr.message?.toLowerCase().includes('already been registered')) {
-    // Hard-delete the stale auth user. Query the users table first (soft-deleted rows
-    // retain their auth UUID), then fall back to scanning listUsers if the row is gone.
     const { data: staleProfile } = await supabaseAdmin
       .from('users')
       .select('id')
@@ -577,19 +576,22 @@ router.post('/teachers', async (req: Request, res: Response) => {
 
   const teacherUserId = authData.user.id;
 
-  // Insert users profile row
+  // Insert users profile row — phone stored, must_reset_password so teacher
+  // is prompted to change their password on first login
   const { data: profile, error: profileErr } = await supabaseAdmin
     .from('users')
     .insert({
-      id:         teacherUserId,
+      id:                  teacherUserId,
       name,
       email,
-      role:       'teacher',
-      school_id:  schoolId,
-      created_by: adminId,
-      created_at: new Date().toISOString(),
+      phone,
+      role:                'teacher',
+      school_id:           schoolId,
+      created_by:          adminId,
+      must_reset_password: true,
+      created_at:          new Date().toISOString(),
     })
-    .select('id, name, email, role, school_id')
+    .select('id, name, email, phone, role, school_id')
     .single();
 
   if (profileErr) {
@@ -599,20 +601,11 @@ router.post('/teachers', async (req: Request, res: Response) => {
     return;
   }
 
-  // Send welcome email via Supabase magic link (best-effort — don't fail if this errors)
-  try {
-    await supabaseAdmin.auth.admin.generateLink({
-      type:  'magiclink',
-      email,
-    });
-  } catch (emailErr) {
-    console.warn('[admin] Welcome email failed for teacher:', email, emailErr);
-  }
-
   await logAudit(adminId, 'TEACHER_CREATED', 'users', {
     teacher_id:   teacherUserId,
     teacher_name: name,
     email,
+    phone,
     school_id:    schoolId,
   });
 

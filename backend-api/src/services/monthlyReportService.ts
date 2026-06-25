@@ -465,6 +465,10 @@ Rules:
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema,
+      // Disable thinking tokens — monthly reports are structured summaries of
+      // pre-computed numbers, not open-ended reasoning tasks. Thinking mode adds
+      // 8k–20k tokens per call with no quality benefit here.
+      thinkingConfig: { thinkingBudget: 0 },
     } as Record<string, unknown>,
   });
 
