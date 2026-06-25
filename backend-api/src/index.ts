@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+// Build: 2026-06-25
+
 // ── Process-level crash handlers (registered before any imports that can throw) ──
 // These catch errors that escape try/catch, e.g. a throw inside a module import.
 process.on('uncaughtException', (err: Error) => {
