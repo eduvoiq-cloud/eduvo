@@ -2164,6 +2164,10 @@ router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'te
 /**
  * Teacher views suspicious test integrity logs for tests they created in the last 30 days.
  * schooladmin / superadmin see all suspicious activity for their school.
+ *
+ * Scoping is done at the DB query level (not in-memory) to guarantee correctness:
+ *   - Teachers: first fetch their own test IDs, then scope integrity logs to those tests.
+ *   - Admins: fetch all integrity logs for the school.
  */
 router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
   const schoolId = req.user!.school_id ?? '';
@@ -2171,52 +2175,100 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
   const isTeacher = req.user!.role === 'teacher';
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: logs, error } = await supabaseAdmin
-    .from('test_integrity_logs')
-    .select(`
-      id,
-      test_attempt_id,
-      student_id,
-      exit_count,
-      total_exit_duration_seconds,
-      integrity_score,
-      is_suspicious,
-      suspicious_reasons,
-      created_at
-    `)
-    .eq('school_id', schoolId)
-    .eq('is_suspicious', true)
-    .gte('created_at', thirtyDaysAgo)
-    .order('created_at', { ascending: false });
+  // ── Step 1: Determine which test IDs are in scope ─────────────────────────
+  // For teachers, only tests THEY created. For admins, all school tests.
+  let scopedTestIds: string[] | null = null; // null = no restriction (admin)
 
-  if (error) { sendError(res, error.message, 500); return; }
+  if (isTeacher) {
+    const { data: myTests, error: testsErr } = await supabaseAdmin
+      .from('tests')
+      .select('id')
+      .eq('school_id', schoolId)
+      .eq('created_by', teacherId);
 
-  if (!logs || logs.length === 0) {
+    if (testsErr) { sendError(res, testsErr.message, 500); return; }
+
+    scopedTestIds = (myTests ?? []).map((t: { id: string }) => t.id);
+
+    // Teacher has no tests — nothing to show
+    if (scopedTestIds.length === 0) {
+      sendSuccess(res, []);
+      return;
+    }
+  }
+
+  // ── Step 2: Fetch test_attempts scoped to those tests ─────────────────────
+  let attemptsQuery = supabaseAdmin
+    .from('test_attempts')
+    .select('id, test_id')
+    .eq('school_id', schoolId);
+
+  if (scopedTestIds !== null) {
+    attemptsQuery = attemptsQuery.in('test_id', scopedTestIds);
+  }
+
+  const { data: scopedAttempts, error: attemptsErr } = await attemptsQuery;
+  if (attemptsErr) { sendError(res, attemptsErr.message, 500); return; }
+
+  const scopedAttemptIds = (scopedAttempts ?? []).map((a: { id: string }) => a.id);
+
+  if (scopedAttemptIds.length === 0) {
     sendSuccess(res, []);
     return;
   }
 
-  // Fetch attempt → test info for each log (include created_by for teacher scoping)
-  const attemptIds = logs.map((l: Record<string, unknown>) => l.test_attempt_id as string);
-  const { data: attempts } = await supabaseAdmin
-    .from('test_attempts')
-    .select('id, test_id, tests!test_attempts_test_id_fkey(title, subject, date, created_by)')
-    .in('id', attemptIds);
-
-  const attemptTestMap = new Map<string, { test_id: string; test_title: string | null; subject: string | null; date: string | null; created_by: string | null }>();
-  for (const a of (attempts ?? []) as Array<Record<string, unknown>>) {
-    const test = a['tests'] as Record<string, unknown> | null;
-    attemptTestMap.set(a['id'] as string, {
-      test_id: a['test_id'] as string,
-      test_title: test?.['title'] as string ?? null,
-      subject: test?.['subject'] as string ?? null,
-      date: test?.['date'] as string ?? null,
-      created_by: test?.['created_by'] as string ?? null,
-    });
+  // Build attempt → test_id map for later enrichment
+  const attemptToTestId = new Map<string, string>();
+  for (const a of (scopedAttempts ?? []) as Array<{ id: string; test_id: string }>) {
+    attemptToTestId.set(a.id, a.test_id);
   }
 
-  // Fetch student names
-  const studentIds = [...new Set((logs as Array<Record<string, unknown>>).map((l) => l['student_id'] as string))];
+  // ── Step 3: Fetch suspicious integrity logs for those attempts only ────────
+  const CHUNK = 900; // stay under PostgREST IN() limit
+  let logs: Array<Record<string, unknown>> = [];
+
+  for (let i = 0; i < scopedAttemptIds.length; i += CHUNK) {
+    const { data: chunk, error: chunkErr } = await supabaseAdmin
+      .from('test_integrity_logs')
+      .select(`
+        id,
+        test_attempt_id,
+        student_id,
+        exit_count,
+        total_exit_duration_seconds,
+        integrity_score,
+        is_suspicious,
+        suspicious_reasons,
+        created_at
+      `)
+      .in('test_attempt_id', scopedAttemptIds.slice(i, i + CHUNK))
+      .eq('is_suspicious', true)
+      .gte('created_at', thirtyDaysAgo)
+      .order('created_at', { ascending: false });
+
+    if (chunkErr) { sendError(res, chunkErr.message, 500); return; }
+    if (chunk) logs = logs.concat(chunk as Array<Record<string, unknown>>);
+  }
+
+  if (logs.length === 0) {
+    sendSuccess(res, []);
+    return;
+  }
+
+  // ── Step 4: Fetch test metadata (title, subject, date) ────────────────────
+  const testIds = [...new Set(logs.map((l) => attemptToTestId.get(l['test_attempt_id'] as string)).filter(Boolean) as string[])];
+  const { data: tests } = await supabaseAdmin
+    .from('tests')
+    .select('id, title, subject, date')
+    .in('id', testIds);
+
+  const testInfoMap = new Map<string, { title: string | null; subject: string | null; date: string | null }>();
+  for (const t of (tests ?? []) as Array<{ id: string; title: string; subject: string; date: string }>) {
+    testInfoMap.set(t.id, { title: t.title, subject: t.subject, date: t.date });
+  }
+
+  // ── Step 5: Fetch student names ────────────────────────────────────────────
+  const studentIds = [...new Set(logs.map((l) => l['student_id'] as string))];
   const { data: students } = await supabaseAdmin
     .from('students')
     .select('id, full_name')
@@ -2227,18 +2279,19 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     studentNameMap.set(s.id, s.full_name);
   }
 
-  const allRows = (logs as Array<Record<string, unknown>>).map((log) => {
-    const attemptInfo = attemptTestMap.get(log['test_attempt_id'] as string);
+  // ── Step 6: Build response ─────────────────────────────────────────────────
+  const result = logs.map((log) => {
+    const testId = attemptToTestId.get(log['test_attempt_id'] as string) ?? null;
+    const testInfo = testId ? testInfoMap.get(testId) : null;
     return {
       id: log['id'],
       attempt_id: log['test_attempt_id'],
       student_id: log['student_id'],
       student_name: studentNameMap.get(log['student_id'] as string) ?? 'Unknown',
-      test_id: attemptInfo?.test_id ?? null,
-      test_title: attemptInfo?.test_title ?? null,
-      subject: attemptInfo?.subject ?? null,
-      test_date: attemptInfo?.date ?? null,
-      created_by: attemptInfo?.created_by ?? null,
+      test_id: testId,
+      test_title: testInfo?.title ?? null,
+      subject: testInfo?.subject ?? null,
+      test_date: testInfo?.date ?? null,
       exit_count: log['exit_count'],
       total_exit_duration_seconds: log['total_exit_duration_seconds'],
       integrity_score: log['integrity_score'],
@@ -2247,11 +2300,6 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
       created_at: log['created_at'],
     };
   });
-
-  // Teachers only see suspicious activity for tests they created
-  const result = isTeacher
-    ? allRows.filter((row) => row.created_by === teacherId)
-    : allRows;
 
   sendSuccess(res, result);
 });

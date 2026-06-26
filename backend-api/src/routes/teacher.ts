@@ -675,188 +675,193 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
   const schoolId = req.user!.school_id!;
   const { testId } = req.params;
 
-  // 1. Fetch the test and verify it belongs to this school
-  const { data: test, error: testErr } = await supabaseAdmin
-    .from('tests')
-    .select('id, title, subject, class_name, section, max_score, school_id')
-    .eq('id', testId)
-    .eq('school_id', schoolId)
-    .maybeSingle();
+  try {
+    // 1. Fetch the test and verify it belongs to this school
+    const { data: test, error: testErr } = await supabaseAdmin
+      .from('tests')
+      .select('id, title, subject, class_name, section, max_score, school_id')
+      .eq('id', testId)
+      .eq('school_id', schoolId)
+      .maybeSingle();
 
-  if (testErr) { sendError(res, testErr.message, 500); return; }
-  if (!test) { sendError(res, 'Test not found', 404); return; }
+    if (testErr) { sendError(res, testErr.message, 500); return; }
+    if (!test) { sendError(res, 'Test not found', 404); return; }
 
-  const testRow = test as {
-    id: string;
-    title: string;
-    subject: string;
-    class_name: string;
-    section: string;
-    max_score: number | null;
-    school_id: string;
-  };
+    const testRow = test as {
+      id: string;
+      title: string;
+      subject: string;
+      class_name: string;
+      section: string;
+      max_score: number | null;
+      school_id: string;
+    };
 
-  // 2. Count total students in the class/section
-  const { count: totalStudents } = await supabaseAdmin
-    .from('students')
-    .select('id', { count: 'exact', head: true })
-    .eq('school_id', schoolId)
-    .eq('class_name', testRow.class_name)
-    .eq('section', testRow.section)
-    .eq('is_deleted', false);
+    // 2. Count total students in the class/section
+    const { count: totalStudents } = await supabaseAdmin
+      .from('students')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', schoolId)
+      .eq('class_name', testRow.class_name)
+      .eq('section', testRow.section)
+      .eq('is_deleted', false);
 
-  // 3. Fetch all attempts for this test
-  const { data: attempts, error: attErr } = await supabaseAdmin
-    .from('test_attempts')
-    .select('id, student_id, total_score, mcq_score')
-    .eq('test_id', testId);
+    // 3. Fetch all attempts for this test
+    const { data: attempts, error: attErr } = await supabaseAdmin
+      .from('test_attempts')
+      .select('id, student_id, total_score, mcq_score')
+      .eq('test_id', testId);
 
-  if (attErr) { sendError(res, attErr.message, 500); return; }
+    if (attErr) { sendError(res, attErr.message, 500); return; }
 
-  const attemptRows = (attempts ?? []) as Array<{
-    id: string;
-    student_id: string;
-    total_score: number | null;
-    mcq_score: number | null;
-  }>;
+    const attemptRows = (attempts ?? []) as Array<{
+      id: string;
+      student_id: string;
+      total_score: number | null;
+      mcq_score: number | null;
+    }>;
 
-  const attemptedCount = attemptRows.length;
-  const notAttemptedCount = Math.max(0, (totalStudents ?? 0) - attemptedCount);
+    const attemptedCount = attemptRows.length;
+    const notAttemptedCount = Math.max(0, (totalStudents ?? 0) - attemptedCount);
 
-  // 4. Compute score stats
-  const scores = attemptRows
-    .map((a) => a.total_score ?? a.mcq_score ?? 0)
-    .filter((s) => s !== null) as number[];
+    // 4. Compute score stats — avoid spread operator to prevent stack overflow on large arrays
+    const scores = attemptRows
+      .map((a) => a.total_score ?? a.mcq_score ?? 0)
+      .filter((s) => s !== null) as number[];
 
-  const avgScore = scores.length > 0
-    ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
-    : 0;
-  const highestScore = scores.length > 0 ? Math.max(...scores) : 0;
-  const lowestScore = scores.length > 0 ? Math.min(...scores) : 0;
+    const avgScore = scores.length > 0
+      ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10
+      : 0;
+    const highestScore = scores.length > 0 ? scores.reduce((a, b) => (b > a ? b : a), scores[0]) : 0;
+    const lowestScore  = scores.length > 0 ? scores.reduce((a, b) => (b < a ? b : a), scores[0]) : 0;
 
-  // 5. Score distribution (as % of max_score)
-  const maxScore = testRow.max_score ?? (scores.length > 0 ? Math.max(...scores) : 100);
-  const buckets = [
-    { range: '0-20', min: 0, max: 20, count: 0 },
-    { range: '21-40', min: 21, max: 40, count: 0 },
-    { range: '41-60', min: 41, max: 60, count: 0 },
-    { range: '61-80', min: 61, max: 80, count: 0 },
-    { range: '81-100', min: 81, max: 100, count: 0 },
-  ];
+    // 5. Score distribution (as % of max_score)
+    const maxScore = testRow.max_score ?? (scores.length > 0 ? highestScore : 100);
+    const buckets = [
+      { range: '0-20',   min: 0,  max: 20,  count: 0 },
+      { range: '21-40',  min: 21, max: 40,  count: 0 },
+      { range: '41-60',  min: 41, max: 60,  count: 0 },
+      { range: '61-80',  min: 61, max: 80,  count: 0 },
+      { range: '81-100', min: 81, max: 100, count: 0 },
+    ];
 
-  for (const score of scores) {
-    const pct = maxScore > 0 ? (score / maxScore) * 100 : 0;
-    for (const bucket of buckets) {
-      if (pct >= bucket.min && pct <= bucket.max) {
-        bucket.count++;
-        break;
+    for (const score of scores) {
+      const pct = maxScore > 0 ? (score / maxScore) * 100 : 0;
+      for (const bucket of buckets) {
+        if (pct >= bucket.min && pct <= bucket.max) {
+          bucket.count++;
+          break;
+        }
       }
     }
-  }
 
-  const scoreDistribution = buckets.map(({ range, count }) => ({ range, count }));
+    const scoreDistribution = buckets.map(({ range, count }) => ({ range, count }));
 
-  // 6. Question analytics — MCQ only
-  // Fetch questions for this test
-  const { data: questions, error: qErr } = await supabaseAdmin
-    .from('test_questions')
-    .select('id, question_text, question_type, order_index')
-    .eq('test_id', testId)
-    .eq('question_type', 'mcq')
-    .order('order_index');
+    // 6. Question analytics — MCQ only
+    const { data: questions, error: qErr } = await supabaseAdmin
+      .from('test_questions')
+      .select('id, question_text, question_type, order_index')
+      .eq('test_id', testId)
+      .eq('question_type', 'mcq')
+      .order('order_index');
 
-  if (qErr) { sendError(res, qErr.message, 500); return; }
+    if (qErr) { sendError(res, qErr.message, 500); return; }
 
-  const mcqQuestions = (questions ?? []) as Array<{
-    id: string;
-    question_text: string;
-    question_type: string;
-    order_index: number;
-  }>;
+    const mcqQuestions = (questions ?? []) as Array<{
+      id: string;
+      question_text: string;
+      question_type: string;
+      order_index: number;
+    }>;
 
-  let questionAnalytics: Array<{
-    question_id: string;
-    question_text: string;
-    order_index: number;
-    correct_count: number;
-    wrong_count: number;
-    skip_count: number;
-    correct_pct: number;
-  }> = [];
-
-  if (mcqQuestions.length > 0 && attemptRows.length > 0) {
-    const attemptIds = attemptRows.map((a) => a.id);
-    const CHUNK = 900;
-    let allAnswers: Array<{
-      attempt_id: string;
+    let questionAnalytics: Array<{
       question_id: string;
-      is_correct: boolean | null;
-      selected_option: string | null;
+      question_text: string;
+      order_index: number;
+      correct_count: number;
+      wrong_count: number;
+      skip_count: number;
+      correct_pct: number;
     }> = [];
 
-    for (let i = 0; i < attemptIds.length; i += CHUNK) {
-      const { data: answerChunk } = await supabaseAdmin
-        .from('student_answers')
-        .select('attempt_id, question_id, is_correct, selected_option')
-        .in('attempt_id', attemptIds.slice(i, i + CHUNK))
-        .in('question_id', mcqQuestions.map((q) => q.id));
-      if (answerChunk) allAnswers = allAnswers.concat(answerChunk);
-    }
+    if (mcqQuestions.length > 0 && attemptRows.length > 0) {
+      const attemptIds = attemptRows.map((a) => a.id);
+      const CHUNK = 900;
+      let allAnswers: Array<{
+        attempt_id: string;
+        question_id: string;
+        is_correct: boolean | null;
+        selected_option: string | null;
+      }> = [];
 
-    // Count per question
-    const questionCountMap = new Map<string, { correct: number; wrong: number; skip: number }>();
-    for (const q of mcqQuestions) {
-      questionCountMap.set(q.id, { correct: 0, wrong: 0, skip: 0 });
-    }
-
-    for (const ans of allAnswers) {
-      const counts = questionCountMap.get(ans.question_id);
-      if (!counts) continue;
-      if (!ans.selected_option) {
-        counts.skip++;
-      } else if (ans.is_correct) {
-        counts.correct++;
-      } else {
-        counts.wrong++;
+      for (let i = 0; i < attemptIds.length; i += CHUNK) {
+        const { data: answerChunk } = await supabaseAdmin
+          .from('student_answers')
+          .select('attempt_id, question_id, is_correct, selected_option')
+          .in('attempt_id', attemptIds.slice(i, i + CHUNK))
+          .in('question_id', mcqQuestions.map((q) => q.id));
+        if (answerChunk) allAnswers = allAnswers.concat(answerChunk);
       }
+
+      // Count per question
+      const questionCountMap = new Map<string, { correct: number; wrong: number; skip: number }>();
+      for (const q of mcqQuestions) {
+        questionCountMap.set(q.id, { correct: 0, wrong: 0, skip: 0 });
+      }
+
+      for (const ans of allAnswers) {
+        const counts = questionCountMap.get(ans.question_id);
+        if (!counts) continue;
+        if (!ans.selected_option) {
+          counts.skip++;
+        } else if (ans.is_correct) {
+          counts.correct++;
+        } else {
+          counts.wrong++;
+        }
+      }
+
+      // Build analytics rows
+      questionAnalytics = mcqQuestions.map((q) => {
+        const counts = questionCountMap.get(q.id) ?? { correct: 0, wrong: 0, skip: 0 };
+        const total = counts.correct + counts.wrong + counts.skip;
+        const correctPct = total > 0 ? Math.round((counts.correct / total) * 1000) / 10 : 0;
+        return {
+          question_id:   q.id,
+          question_text: q.question_text,
+          order_index:   q.order_index,
+          correct_count: counts.correct,
+          wrong_count:   counts.wrong,
+          skip_count:    counts.skip,
+          correct_pct:   correctPct,
+        };
+      });
+
+      // Sort by correct_pct asc (hardest first)
+      questionAnalytics.sort((a, b) => a.correct_pct - b.correct_pct);
     }
 
-    // Build analytics rows
-    questionAnalytics = mcqQuestions.map((q) => {
-      const counts = questionCountMap.get(q.id) ?? { correct: 0, wrong: 0, skip: 0 };
-      const total = counts.correct + counts.wrong + counts.skip;
-      const correctPct = total > 0 ? Math.round((counts.correct / total) * 1000) / 10 : 0;
-      return {
-        question_id:   q.id,
-        question_text: q.question_text,
-        order_index:   q.order_index,
-        correct_count: counts.correct,
-        wrong_count:   counts.wrong,
-        skip_count:    counts.skip,
-        correct_pct:   correctPct,
-      };
+    sendSuccess(res, {
+      test_id:              testRow.id,
+      test_title:           testRow.title,
+      subject:              testRow.subject,
+      class_name:           testRow.class_name,
+      section:              testRow.section,
+      max_score:            maxScore,
+      total_students:       totalStudents ?? 0,
+      attempted_count:      attemptedCount,
+      not_attempted_count:  notAttemptedCount,
+      avg_score:            avgScore,
+      highest_score:        highestScore,
+      lowest_score:         lowestScore,
+      score_distribution:   scoreDistribution,
+      question_analytics:   questionAnalytics,
     });
-
-    // Sort by correct_pct asc (hardest first)
-    questionAnalytics.sort((a, b) => a.correct_pct - b.correct_pct);
+  } catch (err: unknown) {
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('[test-analytics] Unexpected error:', detail);
+    sendError(res, detail, 500);
   }
-
-  sendSuccess(res, {
-    test_id:              testRow.id,
-    test_title:           testRow.title,
-    subject:              testRow.subject,
-    class_name:           testRow.class_name,
-    section:              testRow.section,
-    max_score:            maxScore,
-    total_students:       totalStudents ?? 0,
-    attempted_count:      attemptedCount,
-    not_attempted_count:  notAttemptedCount,
-    avg_score:            avgScore,
-    highest_score:        highestScore,
-    lowest_score:         lowestScore,
-    score_distribution:   scoreDistribution,
-    question_analytics:   questionAnalytics,
-  });
 });
 
 export default router;

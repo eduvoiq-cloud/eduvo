@@ -354,7 +354,7 @@ function getGeminiModel() {
       // Disable thinking tokens — homework grading is straightforward evaluation,
       // not open-ended reasoning. Thinking adds 8k–20k tokens per submission.
       thinkingConfig: { thinkingBudget: 0 },
-    },
+    } as Record<string, unknown>,
   });
 }
 
