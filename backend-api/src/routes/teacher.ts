@@ -677,9 +677,10 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
 
   try {
     // 1. Fetch the test and verify it belongs to this school
+    // NOTE: the live DB column is "class", not "class_name" (see supabase-migrations.sql)
     const { data: test, error: testErr } = await supabaseAdmin
       .from('tests')
-      .select('id, title, subject, class_name, section, max_score, school_id')
+      .select('id, title, subject, class, section, max_score, school_id')
       .eq('id', testId)
       .eq('school_id', schoolId)
       .maybeSingle();
@@ -691,7 +692,7 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
       id: string;
       title: string;
       subject: string;
-      class_name: string;
+      class: string;
       section: string;
       max_score: number | null;
       school_id: string;
@@ -702,7 +703,7 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
       .from('students')
       .select('id', { count: 'exact', head: true })
       .eq('school_id', schoolId)
-      .eq('class_name', testRow.class_name)
+      .eq('class_name', testRow.class)
       .eq('section', testRow.section)
       .eq('is_deleted', false);
 
@@ -845,7 +846,7 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
       test_id:              testRow.id,
       test_title:           testRow.title,
       subject:              testRow.subject,
-      class_name:           testRow.class_name,
+      class_name:           testRow.class,   // normalise to class_name for frontend
       section:              testRow.section,
       max_score:            maxScore,
       total_students:       totalStudents ?? 0,

@@ -558,7 +558,12 @@ export default function RecoverySchedulePage() {
   const [resultsLoading, setResultsLoading] = useState(false);
 
   // Countdown timer ref
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);  // ── Fetch assignments ───────────────────────────────────────────────────────
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Subjects with no test created this month
+  const [missingTestSubjects, setMissingTestSubjects] = useState<string[]>([]);
+
+  // ── Fetch assignments ───────────────────────────────────────────────────────
 
   useEffect(() => {
     if (!user?.school_id) return;
@@ -605,14 +610,25 @@ export default function RecoverySchedulePage() {
     if (!token) return;
     setCycleLoading(true);
     try {
-      const res = await fetch(`${BASE_URL}/api/recovery/cycle-status?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const json = await res.json() as { data?: CycleStatus; message?: string };
-      if (res.ok) {
+      const [statusRes, missingRes] = await Promise.all([
+        fetch(`${BASE_URL}/api/recovery/cycle-status?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${BASE_URL}/api/recovery/subjects-missing-tests?class=${encodeURIComponent(selectedClass)}&section=${encodeURIComponent(selectedSection)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+
+      const json = await statusRes.json() as { data?: CycleStatus; message?: string };
+      if (statusRes.ok) {
         setCycleStatus(json.data ?? null);
       } else {
         console.error('[cycle-status] API error:', json.message);
+      }
+
+      if (missingRes.ok) {
+        const mj = await missingRes.json() as { data?: string[] };
+        setMissingTestSubjects(mj.data ?? []);
       }
     } catch (err) {
       console.error('[cycle-status] fetch error:', err);
@@ -620,10 +636,21 @@ export default function RecoverySchedulePage() {
   }, [selectedClass, selectedSection]);
 
   useEffect(() => {
-    // Only poll if something just changed — no need to hammer the server
-    // since batch jobs take hours, not seconds
     void fetchCycleStatus();
   }, [fetchCycleStatus]);
+
+  // Poll every 15s while pack or tests are generating
+  useEffect(() => {
+    const status = cycleStatus?.cycle?.status;
+    const isGenerating = status === 'generating_pack' || status === 'generating_tests';
+    if (isGenerating) {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(() => { void fetchCycleStatus(); }, 15_000);
+    } else {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+    }
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, [cycleStatus?.cycle?.status, fetchCycleStatus]);
 
   // ── Generate pack ───────────────────────────────────────────────────────────
 
@@ -857,6 +884,20 @@ export default function RecoverySchedulePage() {
       ) : (
         <div className="space-y-6">
 
+          {/* ── Missing-tests warning ──────────────────────────────────────── */}
+          {missingTestSubjects.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 flex gap-3">
+              <span className="text-xl flex-shrink-0">⚠️</span>
+              <div>
+                <p className="text-sm font-semibold text-amber-800">No test created this month for: {missingTestSubjects.join(', ')}</p>
+                <p className="text-xs text-amber-700 mt-1">
+                  Students have no test data for these subjects — the AI will use generic topics instead of their actual weak areas.
+                  Create at least one test per subject before generating the recovery pack for best results.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* ── Section 1: Cycle status card ──────────────────────────────── */}
           <section className="bg-white rounded-xl border border-gray-200 p-6">
             <h2 className="text-sm font-semibold text-gray-900 mb-4">Recovery Cycle</h2>
@@ -885,11 +926,11 @@ export default function RecoverySchedulePage() {
             {cycle?.status === 'generating_pack' && (
               <div className="flex items-center gap-3 py-4">
                 <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                  <span className="text-xl">⏳</span>
+                  <span className="w-5 h-5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin inline-block" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-gray-800">Packs submitted — generating in background</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Recovery packs will be ready in a few hours. You'll get a notification when done.</p>
+                  <p className="text-sm font-semibold text-gray-800">Generating packs… this takes a few minutes</p>
+                  <p className="text-xs text-gray-500 mt-0.5">AI is creating personalised packs for each student. Page will update automatically.</p>
                 </div>
               </div>
             )}
@@ -933,11 +974,11 @@ export default function RecoverySchedulePage() {
             {cycle?.status === 'generating_tests' && (
               <div className="flex items-center gap-3 py-4">
                 <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
-                  <span className="text-xl">⏳</span>
+                  <span className="w-5 h-5 border-2 border-purple-600 border-t-transparent rounded-full animate-spin inline-block" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-gray-800">Tests submitted — generating in background</p>
-                  <p className="text-xs text-gray-500 mt-0.5">Recovery tests will be ready in a few hours. You'll get a notification when students can attempt them.</p>
+                  <p className="text-sm font-semibold text-gray-800">Generating tests… this takes a few minutes</p>
+                  <p className="text-xs text-gray-500 mt-0.5">AI is creating personalised tests for each student. Page will update automatically.</p>
                 </div>
               </div>
             )}

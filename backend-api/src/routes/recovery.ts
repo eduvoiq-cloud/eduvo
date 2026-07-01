@@ -4,13 +4,13 @@
  * POST /api/recovery/start-pack
  * POST /api/recovery/start-tests
  * GET  /api/recovery/cycle-status
+ * GET  /api/recovery/subjects-missing-tests
  * GET  /api/recovery/test-results
  * POST /api/recovery/attempt/start
  * POST /api/recovery/attempt/submit
  *
- * Pack + test generation use the Gemini Batch API (50% cheaper, async).
- * Teacher clicks → batch job submitted → "ready in a few hours" message shown.
- * The /api/cron/recovery/check-batch-jobs cron picks up results every 2 hours.
+ * Pack + test generation run sequentially in the background.
+ * Teacher clicks → generation starts → page polls cycle-status until ready.
  */
 
 import { Router, Request, Response } from 'express';
@@ -23,53 +23,24 @@ import { analyzeStudentWeakness, StudentProfileType } from '../services/weakness
 
 const router = Router();
 
-// ── Gemini Batch API helper ───────────────────────────────────────────────────
+// ── Gemini helpers ────────────────────────────────────────────────────────────
 
 /**
- * Submit a list of prompts as a single Gemini Batch API job.
- * Returns the batch job name (e.g. "batches/abc123") which is used to poll status.
- * Cost: 50% of standard per-request pricing.
+ * Single Gemini call — returns raw text.
+ * Uses GEMINI_MODEL_RECOVERY env var (default: gemini-2.5-flash-lite).
+ * Thinking is explicitly disabled — pack/test generation is structured
+ * extraction, not complex reasoning. Thinking tokens on Flash are billed
+ * at $3.50/M output, so disabling saves ~5x cost.
  */
-async function submitGeminiBatchJob(
-  requests: Array<{ key: string; prompt: string }>
-): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-  const modelId = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-
-  const inlineRequests = requests.map(({ key, prompt }) => ({
-    key,
-    request: {
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json' },
-    },
-  }));
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:batchGenerateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requests: inlineRequests }),
-    }
-  );
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Gemini Batch API error ${response.status}: ${err}`);
-  }
-
-  const data = await response.json() as { name?: string };
-  if (!data.name) throw new Error('Gemini Batch API did not return a job name');
-  return data.name;
-}
-
-// ── Fallback: single Gemini call (used by cron retry logic) ──────────────────
-
 async function callGeminiGenerateContent(prompt: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-  const modelId = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+  // Use a dedicated model env var for recovery so it can be tuned independently.
+  // Falls back to GEMINI_MODEL_QUESTIONS (flash-lite) then gemini-2.5-flash-lite.
+  const modelId =
+    process.env.GEMINI_MODEL_RECOVERY ??
+    process.env.GEMINI_MODEL_QUESTIONS ??
+    'gemini-2.5-flash-lite';
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
     {
@@ -77,7 +48,11 @@ async function callGeminiGenerateContent(prompt: string): Promise<string> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: 'application/json' },
+        generationConfig: {
+          responseMimeType: 'application/json',
+          // Disable thinking tokens — saves ~5x cost, no quality loss for pack generation
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
     }
   );
@@ -97,7 +72,7 @@ async function callGeminiJSON<T>(prompt: string): Promise<T> {
   return JSON.parse(cleaned) as T;
 }
 
-// Export for use by cron batch-job result processor
+// Export for use by other modules
 export { callGeminiJSON };
 
 // ── Wrong questions context builder ─────────────────────────────────────────
@@ -703,16 +678,53 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
         return;
       }
 
-      // ── Submit single Batch API job for all students × subjects ─────────────
-      const batchJobName = await submitGeminiBatchJob(batchRequests);
+      // ── Generate packs sequentially — one Gemini call per student × subject ──
+      // Sequential (not parallel) to avoid rate-limit bursts and keep costs
+      // predictable. With 7-8 students and 3-5 subjects = 25-40 calls total.
+      let anySuccess = false;
 
-      // Store the batch job name on the cycle so the cron can poll it
+      for (const { key, prompt } of batchRequests) {
+        const [studentId, subject] = key.split('|');
+        try {
+          const raw = await callGeminiGenerateContent(prompt);
+          const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+          const parsed = JSON.parse(cleaned) as { sections?: unknown[] };
+
+          if (!parsed?.sections || !Array.isArray(parsed.sections) || parsed.sections.length === 0) {
+            throw new Error('AI returned empty sections');
+          }
+
+          await supabaseAdmin.from('recovery_packs').update({
+            pack_content: parsed,
+            generation_status: 'completed',
+            updated_at: new Date().toISOString(),
+          })
+            .eq('cycle_id', cycleId)
+            .eq('student_id', studentId)
+            .eq('subject', subject);
+
+          anySuccess = true;
+        } catch (err) {
+          console.error(`[recovery/start-pack] Failed student=${studentId} subject=${subject}:`, err instanceof Error ? err.message : err);
+          await supabaseAdmin.from('recovery_packs').update({
+            generation_status: 'failed',
+            updated_at: new Date().toISOString(),
+          })
+            .eq('cycle_id', cycleId)
+            .eq('student_id', studentId)
+            .eq('subject', subject);
+        }
+      }
+
+      // Mark cycle ready if at least one pack succeeded
       await supabaseAdmin.from('recovery_cycles').update({
-        pack_batch_job_id: batchJobName,
+        status: anySuccess ? 'pack_ready' : 'pack_failed',
+        // Clear lockout on full failure so teacher can retry
+        lockout_until: anySuccess ? lockoutUntil : null,
         updated_at: new Date().toISOString(),
       }).eq('id', cycleId);
 
-      console.log(`[recovery/start-pack] Batch job submitted: ${batchJobName} (${batchRequests.length} requests)`);
+      console.log(`[recovery/start-pack] Done: ${batchRequests.length} packs attempted, anySuccess=${anySuccess}`);
     } catch (err) {
       console.error('[recovery/start-pack] Fatal:', err instanceof Error ? err.message : err);
       try {
@@ -867,15 +879,49 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
         return;
       }
 
-      // ── Submit single Batch API job for all students × subjects ─────────────
-      const batchJobName = await submitGeminiBatchJob(batchRequests);
+      // ── Generate tests sequentially — one Gemini call per student × subject ──
+      let anySuccess = false;
+
+      for (const { key, prompt } of batchRequests) {
+        const [studentId, subject] = key.split('|');
+        try {
+          const raw = await callGeminiGenerateContent(prompt);
+          const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+          const parsed = JSON.parse(cleaned) as { questions?: unknown[] };
+
+          if (!parsed?.questions || !Array.isArray(parsed.questions) || parsed.questions.length === 0) {
+            throw new Error('AI returned empty questions');
+          }
+
+          await supabaseAdmin.from('monthly_recovery_tests').update({
+            questions: parsed.questions,
+            generation_status: 'completed',
+            is_available: true,
+            updated_at: new Date().toISOString(),
+          })
+            .eq('cycle_id', cycleId)
+            .eq('student_id', studentId)
+            .eq('subject', subject);
+
+          anySuccess = true;
+        } catch (err) {
+          console.error(`[recovery/start-tests] Failed student=${studentId} subject=${subject}:`, err instanceof Error ? err.message : err);
+          await supabaseAdmin.from('monthly_recovery_tests').update({
+            generation_status: 'failed',
+            updated_at: new Date().toISOString(),
+          })
+            .eq('cycle_id', cycleId)
+            .eq('student_id', studentId)
+            .eq('subject', subject);
+        }
+      }
 
       await supabaseAdmin.from('recovery_cycles').update({
-        test_batch_job_id: batchJobName,
+        status: anySuccess ? 'tests_ready' : 'test_failed',
         updated_at: new Date().toISOString(),
       }).eq('id', cycleId);
 
-      console.log(`[recovery/start-tests] Batch job submitted: ${batchJobName} (${batchRequests.length} requests)`);
+      console.log(`[recovery/start-tests] Done: ${batchRequests.length} tests attempted, anySuccess=${anySuccess}`);
     } catch (err) {
       console.error('[recovery/start-tests] Fatal:', err instanceof Error ? err.message : err);
       try {
@@ -1403,6 +1449,55 @@ router.post('/subject-chapters', ...teacherAuth, async (req: Request, res: Respo
   if (error) { sendError(res, error.message, 500); return; }
 
   sendSuccess(res, data, `Chapters saved for ${subject}`);
+});
+
+// ── GET /api/recovery/subjects-missing-tests ─────────────────────────────────
+/**
+ * Returns subjects where the teacher is assigned to the class+section
+ * but has NOT created any test in the current calendar month.
+ *
+ * Used to show a warning on the recovery schedule page:
+ * "No test created for Maths this month — students will have no data for recovery."
+ *
+ * Query params: class, section
+ */
+router.get('/subjects-missing-tests', ...teacherAuth, async (req: Request, res: Response) => {
+  const schoolId  = req.user!.school_id as string;
+  const teacherId = req.user!.id;
+  if (!schoolId) { sendError(res, 'No school associated', 403); return; }
+
+  const className = req.query.class as string | undefined;
+  const section   = req.query.section as string | undefined;
+  if (!className || !section) {
+    sendError(res, 'class and section params required', 400);
+    return;
+  }
+
+  const subjects = await getTeacherSubjectsForClass(teacherId, schoolId, className, section);
+  if (subjects.length === 0) { sendSuccess(res, []); return; }
+
+  // Start of current month
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
+  const missingSubjects: string[] = [];
+
+  for (const subject of subjects) {
+    const { count } = await supabaseAdmin
+      .from('tests')
+      .select('id', { count: 'exact', head: true })
+      .eq('school_id', schoolId)
+      .ilike('class', className)
+      .ilike('section', section)
+      .ilike('subject', subject)
+      .gte('created_at', monthStart);
+
+    if (!count || count === 0) {
+      missingSubjects.push(subject);
+    }
+  }
+
+  sendSuccess(res, missingSubjects);
 });
 
 // ── GET /api/recovery/subject-chapters ──────────────────────────────────────

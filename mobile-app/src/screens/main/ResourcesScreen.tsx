@@ -52,9 +52,6 @@ function isImageUrl(url: string): boolean {
   return /\.(jpg|jpeg|png|webp|gif)(\?.*)?$/i.test(url);
 }
 
-function isPdfUrl(url: string): boolean {
-  return /\.pdf(\?.*)?$/i.test(url);
-}
 
 /** Returns true if the resource was uploaded within the last 48 hours. */
 function isNew(createdAt: string): boolean {
@@ -186,21 +183,12 @@ function ResourceCard({ item }: { item: ResourceItem }) {
       setLightboxUrl(url);
       return;
     }
-    // For PDFs, use Google Docs viewer so it opens reliably in the browser
-    // on any Android device regardless of whether a local PDF app is installed.
-    const viewerUrl = isPdfUrl(url)
-      ? `https://docs.google.com/gviewer?embedded=true&url=${encodeURIComponent(url)}`
-      : url;
-
+    // Open the raw Supabase Storage URL directly in the device browser/PDF viewer.
+    // Google Docs gviewer was removed by Google and caused a 404 + account picker.
     try {
-      await Linking.openURL(viewerUrl);
-    } catch {
-      // Last resort: try the raw URL directly
-      try {
-        await Linking.openURL(url);
-      } catch (e) {
-        console.warn('[ResourcesScreen] Could not open file:', url, e);
-      }
+      await Linking.openURL(url);
+    } catch (e) {
+      console.warn('[ResourcesScreen] Could not open file:', url, e);
     }
   }
 
