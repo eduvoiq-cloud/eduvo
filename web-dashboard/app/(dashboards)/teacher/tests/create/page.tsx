@@ -80,7 +80,7 @@ interface ChapterOption {
 }
 
 // Topic source mode for the AI section
-type TopicSourceMode = 'manual' | 'library';
+type TopicSourceMode = 'manual' | 'library' | 'my-library';
 
 // Library selection state
 interface LibrarySelection {
@@ -628,6 +628,16 @@ export default function CreateTestPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [details.subject, libSubjects]);
 
+  // ── Teacher's own library (My Library) state ───────────────────────────────
+  interface MyLibraryUnit {
+    unit_number: number;
+    file_count: number;
+  }
+  const [myLibraryUnits, setMyLibraryUnits] = useState<MyLibraryUnit[]>([]);
+  const [myLibraryLoading, setMyLibraryLoading] = useState(false);
+  const [myLibrarySelectedUnit, setMyLibrarySelectedUnit] = useState<number | null>(null);
+  const [myLibraryFetched, setMyLibraryFetched] = useState(false);
+
   // chapter_library_id and selected_topics stored after generation, passed to create
   const [savedChapterLibraryId, setSavedChapterLibraryId] = useState<string | null>(null);
   const [savedSelectedTopics, setSavedSelectedTopics] = useState<string | null>(null);
@@ -682,6 +692,28 @@ export default function CreateTestPage() {
       setLibChapters(json.success ? (json.data.chapters ?? []) : []);
     } catch { setLibChapters([]); }
     finally { setLibChaptersLoading(false); }
+  }, []);
+
+  // ── Fetch teacher's own library units for "From My Library" mode ────────────
+
+  const fetchMyLibraryUnits = useCallback(async (className: string, subject: string) => {
+    if (!className || !subject) { setMyLibraryUnits([]); setMyLibraryFetched(false); return; }
+    const token = getToken();
+    if (!token) return;
+    setMyLibraryLoading(true);
+    setMyLibraryUnits([]);
+    setMyLibrarySelectedUnit(null);
+    setMyLibraryFetched(false);
+    try {
+      const qs = new URLSearchParams({ class_name: className, subject });
+      const res = await fetch(`${BASE_URL}/api/teacher-library/units?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json() as { success: boolean; data: { units: { unit_number: number; file_count: number }[] } };
+      const units = (json.success ? (json.data?.units ?? []) : []).filter((u) => u.file_count > 0);
+      setMyLibraryUnits(units);
+    } catch { setMyLibraryUnits([]); }
+    finally { setMyLibraryLoading(false); setMyLibraryFetched(true); }
   }, []);
 
   // ── Auto-fetch library subjects when class is selected (library mode is always active now) ──
@@ -893,6 +925,8 @@ export default function CreateTestPage() {
     // Validate based on topic source mode
     if (topicSourceMode === 'manual') {
       if (!ai_topic.trim()) { setGenerateError('Please enter a topic.'); return; }
+    } else if (topicSourceMode === 'my-library') {
+      if (myLibrarySelectedUnit === null) { setGenerateError('Please select a unit from your library.'); return; }
     } else {
       // Library mode
       if (!libSelection.chapterId) { setGenerateError('Please select a chapter from the library.'); return; }
@@ -903,6 +937,7 @@ export default function CreateTestPage() {
       const token = getToken();
 
       const isLibrary = topicSourceMode === 'library';
+      const isMyLibrary = topicSourceMode === 'my-library';
       const finalTopics = isLibrary ? getLibraryFinalTopics() : '';
 
       const body: Record<string, unknown> = {
@@ -925,6 +960,14 @@ export default function CreateTestPage() {
           chapter_number: libSelection.chapterNumber,
           chapter_name: libSelection.chapterName,
           selected_topics: finalTopics,
+        } : {}),
+        // My Library-specific fields
+        ...(isMyLibrary ? {
+          teacher_library_unit: {
+            class_name,
+            subject,
+            unit_number: myLibrarySelectedUnit,
+          },
         } : {}),
       };
 
@@ -976,6 +1019,7 @@ export default function CreateTestPage() {
         setSavedChapterLibraryId((json.data as Record<string, unknown>).chapter_library_id as string ?? libSelection.chapterId);
         setSavedSelectedTopics((json.data as Record<string, unknown>).selected_topics as string ?? finalTopics);
       } else {
+        // my-library and manual modes do not use chapter_library_id
         setSavedChapterLibraryId(null);
         setSavedSelectedTopics(null);
       }
@@ -984,6 +1028,8 @@ export default function CreateTestPage() {
       if (!title.trim()) {
         const titleText = isLibrary
           ? `${libSelection.subject} — Ch. ${libSelection.chapterNumber}: ${libSelection.chapterName}`
+          : isMyLibrary
+          ? `${subject} — Unit ${myLibrarySelectedUnit}`
           : `${subject} — ${ai_topic.trim()}`;
         setDetails((d) => ({ ...d, title: titleText }));
       }
@@ -1437,7 +1483,7 @@ export default function CreateTestPage() {
                   {/* ── Topic mode ── */}
                   {aiSource === 'topic' && (<>
 
-                  {/* Topic source toggle: Manual vs Library */}
+                  {/* Topic source toggle: Manual vs Library vs My Library */}
                   <div>
                     <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Topic Source</p>
                     <div className="flex gap-2">
@@ -1463,6 +1509,20 @@ export default function CreateTestPage() {
                             : 'bg-white text-gray-600 border-gray-200 hover:border-indigo-300'
                         }`}>
                         📚 Choose from Library
+                      </button>
+                      <button type="button"
+                        onClick={() => {
+                          setTopicSourceMode('my-library');
+                          if (details.class_name && details.subject) {
+                            fetchMyLibraryUnits(details.class_name, details.subject);
+                          }
+                        }}
+                        className={`flex-1 py-2 px-3 text-xs font-semibold rounded-lg border-2 transition-colors ${
+                          topicSourceMode === 'my-library'
+                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            : 'bg-white text-gray-600 border-gray-200 hover:border-emerald-300'
+                        }`}>
+                        🗂️ From My Library
                       </button>
                     </div>
                   </div>
@@ -1652,6 +1712,53 @@ export default function CreateTestPage() {
                   </div>
                   )}
 
+                  {/* My Library mode — teacher's own uploaded units */}
+                  {topicSourceMode === 'my-library' && (
+                  <div className="space-y-3 p-4 bg-emerald-50/60 border border-emerald-100 rounded-xl">
+                    {myLibraryLoading && (
+                      <div className="flex items-center gap-2 text-sm text-emerald-700">
+                        <div className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                        Loading your library…
+                      </div>
+                    )}
+                    {!myLibraryLoading && myLibraryFetched && myLibraryUnits.length === 0 && (
+                      <p className="text-sm text-gray-600">
+                        Your library is empty for this subject.{' '}
+                        <a href="/teacher/my-library" className="text-emerald-600 underline hover:text-emerald-800 font-medium">
+                          Go to My Library
+                        </a>{' '}
+                        to upload textbook pages.
+                      </p>
+                    )}
+                    {!myLibraryLoading && myLibraryUnits.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-gray-700">Select a unit</p>
+                        <select
+                          className={inputClass}
+                          value={myLibrarySelectedUnit ?? ''}
+                          onChange={(e) => setMyLibrarySelectedUnit(e.target.value ? Number(e.target.value) : null)}
+                        >
+                          <option value="">Choose unit…</option>
+                          {myLibraryUnits.map((u) => (
+                            <option key={u.unit_number} value={u.unit_number}>
+                              Unit {u.unit_number} ({u.file_count} file{u.file_count !== 1 ? 's' : ''})
+                            </option>
+                          ))}
+                        </select>
+                        {myLibrarySelectedUnit !== null && (
+                          <div className="bg-emerald-600/5 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">
+                            <p className="font-semibold text-emerald-700 mb-1">📋 Generating from your library:</p>
+                            <p>Class {details.class_name} · <span className="font-medium">{details.subject}</span> · Unit {myLibrarySelectedUnit}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {!myLibraryFetched && !myLibraryLoading && (
+                      <p className="text-xs text-gray-400">Select a class and subject in Step 1 to load your library.</p>
+                    )}
+                  </div>
+                  )}
+
                   <div className="space-y-2">
                     <p className="text-sm font-medium text-gray-700">Number of questions</p>
                     <div className="flex flex-wrap gap-2">
@@ -1708,7 +1815,7 @@ export default function CreateTestPage() {
                   )}
 
                   <button type="button" onClick={handleAIGenerate}
-                    disabled={generating || !details.class_name || !details.subject || (topicSourceMode === 'manual' && !details.ai_topic.trim()) || (topicSourceMode === 'library' && !libSelection.chapterId)}
+                    disabled={generating || !details.class_name || !details.subject || (topicSourceMode === 'manual' && !details.ai_topic.trim()) || (topicSourceMode === 'library' && !libSelection.chapterId) || (topicSourceMode === 'my-library' && myLibrarySelectedUnit === null)}
                     className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-semibold rounded-lg transition-colors">
                     {generating ? (
                       <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />Generating…</>
