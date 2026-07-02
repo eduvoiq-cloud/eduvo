@@ -162,6 +162,12 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
     chapter_number: z.number().int().optional(),
     chapter_name: z.string().optional(),
     selected_topics: z.string().optional(),  // comma-separated final topic list
+    // Teacher library unit (used when teacher picks from their own uploaded files)
+    teacher_library_unit: z.object({
+      class_name: z.string(),
+      subject: z.string(),
+      unit_number: z.number().int().min(1).max(25),
+    }).optional(),
   });
 
   const parsed = schema.safeParse(req.body);
@@ -170,11 +176,13 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
   const { class: cls, subject, topic, board, chapter, language, count,
           difficulty_mode, easy_count, medium_count, hard_count,
           file_data, file_mime,
-          chapter_library_id, chapter_number, chapter_name, selected_topics } = parsed.data;
+          chapter_library_id, chapter_number, chapter_name, selected_topics,
+          teacher_library_unit } = parsed.data;
 
-  // Require either a topic (manual mode) or chapter_library_id (library mode)
+  // Require either a topic (manual mode) or chapter_library_id (library mode) or teacher_library_unit
   const isLibraryMode = !!chapter_library_id;
-  if (!isLibraryMode && !topic.trim() && !file_data) {
+  const isTeacherLibraryMode = !!teacher_library_unit;
+  if (!isLibraryMode && !isTeacherLibraryMode && !topic.trim() && !file_data) {
     sendError(res, 'Please enter a topic.', 400);
     return;
   }
@@ -223,7 +231,21 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
 
   let prompt: string;
 
-  if (isLibraryMode && chapter_number && chapter_name) {
+  if (isTeacherLibraryMode && teacher_library_unit) {
+    // ── Teacher library unit mode prompt ─────────────────────────────────────
+    prompt = `You are an experienced ${teacher_library_unit.subject} teacher for Class ${teacher_library_unit.class_name}.
+Generate exactly ${count} multiple choice questions.
+Generate questions ONLY from the provided textbook content.
+Do NOT use outside knowledge.
+Requirements:
+- ${difficultyLine}
+- Each question has exactly 4 options (A-D)
+- Mark correct answer index (0-3)
+- explanation: one factual sentence (max 20 words)
+- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong — appropriate for Class ${teacher_library_unit.class_name} level
+- Test conceptual understanding, not just recall
+IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
+  } else if (isLibraryMode && chapter_number && chapter_name) {
     // ── Library mode prompt ──────────────────────────────────────────────────
     const topicsLine = selected_topics?.trim()
       ? `Focus on these specific topics: ${selected_topics.trim()}.`
@@ -280,6 +302,45 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
   if (file_data && file_mime) {
     contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
+  }
+
+  // ── Teacher library unit mode: download files from Supabase Storage ────────
+  if (isTeacherLibraryMode && teacher_library_unit) {
+    const { data: libraryFiles, error: libErr } = await supabaseAdmin
+      .from('teacher_library_files')
+      .select('file_path, file_name, mime_type')
+      .eq('teacher_id', req.user!.id)
+      .eq('class_name', teacher_library_unit.class_name)
+      .eq('subject', teacher_library_unit.subject)
+      .eq('unit_number', teacher_library_unit.unit_number);
+
+    if (libErr) {
+      console.error('[tests/generate] teacher_library_files query error:', libErr);
+      sendError(res, 'Failed to load your library files. Please try again.', 500);
+      return;
+    }
+
+    if (!libraryFiles || libraryFiles.length === 0) {
+      sendError(res, 'No files found in your library for this unit. Please upload files first.', 400);
+      return;
+    }
+
+    for (const file of libraryFiles as Array<{ file_path: string; file_name: string; mime_type: string }>) {
+      const { data: fileBlob, error: dlErr } = await supabaseAdmin.storage
+        .from('teacher-library')
+        .download(file.file_path);
+
+      if (dlErr || !fileBlob) {
+        console.error(`[tests/generate] Failed to download library file ${file.file_path}:`, dlErr);
+        // Skip files that can't be downloaded rather than aborting entirely
+        continue;
+      }
+
+      const arrayBuffer = await fileBlob.arrayBuffer();
+      const base64Data = Buffer.from(arrayBuffer).toString('base64');
+      const mimeType = file.mime_type || 'application/octet-stream';
+      contentParts.push({ inlineData: { mimeType, data: base64Data } });
+    }
   }
 
   // Question generation is lightweight — use Flash Lite (cheap + fast).

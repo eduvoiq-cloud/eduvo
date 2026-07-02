@@ -75,6 +75,7 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
         { label: 'Tests', href: '/teacher/tests' },
         { label: 'Homework', href: '/teacher/homework' },
         { label: 'Notes Upload', href: '/teacher/resources' },
+        { label: 'My Library', href: '/teacher/my-library' },
         { label: 'Activity Packs', href: '/teacher/activity-packs' },
         { label: 'Timetable', href: '/teacher/timetable' },
       ],

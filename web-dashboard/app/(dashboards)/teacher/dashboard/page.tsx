@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
-import { complaintsApi, testsApi, recoverySchedulesApi, type TeacherAssignment, type Student, type SuspiciousActivityRow } from '@/lib/api';
+import { complaintsApi, testsApi, type TeacherAssignment, type Student, type SuspiciousActivityRow } from '@/lib/api';
 import { getToken } from '@/lib/session';
 import PageHeader from '@/components/PageHeader';
 import StatCard from '@/components/StatCard';
@@ -29,9 +29,10 @@ export default function TeacherDashboard() {
   const [pendingComplaints, setPendingComplaints] = useState(0);
   const [testsThisMonth, setTestsThisMonth] = useState(0);
   const [suspiciousActivity, setSuspiciousActivity] = useState<SuspiciousActivityRow[]>([]);
-  const [pendingRecoveryCount, setPendingRecoveryCount] = useState(0);
   const [myAdminClasses, setMyAdminClasses] = useState<ClassAdminEntry[]>([]);
   const [readyPackAlerts, setReadyPackAlerts] = useState<ReadyPackAlert[]>([]);
+  // Classes where the lockout has expired (or never started) — eligible to generate a new pack
+  const [eligibleRecoveryClasses, setEligibleRecoveryClasses] = useState<ClassAdminEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -60,14 +61,13 @@ export default function TeacherDashboard() {
           return;
         }
 
-        const [classesRes, complaintsRes, testsRes, suspiciousRes, recoveryCountRes, adminClassesRes, readyPacksRes] = await Promise.all([
+        const [classesRes, complaintsRes, testsRes, suspiciousRes, adminClassesRes, readyPacksRes] = await Promise.all([
           fetch(`${BASE_URL}/api/teacher/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
           complaintsApi.list(token!, { status: 'pending', role: user!.role }).catch(() => ({ data: [] })),
           testsApi.list(token!).catch(() => ({ data: [] })),
           testsApi.getSuspiciousActivity(token!).catch(() => ({ data: [] })),
-          recoverySchedulesApi.pendingCount(token!).catch(() => ({ data: { count: 0 } })),
           fetch(`${BASE_URL}/api/class-admin/my-classes`, {
             headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           }).then((r) => r.json()).catch(() => ({ data: [] })),
@@ -104,13 +104,37 @@ export default function TeacherDashboard() {
           uniqueStudents = [...new Map(allStudents.map((s) => [s.id, s])).values()];
         }
 
+        const adminClasses: ClassAdminEntry[] = Array.isArray(adminClassesRes.data) ? adminClassesRes.data : [];
+
         setStudents(uniqueStudents);
         setPendingComplaints(complaintsRes.data.length);
         setTestsThisMonth((testsRes.data ?? []).length);
         setSuspiciousActivity(Array.isArray(suspiciousRes.data) ? suspiciousRes.data : []);
-        setPendingRecoveryCount((recoveryCountRes.data as { count?: number })?.count ?? 0);
-        setMyAdminClasses(Array.isArray(adminClassesRes.data) ? adminClassesRes.data : []);
+        setMyAdminClasses(adminClasses);
         setReadyPackAlerts(Array.isArray(readyPacksRes.data) ? readyPacksRes.data : []);
+
+        // For each class where this teacher is admin, check if recovery pack generation is available
+        if (adminClasses.length > 0) {
+          const cycleStatuses = await Promise.all(
+            adminClasses.map((ac) =>
+              fetch(
+                `${BASE_URL}/api/recovery/cycle-status?class=${encodeURIComponent(ac.class_name)}&section=${encodeURIComponent(ac.section)}`,
+                { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+              )
+                .then((r) => r.json())
+                .catch(() => null)
+            )
+          );
+
+          const eligible = adminClasses.filter((ac, i) => {
+            const result = cycleStatuses[i] as { data?: { is_locked?: boolean; cycle?: unknown } } | null;
+            // Eligible if: API failed (null), no cycle ever ran (cycle is null), or lockout expired
+            if (!result?.data) return true;
+            return result.data.is_locked === false;
+          });
+
+          setEligibleRecoveryClasses(eligible);
+        }
       } catch (err) {
         console.error('[TeacherDashboard] fetch error:', err);
       } finally {
@@ -173,26 +197,31 @@ export default function TeacherDashboard() {
         </div>
       ))}
 
-      {/* Monthly Recovery Tests widget — only shown when there are pending approvals */}
-      {!loading && pendingRecoveryCount > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-6 py-4 mb-6 flex items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <svg className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+      {/* Recovery pack available — shown to class admins whose lockout has expired */}
+      {!loading && eligibleRecoveryClasses.length > 0 && (
+        <div className="bg-green-50 border border-green-200 rounded-xl px-6 py-4 mb-6">
+          <div className="flex items-center gap-3 mb-3">
+            <svg className="w-5 h-5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <div>
-              <p className="text-sm font-semibold text-amber-800">Monthly Recovery Tests</p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                {pendingRecoveryCount} schedule{pendingRecoveryCount !== 1 ? 's' : ''} pending your approval
-              </p>
-            </div>
+            <p className="text-sm font-semibold text-green-800">
+              Recovery Pack Available — {eligibleRecoveryClasses.length} class{eligibleRecoveryClasses.length !== 1 ? 'es' : ''} ready to generate
+            </p>
           </div>
-          <Link
-            href="/teacher/recovery-schedule"
-            className="shrink-0 px-4 py-2 text-sm font-medium bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors whitespace-nowrap"
-          >
-            Go to Recovery Schedule →
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {eligibleRecoveryClasses.map((ac) => (
+              <Link
+                key={`${ac.class_name}||${ac.section}`}
+                href={`/teacher/recovery-schedule?class=${encodeURIComponent(ac.class_name)}&section=${encodeURIComponent(ac.section)}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              >
+                {ac.class_name} · {ac.section}
+                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

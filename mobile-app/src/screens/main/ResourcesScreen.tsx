@@ -6,7 +6,7 @@
  * PDFs open in browser; images shown as tappable thumbnails.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -17,12 +17,12 @@ import {
   RefreshControl,
   ActivityIndicator,
   StatusBar,
-  Linking,
   Image,
   Modal,
   Dimensions,
   Platform,
 } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
 import apiClient from '../../api/client';
 import { useAuthStore } from '../../store/authStore';
 import { useChildStore } from '../../store/childStore';
@@ -183,13 +183,12 @@ function ResourceCard({ item }: { item: ResourceItem }) {
       setLightboxUrl(url);
       return;
     }
-    // Open the raw Supabase Storage URL directly in the device browser/PDF viewer.
-    // Google Docs gviewer was removed by Google and caused a 404 + account picker.
-    try {
-      await Linking.openURL(url);
-    } catch (e) {
-      console.warn('[ResourcesScreen] Could not open file:', url, e);
-    }
+    // Open in Chrome Custom Tab (Android) / SFSafariViewController (iOS).
+    // This is a real browser that can render PDFs — unlike Linking.openURL
+    // which on Expo opens inside Expo's own WebView and cannot display PDFs.
+    await WebBrowser.openBrowserAsync(url, {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FULL_SCREEN,
+    });
   }
 
   return (
