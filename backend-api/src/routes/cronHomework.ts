@@ -137,6 +137,7 @@ function verifyCronSecret(req: Request, res: Response): boolean {
 router.get('/evaluate-batch', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  let startedAt = '';
   try {
   const locked = await acquireLock();
   if (!locked) {
@@ -151,15 +152,16 @@ router.get('/evaluate-batch', async (req: Request, res: Response) => {
     return;
   }
 
-  const startedAt = new Date().toISOString();
+  startedAt = new Date().toISOString();
   sendSuccess(res, { message: 'Homework batch evaluation started', started_at: startedAt }, 'Job started');
   } catch (err: unknown) {
     return sendError(res, 'An unexpected error occurred', 500);
   }
 
+  const capturedStartedAt = startedAt;
   setImmediate(async () => {
     try {
-      console.log('[cron/homework] evaluate-batch (GET) starting at', startedAt);
+      console.log('[cron/homework] evaluate-batch (GET) starting at', capturedStartedAt);
       const stats = await runHomeworkBatchEval();
       console.log('[cron/homework] evaluate-batch complete:', JSON.stringify(stats));
     } catch (err) {
@@ -174,6 +176,7 @@ router.get('/evaluate-batch', async (req: Request, res: Response) => {
 router.post('/evaluate-batch', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  let startedAt = '';
   try {
   const locked = await acquireLock();
   if (!locked) {
@@ -187,7 +190,7 @@ router.post('/evaluate-batch', async (req: Request, res: Response) => {
     return;
   }
 
-  const startedAt = new Date().toISOString();
+  startedAt = new Date().toISOString();
 
   // Respond immediately — Railway cron has a short HTTP timeout.
   // The actual work runs in setImmediate (fire-and-forget).
@@ -200,9 +203,10 @@ router.post('/evaluate-batch', async (req: Request, res: Response) => {
     return sendError(res, 'An unexpected error occurred', 500);
   }
 
+  const capturedStartedAt2 = startedAt;
   setImmediate(async () => {
     try {
-      console.log('[cron/homework] evaluate-batch starting at', startedAt);
+      console.log('[cron/homework] evaluate-batch starting at', capturedStartedAt2);
       const stats = await runHomeworkBatchEval();
       console.log('[cron/homework] evaluate-batch complete:', JSON.stringify(stats));
     } catch (err) {

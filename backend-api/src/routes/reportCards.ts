@@ -543,7 +543,7 @@ router.post(
     term       = parsedData.term;
     exam_type  = parsedData.exam_type;
     teacherId  = req.user!.id;
-    schoolId   = req.user!.school_id;
+    schoolId   = req.user!.school_id ?? undefined;
 
     if (!schoolId) {
       sendError(res, 'Your account is not linked to a school', 403);

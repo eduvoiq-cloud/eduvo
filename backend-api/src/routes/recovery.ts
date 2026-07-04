@@ -487,17 +487,27 @@ const startPackSchema = z.object({
 });
 
 router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) => {
+  let teacherId = '';
+  let schoolId = '';
+  let className = '';
+  let section = '';
+  let skipSubjects: string[] = [];
+  let cycleId = '';
+  let now = new Date();
   try {
-  const teacherId = req.user!.id;
-  const schoolId  = req.user!.school_id as string;
+  teacherId = req.user!.id;
+  schoolId  = req.user!.school_id as string;
   if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
 
   const parsed = startPackSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
-  const { class: className, section, skip_subjects: skipSubjects } = parsed.data;
+  const { class: parsedClass, section: parsedSection, skip_subjects: parsedSkipSubjects } = parsed.data;
+  className = parsedClass;
+  section = parsedSection;
+  skipSubjects = parsedSkipSubjects ?? [];
 
   // Check 30-day lockout
-  const now = new Date();
+  now = new Date();
   const { data: activeCycle } = await supabaseAdmin
     .from('recovery_cycles')
     .select('id, status, lockout_until, pack_generated_at')
@@ -535,25 +545,35 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
     .single();
 
   if (cycleErr || !cycle) { sendError(res, cycleErr?.message ?? 'Failed to create cycle', 500); return; }
-  const cycleId = (cycle as { id: string }).id;
+  cycleId = (cycle as { id: string }).id;
 
   sendSuccess(res, { cycle_id: cycleId, lockout_until: lockoutUntil }, 'Recovery pack generation started');
   } catch (err: unknown) {
     return sendError(res, 'An unexpected error occurred', 500);
   }
 
+  // Capture let vars as const for TS6 closure analysis
+  const cap_teacherId = teacherId;
+  const cap_schoolId = schoolId;
+  const cap_className = className;
+  const cap_section = section;
+  const cap_skipSubjects = skipSubjects;
+  const cap_cycleId = cycleId;
+  const cap_now = now;
+  const cap_lockoutUntil = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
   // Submit Gemini Batch API job in background — teacher does not wait for this
   setImmediate(async () => {
     try {
       const [allSubjects, students, board] = await Promise.all([
-        getTeacherSubjectsForClass(teacherId, schoolId, className, section),
-        getStudentsInClass(schoolId, className, section),
-        getSchoolBoard(schoolId),
+        getTeacherSubjectsForClass(cap_teacherId, cap_schoolId, cap_className, cap_section),
+        getStudentsInClass(cap_schoolId, cap_className, cap_section),
+        getSchoolBoard(cap_schoolId),
       ]);
 
       // Filter out any subjects the teacher chose to skip
       const subjects = allSubjects.filter(
-        (s) => !skipSubjects.map((sk) => sk.toLowerCase()).includes(s.toLowerCase())
+        (s) => !cap_skipSubjects.map((sk: string) => sk.toLowerCase()).includes(s.toLowerCase())
       );
 
       if (students.length === 0 || subjects.length === 0) {
@@ -561,11 +581,11 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
         await supabaseAdmin.from('recovery_cycles').update({
           status: 'pack_ready',
           updated_at: new Date().toISOString(),
-        }).eq('id', cycleId);
+        }).eq('id', cap_cycleId);
         return;
       }
 
-      const currentMonth = now.toISOString().slice(0, 7) + '-01';
+      const currentMonth = cap_now.toISOString().slice(0, 7) + '-01';
 
       // ── Pre-compute class-level weak topics per subject ──────────────────────
       // Used as fallback for students who haven't taken any app tests themselves
@@ -575,7 +595,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
         try {
           const allWeakTopics: Map<string, number> = new Map();
           for (const s of students) {
-            const w = await analyzeStudentWeakness(s.id, subject, schoolId, currentMonth);
+            const w = await analyzeStudentWeakness(s.id, subject, cap_schoolId, currentMonth);
             if (!w.has_no_data) {
               for (const t of w.weak_topics) {
                 allWeakTopics.set(t.topic, (allWeakTopics.get(t.topic) ?? 0) + t.weakness_score);
@@ -597,9 +617,9 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
         const { data: chaptersData } = await supabaseAdmin
           .from('recovery_subject_chapters')
           .select('subject, chapter_names')
-          .eq('school_id', schoolId)
-          .eq('class', className)
-          .eq('section', section)
+          .eq('school_id', cap_schoolId)
+          .eq('class', cap_className)
+          .eq('section', cap_section)
           .eq('scheduled_month', currentMonth);
         for (const row of (chaptersData ?? []) as Array<{ subject: string; chapter_names: string[] }>) {
           teacherChaptersMap.set(row.subject, row.chapter_names);
@@ -613,7 +633,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
       for (const student of students) {
         for (const subject of subjects) {
           try {
-            const weakness = await analyzeStudentWeakness(student.id, subject, schoolId, currentMonth);
+            const weakness = await analyzeStudentWeakness(student.id, subject, cap_schoolId, currentMonth);
             const profileType = weakness.profile_type;
             let weakTopics = weakness.weak_topics.slice(0, 10).map((t) => t.topic);
 
@@ -625,13 +645,13 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
             // Build wrong questions context from recent test data for richer prompts
             let wrongQuestionsContext: string | undefined;
             try {
-              wrongQuestionsContext = await buildWrongQuestionsContext(student.id, subject, schoolId);
+              wrongQuestionsContext = await buildWrongQuestionsContext(student.id, subject, cap_schoolId);
             } catch { /* non-fatal */ }
 
             const teacherChapters = teacherChaptersMap.get(subject);
 
             const prompt = selectPackPrompt(
-              className, subject, board,
+              cap_className, subject, board,
               weakness.has_no_data ? 'no_data' : profileType,
               weakTopics,
               wrongQuestionsContext,
@@ -644,16 +664,16 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
             const { data: existing } = await supabaseAdmin
               .from('recovery_packs')
               .select('id')
-              .eq('cycle_id', cycleId)
+              .eq('cycle_id', cap_cycleId)
               .eq('student_id', student.id)
               .eq('subject', subject)
               .maybeSingle();
 
             if (!existing) {
               await supabaseAdmin.from('recovery_packs').insert({
-                cycle_id: cycleId,
+                cycle_id: cap_cycleId,
                 student_id: student.id,
-                school_id: schoolId,
+                school_id: cap_schoolId,
                 subject,
                 scheduled_month: currentMonth,
                 weak_topics: weakTopics,
@@ -678,7 +698,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
           status: 'pack_failed',
           lockout_until: null,
           updated_at: new Date().toISOString(),
-        }).eq('id', cycleId);
+        }).eq('id', cap_cycleId);
         return;
       }
 
@@ -703,7 +723,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
             generation_status: 'completed',
             updated_at: new Date().toISOString(),
           })
-            .eq('cycle_id', cycleId)
+            .eq('cycle_id', cap_cycleId)
             .eq('student_id', studentId)
             .eq('subject', subject);
 
@@ -714,7 +734,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
             generation_status: 'failed',
             updated_at: new Date().toISOString(),
           })
-            .eq('cycle_id', cycleId)
+            .eq('cycle_id', cap_cycleId)
             .eq('student_id', studentId)
             .eq('subject', subject);
         }
@@ -724,9 +744,9 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
       await supabaseAdmin.from('recovery_cycles').update({
         status: anySuccess ? 'pack_ready' : 'pack_failed',
         // Clear lockout on full failure so teacher can retry
-        lockout_until: anySuccess ? lockoutUntil : null,
+        lockout_until: anySuccess ? cap_lockoutUntil : null,
         updated_at: new Date().toISOString(),
-      }).eq('id', cycleId);
+      }).eq('id', cap_cycleId);
 
       console.log(`[recovery/start-pack] Done: ${batchRequests.length} packs attempted, anySuccess=${anySuccess}`);
     } catch (err) {
@@ -736,7 +756,7 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
           status: 'pack_failed',
           lockout_until: null,
           updated_at: new Date().toISOString(),
-        }).eq('id', cycleId);
+        }).eq('id', cap_cycleId);
       } catch { /* best-effort */ }
     }
   });
@@ -760,28 +780,34 @@ const startTestsSchema = z.object({
 });
 
 router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) => {
+  let st_schoolId = '';
+  let st_cycleId = '';
+  let st_subjectConfigs: z.infer<typeof subjectConfigSchema>[] = [];
+  let st_c: { id: string; class: string; section: string; status: string; school_id: string } | null = null;
   try {
   const teacherId = req.user!.id;
-  const schoolId  = req.user!.school_id as string;
-  if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
+  st_schoolId  = req.user!.school_id as string;
+  if (!st_schoolId) { sendError(res, 'No school associated with your account', 403); return; }
 
   const parsed = startTestsSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
   const { cycle_id: cycleId, subject_configs: subjectConfigs } = parsed.data;
+  st_cycleId = cycleId;
+  st_subjectConfigs = subjectConfigs;
 
   // Verify cycle belongs to this teacher's school
   const { data: cycle } = await supabaseAdmin
     .from('recovery_cycles')
     .select('id, class, section, status, school_id')
-    .eq('id', cycleId)
-    .eq('school_id', schoolId)
+    .eq('id', st_cycleId)
+    .eq('school_id', st_schoolId)
     .maybeSingle();
 
   if (!cycle) { sendError(res, 'Cycle not found', 404); return; }
-  const c = cycle as { id: string; class: string; section: string; status: string; school_id: string };
+  st_c = cycle as { id: string; class: string; section: string; status: string; school_id: string };
 
-  if (!['pack_ready', 'tests_ready', 'test_failed'].includes(c.status)) {
-    sendError(res, `Cannot generate tests for a cycle with status '${c.status}'`, 400);
+  if (!['pack_ready', 'tests_ready', 'test_failed'].includes(st_c.status)) {
+    sendError(res, `Cannot generate tests for a cycle with status '${st_c.status}'`, 400);
     return;
   }
 
@@ -789,24 +815,32 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
   await supabaseAdmin.from('recovery_cycles').update({
     status: 'generating_tests',
     updated_at: new Date().toISOString(),
-  }).eq('id', cycleId);
+  }).eq('id', st_cycleId);
 
-  sendSuccess(res, { cycle_id: cycleId }, 'Recovery test generation started');
+  sendSuccess(res, { cycle_id: st_cycleId }, 'Recovery test generation started');
   } catch (err: unknown) {
     return sendError(res, 'An unexpected error occurred', 500);
   }
 
+  if (!st_c) return;
+
+  // Capture for TS6 closure analysis
+  const cap_st_schoolId = st_schoolId;
+  const cap_st_cycleId = st_cycleId;
+  const cap_st_subjectConfigs = st_subjectConfigs;
+  const cap_st_c = st_c;
+
   // Submit Gemini Batch API job in background — teacher does not wait for this
   setImmediate(async () => {
     try {
-      const students = await getStudentsInClass(schoolId, c.class, c.section);
-      const board = await getSchoolBoard(schoolId);
+      const students = await getStudentsInClass(cap_st_schoolId, cap_st_c.class, cap_st_c.section);
+      const board = await getSchoolBoard(cap_st_schoolId);
 
       // ── Build one Gemini Batch request per student × subject ────────────────
       // Key format: "<studentId>|<subject>" — used by cron to route results back
       const batchRequests: Array<{ key: string; prompt: string }> = [];
 
-      for (const config of subjectConfigs) {
+      for (const config of cap_st_subjectConfigs) {
         for (const student of students) {
           try {
             // Load this student's recovery PACK content — questions are generated FROM the pack
@@ -830,7 +864,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
 
             // Build prompt using pack content so questions come directly from the pack material
             const prompt = buildTestPromptFromPack(
-              c.class,
+              cap_st_c.class,
               config.subject,
               board,
               topics,
@@ -845,15 +879,15 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
             const { data: existing } = await supabaseAdmin
               .from('monthly_recovery_tests')
               .select('id')
-              .eq('cycle_id', cycleId)
+              .eq('cycle_id', cap_st_cycleId)
               .eq('student_id', student.id)
               .eq('subject', config.subject)
               .maybeSingle();
 
             const testPayload = {
-              cycle_id: cycleId,
+              cycle_id: cap_st_cycleId,
               student_id: student.id,
-              school_id: schoolId,
+              school_id: cap_st_schoolId,
               subject: config.subject,
               scheduled_month: new Date().toISOString().slice(0, 7) + '-01',
               weak_topics_used: topics,
@@ -883,7 +917,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
         await supabaseAdmin.from('recovery_cycles').update({
           status: 'test_failed',
           updated_at: new Date().toISOString(),
-        }).eq('id', cycleId);
+        }).eq('id', cap_st_cycleId);
         return;
       }
 
@@ -907,7 +941,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
             is_available: true,
             updated_at: new Date().toISOString(),
           })
-            .eq('cycle_id', cycleId)
+            .eq('cycle_id', cap_st_cycleId)
             .eq('student_id', studentId)
             .eq('subject', subject);
 
@@ -918,7 +952,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
             generation_status: 'failed',
             updated_at: new Date().toISOString(),
           })
-            .eq('cycle_id', cycleId)
+            .eq('cycle_id', cap_st_cycleId)
             .eq('student_id', studentId)
             .eq('subject', subject);
         }
@@ -927,7 +961,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
       await supabaseAdmin.from('recovery_cycles').update({
         status: anySuccess ? 'tests_ready' : 'test_failed',
         updated_at: new Date().toISOString(),
-      }).eq('id', cycleId);
+      }).eq('id', cap_st_cycleId);
 
       console.log(`[recovery/start-tests] Done: ${batchRequests.length} tests attempted, anySuccess=${anySuccess}`);
     } catch (err) {
@@ -936,7 +970,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
         await supabaseAdmin.from('recovery_cycles').update({
           status: 'test_failed',
           updated_at: new Date().toISOString(),
-        }).eq('id', cycleId);
+        }).eq('id', cap_st_cycleId);
       } catch { /* best-effort */ }
     }
   });

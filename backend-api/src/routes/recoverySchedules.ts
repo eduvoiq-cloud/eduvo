@@ -263,6 +263,7 @@ router.get('/all', async (req: Request, res: Response) => {
  * Then automatically triggers pack generation and test generation in the background.
  */
 router.put('/:id/approve', async (req: Request, res: Response) => {
+  let schedule: Record<string, unknown> | null = null;
   try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id as string;
@@ -272,7 +273,7 @@ router.put('/:id/approve', async (req: Request, res: Response) => {
     return;
   }
 
-  const schedule = await getOwnedSchedule(req.params.id as string, teacherId, schoolId);
+  schedule = await getOwnedSchedule(req.params.id as string, teacherId, schoolId);
   if (!schedule) {
     sendError(res, 'Schedule not found or not accessible', 404);
     return;
@@ -310,11 +311,12 @@ router.put('/:id/approve', async (req: Request, res: Response) => {
     return sendError(res, 'An unexpected error occurred', 500);
   }
 
+  if (!schedule) return;
+  const capturedSchedule = schedule;
+
   // Auto-trigger pack generation for this class+section using the new cycle-based system
   setImmediate(async () => {
     const apiBase = process.env.INTERNAL_API_BASE ?? `http://localhost:${process.env.PORT ?? 3001}`;
-    // Build a minimal teacher auth token to call the internal API
-    // Use the teacher's token from the original request headers
     const authHeader = req.headers.authorization ?? '';
     try {
       await fetch(`${apiBase}/api/recovery/start-pack`, {
@@ -324,8 +326,8 @@ router.put('/:id/approve', async (req: Request, res: Response) => {
           Authorization: authHeader,
         },
         body: JSON.stringify({
-          class:   schedule.class   as string,
-          section: schedule.section as string,
+          class:   capturedSchedule.class   as string,
+          section: capturedSchedule.section as string,
         }),
       });
     } catch (genErr) {
