@@ -351,7 +351,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   // Falls back to gemini-2.5-flash if Lite is overloaded (503).
   // Uses raw REST API (not SDK) so thinkingBudget:0 is guaranteed to be sent.
   const primaryModel  = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
-  const fallbackModel = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+  const fallbackModel = primaryModel; // never escalate to flash — flash-lite has thinking OFF, flash has thinking ON by default
 
   let raw = '';
   try {

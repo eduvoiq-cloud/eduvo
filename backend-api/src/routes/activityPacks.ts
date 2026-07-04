@@ -227,7 +227,7 @@ type must be one of: "verbal", "written", "physical"`;
     };
 
     try {
-      const fallbackModelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+      const fallbackModelName = modelName; // never escalate to flash — flash-lite has thinking OFF, flash has thinking ON by default
 
       const contentParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
         { text: prompt },
