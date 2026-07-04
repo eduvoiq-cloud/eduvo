@@ -288,13 +288,13 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
         items: {
           type: 'object' as const,
           properties: {
-            question:      { type: 'string' as const },
-            options:       { type: 'array' as const, items: { type: 'string' as const }, minItems: 4, maxItems: 4 },
+            question:      { type: 'string' as const, maxLength: 300 },
+            options:       { type: 'array' as const, items: { type: 'string' as const, maxLength: 120 }, minItems: 4, maxItems: 4 },
             correct_index: { type: 'integer' as const, minimum: 0, maximum: 3 },
-            explanation:   { type: 'string' as const },
+            explanation:   { type: 'string' as const, maxLength: 150 },  // max ~20 words
             difficulty:    { type: 'string' as const, enum: ['easy', 'medium', 'hard'] },
-            reasoning:     { type: 'string' as const },
-            topic:         { type: 'string' as const },
+            reasoning:     { type: 'string' as const, maxLength: 200 },  // max ~30 words â€” enforced at API level
+            topic:         { type: 'string' as const, maxLength: 60 },
           },
           required: ['question', 'options', 'correct_index', 'explanation', 'difficulty', 'reasoning'],
         },
@@ -302,6 +302,10 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     },
     required: ['questions'],
   };
+
+  // Hard token ceiling: ~80 tokens per question (question+options+explanation+reasoning with maxLength caps)
+  // 10 questions = ~800 output tokens. Cap at count*100 with minimum 500 to prevent runaway cost.
+  const maxOutputTokens = Math.max(500, count * 100);
 
   const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
   if (file_data && file_mime) {
@@ -351,7 +355,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   // Falls back to gemini-2.5-flash if Lite is overloaded (503).
   // Uses raw REST API (not SDK) so thinkingBudget:0 is guaranteed to be sent.
   const primaryModel  = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
-  const fallbackModel = primaryModel; // never escalate to flash — flash-lite has thinking OFF, flash has thinking ON by default
+  const fallbackModel = primaryModel; // never escalate to flash ï¿½ flash-lite has thinking OFF, flash has thinking ON by default
 
   let raw = '';
   try {
@@ -360,9 +364,10 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
       parts: contentParts as Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>,
       responseSchema: responseSchema as Record<string, unknown>,
       disableThinking: true,
+      maxOutputTokens,
     });
     raw = result.text.trim();
-    // COST DIAGNOSTIC — logs real token counts to Railway so we can verify billing
+    // COST DIAGNOSTIC ï¿½ logs real token counts to Railway so we can verify billing
     const inputLen = JSON.stringify(contentParts).length;
     const outputLen = raw.length;
     console.info(`[tests/generate] model=${result.modelUsed} | inputChars=${inputLen} | outputChars=${outputLen} | totalTokens=${result.totalTokens} | thinkingTokens=${result.thinkingTokens} | count=${count}`);
