@@ -847,7 +847,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
             const { data: packRow } = await supabaseAdmin
               .from('recovery_packs')
               .select('weak_topics, student_profile_type, pack_content')
-              .eq('cycle_id', cycleId)
+              .eq('cycle_id', cap_st_cycleId)
               .eq('student_id', student.id)
               .eq('subject', config.subject)
               .maybeSingle();
