@@ -266,7 +266,7 @@ export const studentAiRateLimit = rateLimit({
  */
 export const generateRateLimit = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: parseInt(process.env.AI_MAX_DAILY_GENERATIONS ?? '10', 10),
+  max: parseInt(process.env.AI_MAX_DAILY_GENERATIONS ?? '50', 10),
   keyGenerator: (req: Request) => `generate:${(req as Request & { user?: { id?: string } }).user?.id ?? req.ip ?? 'unknown'}`,
   standardHeaders: true,
   legacyHeaders: false,

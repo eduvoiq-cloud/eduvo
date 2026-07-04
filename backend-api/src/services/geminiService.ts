@@ -68,7 +68,7 @@ export interface SaveUsageParams {
 
 const MAX_TEXT_CHARS = 50_000;
 const MAX_DAILY_GENERATIONS = parseInt(
-  process.env.AI_MAX_DAILY_GENERATIONS ?? "10",
+  process.env.AI_MAX_DAILY_GENERATIONS ?? "50",
   10
 );
 

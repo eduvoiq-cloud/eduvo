@@ -33,7 +33,7 @@ const ALLOWED_MIME_TYPES = new Set([
 ]);
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.docx', '.txt']);
 const EXTRACTION_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const MAX_DAILY_GENERATIONS = parseInt(process.env.AI_MAX_DAILY_GENERATIONS ?? '10', 10);
+const MAX_DAILY_GENERATIONS = parseInt(process.env.AI_MAX_DAILY_GENERATIONS ?? '50', 10);
 // Cap how many characters of extracted content are passed to the AI prompt.
 // Prevents runaway token costs if a large text file is uploaded (e.g. a 5 MB .txt).
 // ~300k chars ≈ ~75k tokens, well within Gemini Flash's context window.
