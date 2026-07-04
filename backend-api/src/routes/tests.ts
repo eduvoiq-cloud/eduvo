@@ -303,9 +303,11 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     required: ['questions'],
   };
 
-  // Hard token ceiling: ~80 tokens per question (question+options+explanation+reasoning with maxLength caps)
-  // 10 questions = ~800 output tokens. Cap at count*100 with minimum 500 to prevent runaway cost.
-  const maxOutputTokens = Math.max(500, count * 100);
+  // Hard token ceiling: schema maxLength constraints keep individual fields short,
+  // but we need enough headroom for valid JSON with all questions.
+  // ~250 tokens per question (question+4 options+explanation+reasoning JSON overhead)
+  // 10 questions = ~2500 tokens. Use count*300 with minimum 1500 for safety.
+  const maxOutputTokens = Math.max(1500, count * 300);
 
   const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
   if (file_data && file_mime) {
