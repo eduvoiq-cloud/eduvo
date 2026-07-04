@@ -51,6 +51,7 @@ const SUBSCRIPTION_PRICE = parseFloat(process.env.SUBSCRIPTION_PRICE ?? '50');
  * Supports pagination: ?page=1&limit=50 (default 50, max 200).
  */
 router.get('/schools', async (req: Request, res: Response) => {
+  try {
   const rawPage  = parseInt((req.query.page  as string) ?? '1',  10);
   const rawLimit = parseInt((req.query.limit as string) ?? '50', 10);
   const page  = isNaN(rawPage)  || rawPage  < 1 ? 1  : rawPage;
@@ -135,6 +136,9 @@ router.get('/schools', async (req: Request, res: Response) => {
 
   const total = count ?? 0;
   sendSuccess(res, { data: result, total, page, limit, total_pages: Math.ceil(total / limit) });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/superadmin/schools/:id ──────────────────────────────────────────
@@ -145,6 +149,7 @@ router.get('/schools', async (req: Request, res: Response) => {
  * - list of school admins (name, email, phone)
  */
 router.get('/schools/:id', async (req: Request, res: Response) => {
+  try {
   const { id } = req.params;
 
   const { data: school, error: schoolErr } = await supabaseAdmin
@@ -210,6 +215,9 @@ router.get('/schools/:id', async (req: Request, res: Response) => {
     attendance_today: attendanceToday,
     admins: admins ?? [],
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── DELETE /api/superadmin/schools/:id ────────────────────────────────────────
@@ -219,6 +227,7 @@ router.get('/schools/:id', async (req: Request, res: Response) => {
  * - Deletes the school row (cascades to students, users, attendance, etc.)
  */
 router.delete('/schools/:id', async (req: Request, res: Response) => {
+  try {
   const { id } = req.params;
   const adminId = req.user!.id;
 
@@ -286,6 +295,9 @@ router.delete('/schools/:id', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, { deleted: true, school_id: id }, 'School deleted successfully');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/superadmin/schools ──────────────────────────────────────────────
@@ -301,6 +313,7 @@ router.delete('/schools/:id', async (req: Request, res: Response) => {
  * Non-GSEB boards always use English medium; passing medium is optional for them.
  */
 router.post('/schools', async (req: Request, res: Response) => {
+  try {
   const GSEB_BOARDS = ['GSEB'];
   const BOARD_VALUES = ['GSEB', 'CBSE', 'ICSE', 'MSBSHSE', 'RBSE', 'BSEB', 'MPBSE', 'IB', 'IGCSE'] as const;
 
@@ -442,6 +455,9 @@ router.post('/schools', async (req: Request, res: Response) => {
     gujarati: gujaratiSchool,
     dual_medium: true,
   }, 'School created with both mediums', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── PUT /api/superadmin/schools/:id/subscription ──────────────────────────────
@@ -450,6 +466,7 @@ router.post('/schools', async (req: Request, res: Response) => {
  * On deactivation: sends warning email to school admin and logs a warning.
  */
 router.put('/schools/:id/subscription', async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     status: z.boolean(),
   });
@@ -537,6 +554,9 @@ router.put('/schools/:id/subscription', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, response, `Subscription ${status ? 'activated' : 'deactivated'} successfully`);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/superadmin/schools/:id/admin ────────────────────────────────────
@@ -548,6 +568,7 @@ router.put('/schools/:id/subscription', async (req: Request, res: Response) => {
  * - Logs to audit_logs
  */
 router.post('/schools/:id/admin', async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     name:  z.string().min(1),
     email: z.string().email(),
@@ -703,6 +724,9 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
     default_password: defaultPassword,
     password_is_phone: passwordIsPhone,
   }, 'School admin account created successfully', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -720,6 +744,7 @@ router.post('/schools/:id/admin', async (req: Request, res: Response) => {
  *   - Revenue estimate (active schools × subscription price)
  */
 router.get('/stats', async (req: Request, res: Response) => {
+  try {
   const today = new Date().toISOString().slice(0, 10);
 
   const [
@@ -761,6 +786,9 @@ router.get('/stats', async (req: Request, res: Response) => {
     revenue_estimate:    revenueEstimate,
     subscription_price:  SUBSCRIPTION_PRICE,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -779,6 +807,7 @@ router.get('/stats', async (req: Request, res: Response) => {
  * Page size: 50 records.
  */
 router.get('/audit-logs', async (req: Request, res: Response) => {
+  try {
   const { school_id, action, from, to, page } = req.query as Record<string, string>;
 
   const PAGE_SIZE = 50;
@@ -841,6 +870,9 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
     page_size:   PAGE_SIZE,
     total_pages: totalPages,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -855,6 +887,7 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
  * Intended for use before deactivating a school.
  */
 router.get('/export/:school_id', async (req: Request, res: Response) => {
+  try {
   const { school_id } = req.params;
   const adminId = req.user!.id;
 
@@ -976,6 +1009,9 @@ router.get('/export/:school_id', async (req: Request, res: Response) => {
     school_name: (school as { name: string }).name,
     exported_at: new Date().toISOString(),
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -997,6 +1033,7 @@ router.get('/export/:school_id', async (req: Request, res: Response) => {
  *   month=YYYY-MM  — defaults to current month
  */
 router.get('/ai-cost', async (req: Request, res: Response) => {
+  try {
   const rawMonth = (req.query.month as string | undefined)?.trim();
 
   // Validate or default month to current month
@@ -1127,6 +1164,9 @@ router.get('/ai-cost', async (req: Request, res: Response) => {
     cost_target_inr_per_student: COST_TARGET_INR_PER_STUDENT,
     per_school: perSchool,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

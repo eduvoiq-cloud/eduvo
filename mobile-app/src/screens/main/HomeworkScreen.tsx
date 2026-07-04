@@ -52,7 +52,7 @@ interface HomeworkItem {
   ai_result?: string | null;
 }
 
-type TabFilter = 'Pending' | 'Completed' | 'All';
+type TabFilter = 'Pending' | 'Completed' | 'Missed' | 'All';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -343,7 +343,13 @@ export default function HomeworkScreen() {
 
   const filtered = homework.filter((h) => {
     if (activeTab === 'Pending') return needsAction(h);
-    if (activeTab === 'Completed') return !needsAction(h);
+    if (activeTab === 'Missed') return (h.submission_status ?? 'not_submitted') === 'not_submitted' && isOverdue(h);
+    if (activeTab === 'Completed') {
+      // Completed = acted on (submitted/checked/flagged) but NOT missed
+      const status = h.submission_status ?? 'not_submitted';
+      if (status === 'not_submitted') return false; // pending or missed, not completed
+      return !needsAction(h);
+    }
     return true;
   });
 
@@ -352,7 +358,7 @@ export default function HomeworkScreen() {
     (a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
   );
 
-  const tabs: TabFilter[] = ['Pending', 'Completed', 'All'];
+  const tabs: TabFilter[] = ['Pending', 'Completed', 'Missed', 'All'];
 
   return (
     <>
@@ -397,13 +403,15 @@ export default function HomeworkScreen() {
             ListEmptyComponent={
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>
-                  {activeTab === 'Pending' ? '🎉' : activeTab === 'Completed' ? '📚' : '📝'}
+                  {activeTab === 'Pending' ? '🎉' : activeTab === 'Completed' ? '📚' : activeTab === 'Missed' ? '✅' : '📝'}
                 </Text>
                 <Text style={styles.emptyText}>
                   {activeTab === 'Pending'
                     ? 'No pending homework!'
                     : activeTab === 'Completed'
                     ? 'No completed homework yet.'
+                    : activeTab === 'Missed'
+                    ? 'No missed homework. Great job!'
                     : 'No homework assigned yet.'}
                 </Text>
               </View>

@@ -247,8 +247,11 @@ router.post(
   '/generate-stream',
   generateRateLimit,
   async (req: Request, res: Response) => {
+    try {
     const t0_requestReceived = performance.now();
-    console.log('[PERF] /api/ai/generate-stream — request received');
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log('[PERF] /api/ai/generate-stream — request received');
+    }
 
     // ── Validation ────────────────────────────────────────────────────────────
     const schema = z.object({
@@ -320,7 +323,9 @@ router.post(
       sendEvent({ stage: 'Loaded from cache.' });
       await logAudit(teacherId, 'AI_GENERATE_CACHED', { extraction_id, prompt_hash: promptHash, subject: safeSubject, class_level: safeClassLevel, difficulty, mcq_count, theory_count });
       const t_total = performance.now();
-      console.log(`[PERF] /generate-stream (cache hit): ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+      if (process.env.DEBUG_PERF === 'true') {
+        console.log(`[PERF] /generate-stream (cache hit): ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+      }
       sendEvent({ done: true, cached: true, ...JSON.parse(cachedResult) });
       res.end();
       return;
@@ -360,7 +365,9 @@ router.post(
 
     stageTimers.forEach(clearTimeout);
     const t4 = performance.now();
-    console.log(`[PERF] /generate-stream Gemini call: ${((t4 - t3) / 1000).toFixed(3)}s`);
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log(`[PERF] /generate-stream Gemini call: ${((t4 - t3) / 1000).toFixed(3)}s`);
+    }
 
     // ── Audit log ─────────────────────────────────────────────────────────────
     await logAudit(teacherId, 'AI_GENERATE_SUCCESS', {
@@ -376,10 +383,19 @@ router.post(
     });
 
     const t_total = performance.now();
-    console.log(`[PERF] /generate-stream TOTAL: ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log(`[PERF] /generate-stream TOTAL: ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+    }
 
     sendEvent({ done: true, cached: false, ...questions });
     res.end();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+      if (!res.headersSent) {
+        return sendError(res, message, 500);
+      }
+      try { res.write(`data: ${JSON.stringify({ error: message })}\n\n`); res.end(); } catch (_) {}
+    }
   }
 );
 
@@ -392,9 +408,12 @@ router.post(
   '/generate',
   generateRateLimit,
   async (req: Request, res: Response) => {
+    try {
     // ── Step 1: Request received ───────────────────────────────────────────────
     const t0_requestReceived = performance.now();
-    console.log('[PERF] /api/ai/generate — request received');
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log('[PERF] /api/ai/generate — request received');
+    }
 
     // ── Validation ────────────────────────────────────────────────────────────
     const schema = z.object({
@@ -447,7 +466,9 @@ router.post(
 
     // ── Step 2: Prompt construction ───────────────────────────────────────────
     const t1_promptStart = performance.now();
-    console.log(`[PERF] Step 1 → Step 2 (validation + cache lookup): ${((t1_promptStart - t0_requestReceived) / 1000).toFixed(3)}s`);
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log(`[PERF] Step 1 → Step 2 (validation + cache lookup): ${((t1_promptStart - t0_requestReceived) / 1000).toFixed(3)}s`);
+    }
 
     // ── Daily limit check ─────────────────────────────────────────────────────
     const allowed = await checkDailyLimit(teacherId, schoolId);
@@ -480,7 +501,9 @@ router.post(
 
     const cachedResult = await getCachedResult(promptHash);
     const t2_promptDone = performance.now();
-    console.log(`[PERF] Step 2 (prompt construction + DB limit/cache checks): ${((t2_promptDone - t1_promptStart) / 1000).toFixed(3)}s`);
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log(`[PERF] Step 2 (prompt construction + DB limit/cache checks): ${((t2_promptDone - t1_promptStart) / 1000).toFixed(3)}s`);
+    }
 
     if (cachedResult) {
       // Return cached result — no Gemini API call needed
@@ -495,7 +518,9 @@ router.post(
       });
 
       const t_total = performance.now();
-      console.log(`[PERF] Total (cache hit): ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+      if (process.env.DEBUG_PERF === 'true') {
+        console.log(`[PERF] Total (cache hit): ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+      }
 
       sendSuccess(
         res,
@@ -507,7 +532,9 @@ router.post(
 
     // ── Step 3: Gemini API call ───────────────────────────────────────────────
     const t3_geminiStart = performance.now();
-    console.log('[PERF] Step 3 — calling Gemini API...');
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log('[PERF] Step 3 — calling Gemini API...');
+    }
 
     let questions;
     try {
@@ -535,7 +562,9 @@ router.post(
     }
 
     const t4_geminiDone = performance.now();
-    console.log(`[PERF] Step 3 (Gemini API response): ${((t4_geminiDone - t3_geminiStart) / 1000).toFixed(3)}s`);
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log(`[PERF] Step 3 (Gemini API response): ${((t4_geminiDone - t3_geminiStart) / 1000).toFixed(3)}s`);
+    }
 
     // ── Step 4: Audit log (post-generation DB write) ──────────────────────────
     const t5_auditStart = performance.now();
@@ -551,20 +580,27 @@ router.post(
       theory_generated: questions.theory_questions.length,
     });
     const t6_auditDone = performance.now();
-    console.log(`[PERF] Step 4 (audit log DB write): ${((t6_auditDone - t5_auditStart) / 1000).toFixed(3)}s`);
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log(`[PERF] Step 4 (audit log DB write): ${((t6_auditDone - t5_auditStart) / 1000).toFixed(3)}s`);
+    }
 
     // ── Step 5: Total ─────────────────────────────────────────────────────────
     const t_total = performance.now();
-    console.log(`[PERF] ─────────────────────────────────────────────────────`);
-    console.log(`[PERF] TIMING BREAKDOWN for /api/ai/generate:`);
-    console.log(`[PERF]   Step 1 — request received → validation:     ${((t1_promptStart - t0_requestReceived) / 1000).toFixed(3)}s`);
-    console.log(`[PERF]   Step 2 — prompt construction + DB checks:   ${((t2_promptDone - t1_promptStart) / 1000).toFixed(3)}s`);
-    console.log(`[PERF]   Step 3 — Gemini API response time:          ${((t4_geminiDone - t3_geminiStart) / 1000).toFixed(3)}s`);
-    console.log(`[PERF]   Step 4 — audit log DB write:                ${((t6_auditDone - t5_auditStart) / 1000).toFixed(3)}s`);
-    console.log(`[PERF]   TOTAL response time:                        ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
-    console.log(`[PERF] ─────────────────────────────────────────────────────`);
+    if (process.env.DEBUG_PERF === 'true') {
+      console.log(`[PERF] ─────────────────────────────────────────────────────`);
+      console.log(`[PERF] TIMING BREAKDOWN for /api/ai/generate:`);
+      console.log(`[PERF]   Step 1 — request received → validation:     ${((t1_promptStart - t0_requestReceived) / 1000).toFixed(3)}s`);
+      console.log(`[PERF]   Step 2 — prompt construction + DB checks:   ${((t2_promptDone - t1_promptStart) / 1000).toFixed(3)}s`);
+      console.log(`[PERF]   Step 3 — Gemini API response time:          ${((t4_geminiDone - t3_geminiStart) / 1000).toFixed(3)}s`);
+      console.log(`[PERF]   Step 4 — audit log DB write:                ${((t6_auditDone - t5_auditStart) / 1000).toFixed(3)}s`);
+      console.log(`[PERF]   TOTAL response time:                        ${((t_total - t0_requestReceived) / 1000).toFixed(3)}s`);
+      console.log(`[PERF] ─────────────────────────────────────────────────────`);
+    }
 
     sendSuccess(res, { ...questions, cached: false }, 'Questions generated successfully');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -574,8 +610,11 @@ router.post(
  * This is the final step after the teacher reviews and edits the generated questions.
  */
 router.post('/save-test', async (req: Request, res: Response) => {
+  try {
   const t_sv0 = performance.now();
-  console.log('[PERF] /api/ai/save-test — request received');
+  if (process.env.DEBUG_PERF === 'true') {
+    console.log('[PERF] /api/ai/save-test — request received');
+  }
 
   // ── Validation ────────────────────────────────────────────────────────────
   const mcqSchema = z.object({
@@ -660,8 +699,10 @@ router.post('/save-test', async (req: Request, res: Response) => {
   };
 
   const t_sv1_dbSaveStart = performance.now();
-  console.log(`[PERF] /save-test validation done: ${((t_sv1_dbSaveStart - t_sv0) / 1000).toFixed(3)}s`);
-  console.log('[PERF] /save-test — inserting test record into DB...');
+  if (process.env.DEBUG_PERF === 'true') {
+    console.log(`[PERF] /save-test validation done: ${((t_sv1_dbSaveStart - t_sv0) / 1000).toFixed(3)}s`);
+    console.log('[PERF] /save-test — inserting test record into DB...');
+  }
 
   // Try with extended columns first
   let test: Record<string, unknown> | null = null;
@@ -697,7 +738,9 @@ router.post('/save-test', async (req: Request, res: Response) => {
   }
 
   const t_sv2_testInsertDone = performance.now();
-  console.log(`[PERF] /save-test — test record inserted: ${((t_sv2_testInsertDone - t_sv1_dbSaveStart) / 1000).toFixed(3)}s`);
+  if (process.env.DEBUG_PERF === 'true') {
+    console.log(`[PERF] /save-test — test record inserted: ${((t_sv2_testInsertDone - t_sv1_dbSaveStart) / 1000).toFixed(3)}s`);
+  }
 
   // ── Build question rows ───────────────────────────────────────────────────
   // Use the same column names as the working POST /api/tests compatibility route:
@@ -737,7 +780,9 @@ router.post('/save-test', async (req: Request, res: Response) => {
 
   // ── Insert questions ──────────────────────────────────────────────────────
   const t_sv3_questionsInsertStart = performance.now();
-  console.log(`[PERF] /save-test — inserting ${questionRows.length} question rows...`);
+  if (process.env.DEBUG_PERF === 'true') {
+    console.log(`[PERF] /save-test — inserting ${questionRows.length} question rows...`);
+  }
   const { error: qErr } = await supabaseAdmin.from('test_questions').insert(questionRows);
 
   if (qErr) {
@@ -748,7 +793,9 @@ router.post('/save-test', async (req: Request, res: Response) => {
   }
 
   const t_sv4_questionsInsertDone = performance.now();
-  console.log(`[PERF] /save-test — questions inserted: ${((t_sv4_questionsInsertDone - t_sv3_questionsInsertStart) / 1000).toFixed(3)}s`);
+  if (process.env.DEBUG_PERF === 'true') {
+    console.log(`[PERF] /save-test — questions inserted: ${((t_sv4_questionsInsertDone - t_sv3_questionsInsertStart) / 1000).toFixed(3)}s`);
+  }
 
   // ── Audit log ─────────────────────────────────────────────────────────────
   await logAudit(teacherId, 'AI_TEST_SAVED', {
@@ -770,13 +817,18 @@ router.post('/save-test', async (req: Request, res: Response) => {
   );
 
   const t_sv_total = performance.now();
-  console.log(`[PERF] ─────────────────────────────────────────────────────`);
-  console.log(`[PERF] TIMING BREAKDOWN for /api/ai/save-test:`);
-  console.log(`[PERF]   Validation:                  ${((t_sv1_dbSaveStart - t_sv0) / 1000).toFixed(3)}s`);
-  console.log(`[PERF]   DB save — test record:        ${((t_sv2_testInsertDone - t_sv1_dbSaveStart) / 1000).toFixed(3)}s`);
-  console.log(`[PERF]   DB save — ${questionRows.length} questions:  ${((t_sv4_questionsInsertDone - t_sv3_questionsInsertStart) / 1000).toFixed(3)}s`);
-  console.log(`[PERF]   TOTAL save-test response:     ${((t_sv_total - t_sv0) / 1000).toFixed(3)}s`);
-  console.log(`[PERF] ─────────────────────────────────────────────────────`);
+  if (process.env.DEBUG_PERF === 'true') {
+    console.log(`[PERF] ─────────────────────────────────────────────────────`);
+    console.log(`[PERF] TIMING BREAKDOWN for /api/ai/save-test:`);
+    console.log(`[PERF]   Validation:                  ${((t_sv1_dbSaveStart - t_sv0) / 1000).toFixed(3)}s`);
+    console.log(`[PERF]   DB save — test record:        ${((t_sv2_testInsertDone - t_sv1_dbSaveStart) / 1000).toFixed(3)}s`);
+    console.log(`[PERF]   DB save — ${questionRows.length} questions:  ${((t_sv4_questionsInsertDone - t_sv3_questionsInsertStart) / 1000).toFixed(3)}s`);
+    console.log(`[PERF]   TOTAL save-test response:     ${((t_sv_total - t_sv0) / 1000).toFixed(3)}s`);
+    console.log(`[PERF] ─────────────────────────────────────────────────────`);
+  }
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/ai/usage ─────────────────────────────────────────────────────────
@@ -785,6 +837,7 @@ router.post('/save-test', async (req: Request, res: Response) => {
  * Shown in the UI so the teacher knows their remaining quota.
  */
 router.get('/usage', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id ?? '';
 
@@ -796,6 +849,9 @@ router.get('/usage', async (req: Request, res: Response) => {
     limit: MAX_DAILY_GENERATIONS,
     remaining,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

@@ -487,6 +487,7 @@ const startPackSchema = z.object({
 });
 
 router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId  = req.user!.school_id as string;
   if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
@@ -537,6 +538,9 @@ router.post('/start-pack', ...teacherAuth, async (req: Request, res: Response) =
   const cycleId = (cycle as { id: string }).id;
 
   sendSuccess(res, { cycle_id: cycleId, lockout_until: lockoutUntil }, 'Recovery pack generation started');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 
   // Submit Gemini Batch API job in background — teacher does not wait for this
   setImmediate(async () => {
@@ -756,6 +760,7 @@ const startTestsSchema = z.object({
 });
 
 router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId  = req.user!.school_id as string;
   if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
@@ -787,6 +792,9 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
   }).eq('id', cycleId);
 
   sendSuccess(res, { cycle_id: cycleId }, 'Recovery test generation started');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 
   // Submit Gemini Batch API job in background — teacher does not wait for this
   setImmediate(async () => {
@@ -940,6 +948,7 @@ router.post('/start-tests', ...teacherAuth, async (req: Request, res: Response) 
  * status 'pack_ready' — used by the teacher dashboard alert widget.
  */
 router.get('/ready-packs', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const schoolId = req.user!.school_id as string;
   const userId   = req.user!.id as string;
   if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
@@ -990,11 +999,15 @@ router.get('/ready-packs', ...teacherAuth, async (req: Request, res: Response) =
   );
 
   sendSuccess(res, results);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery/cycle-status ───────────────────────────────────────────
 
 router.get('/cycle-status', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const schoolId = req.user!.school_id as string;
   if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
 
@@ -1074,11 +1087,15 @@ router.get('/cycle-status', ...teacherAuth, async (req: Request, res: Response) 
     days_remaining: daysRemaining,
     is_locked: locked,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery/test-results ───────────────────────────────────────────
 
 router.get('/test-results', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const schoolId = req.user!.school_id as string;
   if (!schoolId) { sendError(res, 'No school associated with your account', 403); return; }
 
@@ -1156,6 +1173,9 @@ router.get('/test-results', ...teacherAuth, async (req: Request, res: Response) 
   });
 
   sendSuccess(res, results);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/recovery/attempt/start ─────────────────────────────────────────
@@ -1163,6 +1183,7 @@ router.get('/test-results', ...teacherAuth, async (req: Request, res: Response) 
 const startAttemptSchema = z.object({ recovery_test_id: z.string().uuid() });
 
 router.post('/attempt/start', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
 
   const parsed = startAttemptSchema.safeParse(req.body);
@@ -1258,6 +1279,9 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     time_limit_minutes: t.time_limit_minutes,
     questions: clientQuestions,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/recovery/attempt/submit ─────────────────────────────────────────
@@ -1271,6 +1295,7 @@ const submitAttemptSchema = z.object({
 });
 
 router.post('/attempt/submit', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
 
   const parsed = submitAttemptSchema.safeParse(req.body);
@@ -1351,6 +1376,9 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
   }).eq('id', attemptId);
 
   sendSuccess(res, { attempt_id: attemptId, score, total_questions: total, percentage });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery/subjects-with-no-data ───────────────────────────────────
@@ -1361,6 +1389,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), asyn
  * Query params: class, section
  */
 router.get('/subjects-with-no-data', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const schoolId = req.user!.school_id as string;
   const teacherId = req.user!.id;
   if (!schoolId) { sendError(res, 'No school associated', 403); return; }
@@ -1405,6 +1434,9 @@ router.get('/subjects-with-no-data', ...teacherAuth, async (req: Request, res: R
   }
 
   sendSuccess(res, noDataSubjects);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/recovery/subject-chapters ──────────────────────────────────────
@@ -1423,6 +1455,7 @@ const subjectChaptersSchema = z.object({
 });
 
 router.post('/subject-chapters', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const schoolId  = req.user!.school_id as string;
   if (!schoolId) { sendError(res, 'No school associated', 403); return; }
 
@@ -1449,6 +1482,9 @@ router.post('/subject-chapters', ...teacherAuth, async (req: Request, res: Respo
   if (error) { sendError(res, error.message, 500); return; }
 
   sendSuccess(res, data, `Chapters saved for ${subject}`);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery/subjects-missing-tests ─────────────────────────────────
@@ -1462,6 +1498,7 @@ router.post('/subject-chapters', ...teacherAuth, async (req: Request, res: Respo
  * Query params: class, section
  */
 router.get('/subjects-missing-tests', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const schoolId  = req.user!.school_id as string;
   const teacherId = req.user!.id;
   if (!schoolId) { sendError(res, 'No school associated', 403); return; }
@@ -1498,6 +1535,9 @@ router.get('/subjects-missing-tests', ...teacherAuth, async (req: Request, res: 
   }
 
   sendSuccess(res, missingSubjects);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery/subject-chapters ──────────────────────────────────────
@@ -1506,6 +1546,7 @@ router.get('/subjects-missing-tests', ...teacherAuth, async (req: Request, res: 
  * Query params: class, section
  */
 router.get('/subject-chapters', ...teacherAuth, async (req: Request, res: Response) => {
+  try {
   const schoolId  = req.user!.school_id as string;
   if (!schoolId) { sendError(res, 'No school associated', 403); return; }
 
@@ -1526,6 +1567,9 @@ router.get('/subject-chapters', ...teacherAuth, async (req: Request, res: Respon
   if (error) { sendError(res, error.message, 500); return; }
 
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

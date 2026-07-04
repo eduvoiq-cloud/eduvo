@@ -27,6 +27,7 @@ function todayDate(): string {
  *   id, name, class, section, fee_paid, photo_url, today_attendance
  */
 router.get('/children', async (req: Request, res: Response) => {
+  try {
   const parentId = req.user!.id;
   const today = todayDate();
 
@@ -97,6 +98,9 @@ router.get('/children', async (req: Request, res: Response) => {
   }));
 
   sendSuccess(res, children);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // -- GET /api/parent/announcements --------------------------------------------
@@ -105,6 +109,7 @@ router.get('/children', async (req: Request, res: Response) => {
  * Query param: limit (default 10, max 50)
  */
 router.get('/announcements', async (req: Request, res: Response) => {
+  try {
   const schoolId = req.user!.school_id;
 
   if (!schoolId) {
@@ -128,6 +133,9 @@ router.get('/announcements', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // -- GET /api/parent/complaints -----------------------------------------------
@@ -135,6 +143,7 @@ router.get('/announcements', async (req: Request, res: Response) => {
  * Returns complaints submitted by this parent, including status updates.
  */
 router.get('/complaints', async (req: Request, res: Response) => {
+  try {
   const { data, error } = await supabaseAdmin
     .from('complaints')
     .select('id, subject, body, status, resolution_note, student_id, created_at, reviewed_at')
@@ -147,6 +156,9 @@ router.get('/complaints', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // -- POST /api/parent/complaints ----------------------------------------------
@@ -156,6 +168,7 @@ router.get('/complaints', async (req: Request, res: Response) => {
  * Rate limit: max 5 complaints per parent per calendar day (DB-enforced).
  */
 router.post('/complaints', async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     student_id: z.string().uuid(),
     message: z.string().min(1).max(2000),
@@ -254,6 +267,9 @@ router.post('/complaints', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, complaint, 'Complaint submitted', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

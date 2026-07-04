@@ -26,7 +26,7 @@ async function getStudentInSchool(
 ): Promise<Record<string, unknown> | null> {
   const { data } = await supabaseAdmin
     .from('students')
-    .select('*')
+    .select('id, full_name, roll_number, class_name, section, school_id, is_deleted, created_at, phone_number, date_of_birth, photo_url, qr_code')
     .eq('id', studentId)
     .eq('school_id', schoolId)
     .maybeSingle();
@@ -84,7 +84,7 @@ router.get('/students', async (req: Request, res: Response) => {
 
   let query = supabaseAdmin
     .from('students')
-    .select('*', { count: 'exact' })
+    .select('id, full_name, roll_number, class_name, section, school_id, is_deleted, created_at, phone_number, date_of_birth, photo_url, qr_code', { count: 'exact' })
     .eq('school_id', schoolId)
     .order('full_name');
 
@@ -108,7 +108,7 @@ router.get('/students', async (req: Request, res: Response) => {
   }
 
   const { data, error, count } = await query;
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] GET students query error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   if (limit > 0) {
     const total       = count ?? 0;
@@ -224,7 +224,8 @@ router.post('/students', async (req: Request, res: Response) => {
     .single();
 
   if (insertErr || !student) {
-    sendError(res, insertErr?.message ?? 'Failed to create student', 500);
+    console.error('[admin] POST students insert error:', insertErr?.message);
+    sendError(res, 'Database operation failed. Please try again.', 500);
     return;
   }
 
@@ -334,7 +335,7 @@ router.post('/students', async (req: Request, res: Response) => {
   // Return student with qr_code populated
   const { data: finalStudent } = await supabaseAdmin
     .from('students')
-    .select('*')
+    .select('id, full_name, roll_number, class_name, section, school_id, is_deleted, created_at, phone_number, date_of_birth, photo_url, qr_code')
     .eq('id', student.id)
     .single();
 
@@ -413,7 +414,7 @@ router.put('/students/:id', async (req: Request, res: Response) => {
     .select()
     .single();
 
-  if (updateErr) { sendError(res, updateErr.message, 500); return; }
+  if (updateErr) { console.error('[admin] PUT students update error:', updateErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   await logAudit(adminId, 'STUDENT_UPDATED', 'students', {
     student_id: req.params.id,
@@ -445,7 +446,7 @@ router.delete('/students/:id', async (req: Request, res: Response) => {
     .update({ is_deleted: true, deleted_at: new Date().toISOString() })
     .eq('id', req.params.id);
 
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] DELETE student soft-delete error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   await logAudit(adminId, 'STUDENT_DELETED', 'students', {
     student_id:   req.params.id,
@@ -479,7 +480,7 @@ router.post('/students/restore/:id', async (req: Request, res: Response) => {
     .select()
     .single();
 
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] POST students/restore error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   await logAudit(adminId, 'STUDENT_RESTORED', 'students', {
     student_id:   req.params.id,
@@ -570,7 +571,8 @@ router.post('/teachers', async (req: Request, res: Response) => {
   }
 
   if (authErr || !authData?.user) {
-    sendError(res, authErr?.message ?? 'Failed to create auth account', 500);
+    console.error('[admin] POST teachers auth create error:', authErr?.message);
+    sendError(res, 'Database operation failed. Please try again.', 500);
     return;
   }
 
@@ -680,7 +682,8 @@ router.post('/teachers/assign', async (req: Request, res: Response) => {
       sendError(res, 'Teacher is already assigned to this class/section/subject', 409);
       return;
     }
-    sendError(res, assignErr.message, 500);
+    console.error('[admin] POST teachers/assign error:', assignErr.message);
+    sendError(res, 'Database operation failed. Please try again.', 500);
     return;
   }
 
@@ -736,7 +739,7 @@ router.delete('/teachers/:id', async (req: Request, res: Response) => {
       .update({ is_deleted: true, deleted_at: new Date().toISOString() })
       .eq('id', req.params.id);
 
-    if (softDeleteErr) { sendError(res, softDeleteErr.message, 500); return; }
+    if (softDeleteErr) { console.error('[admin] DELETE teacher soft-delete fallback error:', softDeleteErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   }
 
   await logAudit(adminId, 'TEACHER_DELETED', 'users', {
@@ -790,7 +793,7 @@ router.post('/subjects', async (req: Request, res: Response) => {
     .select()
     .single();
 
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] POST subjects insert error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   sendSuccess(res, subject, 'Subject added', 201);
 });
@@ -806,7 +809,7 @@ router.get('/subjects', async (req: Request, res: Response) => {
     .eq('school_id', req.user!.school_id!)
     .order('name');
 
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] GET subjects query error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   sendSuccess(res, data ?? []);
 });
 
@@ -828,7 +831,7 @@ router.get('/classes', async (req: Request, res: Response) => {
     .order('class_name')
     .order('section');
 
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] GET classes query error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   // Deduplicate class+section combinations
   const seen = new Set<string>();
@@ -888,7 +891,7 @@ router.post('/announcements', async (req: Request, res: Response) => {
     .select()
     .single();
 
-  if (annErr) { sendError(res, annErr.message, 500); return; }
+  if (annErr) { console.error('[admin] POST announcements insert error:', annErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   // Fetch all parents in this school
   let parentQuery = supabaseAdmin
@@ -1021,7 +1024,7 @@ router.put('/settings', async (req: Request, res: Response) => {
       .update(schoolUpdates)
       .eq('id', schoolId);
 
-    if (schoolErr) { sendError(res, schoolErr.message, 500); return; }
+    if (schoolErr) { console.error('[admin] PUT school-settings schools update error:', schoolErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   }
 
   // Upsert school_settings if attendance_cutoff_time provided
@@ -1037,7 +1040,7 @@ router.put('/settings', async (req: Request, res: Response) => {
         { onConflict: 'school_id' }
       );
 
-    if (settingsErr) { sendError(res, settingsErr.message, 500); return; }
+    if (settingsErr) { console.error('[admin] PUT school-settings upsert error:', settingsErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   }
 
   await logAudit(adminId, 'SCHOOL_SETTINGS_UPDATED', 'schools', {
@@ -1692,7 +1695,7 @@ router.get('/students/id-cards/bulk', async (req: Request, res: Response) => {
     .order('class_name')
     .order('full_name');
 
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] GET id-cards students query error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   if (!students || students.length === 0) {
     sendError(res, 'No students found', 404);
     return;
@@ -1847,7 +1850,8 @@ router.get('/audit-logs', async (req: Request, res: Response) => {
     .limit(limit);
 
   if (error) {
-    sendError(res, error.message, 500);
+    console.error('[admin] GET audit-logs query error:', error.message);
+    sendError(res, 'Database operation failed. Please try again.', 500);
     return;
   }
 
@@ -1877,7 +1881,7 @@ router.get('/complaints', async (req: Request, res: Response) => {
   if (status) query = query.eq('status', status);
 
   const { data, error } = await query;
-  if (error) { sendError(res, error.message, 500); return; }
+  if (error) { console.error('[admin] GET complaints query error:', error.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   sendSuccess(res, data ?? []);
 });
@@ -1909,7 +1913,7 @@ router.get('/fees', async (req: Request, res: Response) => {
   if (section)    studentQuery = studentQuery.ilike('section', section.trim());
 
   const { data: students, error: sErr } = await studentQuery;
-  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (sErr) { console.error('[admin] GET fees students query error:', sErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   if (!students || students.length === 0) { sendSuccess(res, []); return; }
 
   const studentIds = students.map((s: { id: string }) => s.id);
@@ -1924,7 +1928,7 @@ router.get('/fees', async (req: Request, res: Response) => {
   if (academic_year) feeQuery = feeQuery.eq('academic_year', academic_year);
 
   const { data: fees, error: fErr } = await feeQuery;
-  if (fErr) { sendError(res, fErr.message, 500); return; }
+  if (fErr) { console.error('[admin] GET fees fee-records query error:', fErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   // Merge: one row per student with their fee status
   const feeMap = new Map((fees ?? []).map((f: { student_id: string }) => [f.student_id, f]));
@@ -2045,7 +2049,7 @@ router.get('/performance/monthly-snapshot', async (req: Request, res: Response) 
     .eq('school_id', schoolId)
     .eq('is_deleted', false);
 
-  if (studErr) { sendError(res, studErr.message, 500); return; }
+  if (studErr) { console.error('[admin] GET monthly-rankings students query error:', studErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   if (!students || students.length === 0) {
     sendSuccess(res, { classRankings: [], topStudents: [], bottomStudents: [], year: rawYear, month: rawMonth });
     return;
@@ -2068,7 +2072,7 @@ router.get('/performance/monthly-snapshot', async (req: Request, res: Response) 
       .gte('created_at', startIso)
       .lt('created_at', endIso);
 
-    if (marksErr) { sendError(res, marksErr.message, 500); return; }
+    if (marksErr) { console.error('[admin] GET monthly-rankings marks chunk query error:', marksErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
     if (chunkMarks) allMarks = allMarks.concat(chunkMarks);
   }
 
@@ -2260,7 +2264,7 @@ router.get('/teacher-activity', async (req: Request, res: Response) => {
     .eq('role', 'teacher')
     .or('is_deleted.is.null,is_deleted.eq.false');
 
-  if (tErr) { sendError(res, tErr.message, 500); return; }
+  if (tErr) { console.error('[admin] GET teacher-activity teachers query error:', tErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   if (!teachers || teachers.length === 0) { sendSuccess(res, []); return; }
 
   const teacherIds = teachers.map((t: { id: string }) => t.id);
@@ -2387,7 +2391,7 @@ router.get('/class-comparison', async (req: Request, res: Response) => {
     .eq('school_id', schoolId)
     .eq('is_deleted', false);
 
-  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (sErr) { console.error('[admin] GET monthly-class-report students query error:', sErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   if (!students || students.length === 0) {
     sendSuccess(res, { year: rawYear, month: rawMonth, classes: [] });
     return;
@@ -2580,7 +2584,7 @@ router.get('/at-risk', async (req: Request, res: Response) => {
     .eq('school_id', schoolId)
     .eq('is_deleted', false);
 
-  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (sErr) { console.error('[admin] GET at-risk students query error:', sErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
   if (!students || students.length === 0) {
     sendSuccess(res, { total_at_risk: 0, students: [] });
     return;
@@ -2732,7 +2736,7 @@ router.get('/health-score', async (req: Request, res: Response) => {
     .eq('school_id', schoolId)
     .eq('is_deleted', false);
 
-  if (sErr) { sendError(res, sErr.message, 500); return; }
+  if (sErr) { console.error('[admin] GET dashboard students query error:', sErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   const studentIds = (students ?? []).map((s: { id: string; class_name?: string; section?: string }) => s.id);
   const totalStudents = studentIds.length;
@@ -2745,7 +2749,7 @@ router.get('/health-score', async (req: Request, res: Response) => {
     .eq('role', 'teacher')
     .or('is_deleted.is.null,is_deleted.eq.false');
 
-  if (tErr) { sendError(res, tErr.message, 500); return; }
+  if (tErr) { console.error('[admin] GET dashboard teachers query error:', tErr.message); sendError(res, 'Database operation failed. Please try again.', 500); return; }
 
   const teacherIds = (teachers ?? []).map((t: { id: string }) => t.id);
   const totalTeachers = teacherIds.length;

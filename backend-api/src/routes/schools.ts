@@ -37,6 +37,7 @@ const updateSchoolSchema = createSchoolSchema.partial().extend({
  * Returns only id and name. Rate-limited to 30 req/min per IP to prevent scraping.
  */
 router.get('/list', schoolListRateLimit, async (_req: Request, res: Response) => {
+  try {
   const { data, error } = await supabaseAdmin
     .from('schools')
     .select('id, name')
@@ -48,6 +49,9 @@ router.get('/list', schoolListRateLimit, async (_req: Request, res: Response) =>
   }
 
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // All routes below require authentication
@@ -57,6 +61,7 @@ router.use(authenticate);
 
 /** GET /api/schools — superadmin only */
 router.get('/', requireRole('superadmin'), async (_req: Request, res: Response) => {
+  try {
   const { data, error } = await supabaseAdmin
     .from('schools')
     .select('*')
@@ -68,10 +73,14 @@ router.get('/', requireRole('superadmin'), async (_req: Request, res: Response) 
   }
 
   sendSuccess(res, data);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** GET /api/schools/:id */
 router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   // Teachers and schooladmins can only fetch their own school — prevents
   // cross-school data leakage (e.g. a teacher enumerating competitor schools).
   if (req.user!.role === 'teacher' || req.user!.role === 'schooladmin') {
@@ -93,10 +102,14 @@ router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (r
   }
 
   sendSuccess(res, data);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** POST /api/schools — superadmin only */
 router.post('/', requireRole('superadmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = createSchoolSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -117,10 +130,14 @@ router.post('/', requireRole('superadmin'), async (req: Request, res: Response) 
   await logAudit(req.user!.id, 'SCHOOL_CREATED', { school_id: data.id, name: data.name });
 
   sendSuccess(res, data, 'School created', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** PATCH /api/schools/:id — superadmin only */
 router.patch('/:id', requireRole('superadmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = updateSchoolSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -142,10 +159,14 @@ router.patch('/:id', requireRole('superadmin'), async (req: Request, res: Respon
   await logAudit(req.user!.id, 'SCHOOL_UPDATED', { school_id: req.params.id });
 
   sendSuccess(res, data, 'School updated');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** DELETE /api/schools/:id — superadmin only */
 router.delete('/:id', requireRole('superadmin'), async (req: Request, res: Response) => {
+  try {
   const { error } = await supabaseAdmin
     .from('schools')
     .delete()
@@ -159,6 +180,9 @@ router.delete('/:id', requireRole('superadmin'), async (req: Request, res: Respo
   await logAudit(req.user!.id, 'SCHOOL_DELETED', { school_id: req.params.id });
 
   sendSuccess(res, null, 'School deleted');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

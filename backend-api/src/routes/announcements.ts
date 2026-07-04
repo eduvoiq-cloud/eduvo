@@ -50,6 +50,7 @@ const adminAnnouncementSchema = z.object({
  * - Logs to audit_logs.
  */
 router.post('/teacher', requireRole('teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = teacherAnnouncementSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -176,6 +177,9 @@ router.post('/teacher', requireRole('teacher'), async (req: Request, res: Respon
     `Announcement sent to ${target_classes.length} class${target_classes.length !== 1 ? 'es' : ''}`,
     201
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/announcements/admin ────────────────────────────────────────────
@@ -191,6 +195,7 @@ router.post('/teacher', requireRole('teacher'), async (req: Request, res: Respon
  * Also sends FCM push notifications to the relevant users.
  */
 router.post('/admin', requireRole('schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = adminAnnouncementSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -298,6 +303,9 @@ router.post('/admin', requireRole('schooladmin', 'superadmin'), async (req: Requ
     `Announcement sent to ${totalReachable} recipient${totalReachable !== 1 ? 's' : ''}`,
     201
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/announcements/school ────────────────────────────────────────────
@@ -307,6 +315,7 @@ router.post('/admin', requireRole('schooladmin', 'superadmin'), async (req: Requ
  * Returns only announcements with sender_role='schooladmin'.
  */
 router.get('/school', requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  try {
   const schoolId = req.user!.school_id;
 
   if (!schoolId) {
@@ -328,6 +337,9 @@ router.get('/school', requireRole('teacher', 'schooladmin', 'superadmin'), async
   }
 
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/announcements/student ───────────────────────────────────────────
@@ -345,6 +357,7 @@ studentRouter.get(
   '/student',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const student = req.student;
     if (!student) {
       sendError(res, 'Student not authenticated', 401);
@@ -389,6 +402,9 @@ studentRouter.get(
     });
 
     sendSuccess(res, relevant);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -398,6 +414,7 @@ studentRouter.get(
  * Sorted newest first.
  */
 router.get('/my', requireRole('teacher'), async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id;
 
@@ -419,6 +436,9 @@ router.get('/my', requireRole('teacher'), async (req: Request, res: Response) =>
   }
 
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── DELETE /api/announcements/:id ─────────────────────────────────────────────
@@ -427,6 +447,7 @@ router.get('/my', requireRole('teacher'), async (req: Request, res: Response) =>
  * Only the teacher who created it can delete it.
  */
 router.delete('/:id', requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+  try {
   const userId = req.user!.id;
   const userRole = req.user!.role;
 
@@ -471,6 +492,9 @@ router.delete('/:id', requireRole('teacher', 'schooladmin', 'superadmin'), async
   });
 
   sendSuccess(res, null, 'Announcement deleted');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── Combined export ───────────────────────────────────────────────────────────

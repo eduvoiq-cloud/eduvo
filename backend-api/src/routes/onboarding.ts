@@ -52,6 +52,7 @@ router.get(
   '/status',
   requireRole('schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id;
 
     if (!schoolId) {
@@ -104,6 +105,9 @@ router.get(
     await logAudit(req.user!.id, 'ONBOARDING_PROGRESS_CREATED', { school_id: schoolId });
 
     sendSuccess(res, created, 'Onboarding progress initialised', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -117,6 +121,7 @@ router.put(
   '/step',
   requireRole('schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       step: z.enum(VALID_STEPS, {
         error: () => ({
@@ -214,6 +219,9 @@ router.put(
     });
 
     sendSuccess(res, updated, 'Onboarding step updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

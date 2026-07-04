@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI, type Part } from "@google/generative-ai";
+import { type Part } from "@google/generative-ai";
+import { geminiRawWithFallback } from "../utils/geminiRaw";
 import mammoth from "mammoth";
 import crypto from "crypto";
 import { supabase } from "../config/supabase";
@@ -173,6 +174,8 @@ export async function generateQuestions(
   // Build a deterministic hash — return cached result if available
   const promptHash = buildPromptHash(
     extraction.data,
+    school_id,
+    teacher_id,
     subject,
     class_level,
     difficulty,
@@ -286,61 +289,43 @@ Return this exact JSON structure:
     required: ["mcq_questions", "theory_questions"],
   };
 
-  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
-  const fallbackModelId = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-1.5-flash";
-  // NOTE: gemini-2.0-flash was deprecated by Google — do NOT use it as a fallback.
-  // geminiService handles complex doc understanding — keep on full Flash, not Lite.
-  const modelsToTry = modelId === fallbackModelId ? [modelId] : [modelId, fallbackModelId];
+  // Use GEMINI_MODEL_QUESTIONS for question generation (same as tests.ts /generate).
+  // Flash Lite is sufficient — MCQ generation is simple extraction, not complex reasoning.
+  // GEMINI_MODEL (full Flash) is reserved for homework eval and monthly reports.
+  // Uses raw REST API so thinkingBudget:0 is guaranteed to reach the API (SDK v0.24 drops it).
+  const modelId = process.env.GEMINI_MODEL_QUESTIONS ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
+  const fallbackModelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-
-  let result: Awaited<ReturnType<ReturnType<typeof genAI.getGenerativeModel>['generateContent']>> | null = null;
+  let rawText = '';
   let tokensUsed = 0;
-  let t_gs3_geminiCallStart = 0;
-  let t_gs4_geminiCallDone = 0;
+  let thinkingTokens = 0;
+  let t_gs3_geminiCallStart = performance.now();
 
-  for (const currentModelId of modelsToTry) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: currentModelId,
-        systemInstruction,
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema,
-          // Disable thinking tokens — question generation from a document is
-          // straightforward extraction, not complex reasoning. Thinking adds
-          // 8k–20k tokens per call with no benefit for this task.
-          thinkingConfig: { thinkingBudget: 0 },
-        } as Record<string, unknown>,
-      });
-      t_gs3_geminiCallStart = performance.now();
-      if (currentModelId !== modelId) {
-        console.warn(`[geminiService] Falling back to ${currentModelId}…`);
-      }
-      result = await model.generateContent({ contents: [{ role: "user", parts: requestParts }] });
-      t_gs4_geminiCallDone = performance.now();
-      tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
-      break; // success
-    } catch (err) {
-      const status = (err as Record<string, unknown>)?.status as number | undefined;
-      if ((status === 503 || status === 429) && currentModelId !== fallbackModelId) {
-        console.warn(`[geminiService] ${currentModelId} returned ${status}, retrying with ${fallbackModelId}…`);
-        continue;
-      }
-      throw err; // non-retryable or already on fallback
-    }
+  try {
+    const result = await geminiRawWithFallback(modelId, fallbackModelId, {
+      apiKey,
+      parts: requestParts as Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>,
+      systemInstruction,
+      responseSchema: responseSchema as Record<string, unknown>,
+      disableThinking: true,
+    });
+    rawText = result.text;
+    tokensUsed = result.totalTokens;
+    thinkingTokens = result.thinkingTokens;
+  } catch (err) {
+    throw err;
   }
 
-  if (!result) {
-    throw new Error("AI is currently overloaded. Please try again in a moment.");
-  }
+  const t_gs4_geminiCallDone = performance.now();
 
-  const responseText = result.response.text().trim();
+  if (thinkingTokens > 0) {
+    console.warn(`[geminiService] thinking tokens fired: ${thinkingTokens} — check thinkingBudget config`);
+  }
 
   // Parse JSON — strip accidental markdown fences
   let parsed: GeneratedContent;
   try {
-    const jsonText = responseText
+    const jsonText = rawText
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "")
       .trim();
@@ -360,7 +345,6 @@ Return this exact JSON structure:
   });
   const t_gs6_dbSaveDone = performance.now();
 
-  // Single summary log — enough for production monitoring without flooding logs
   console.info(
     `[gemini] generateQuestions done in ${((t_gs6_dbSaveDone - t_gs0) / 1000).toFixed(2)}s` +
     ` | tokens: ${tokensUsed}` +
@@ -449,6 +433,8 @@ export async function saveUsageRecord(params: SaveUsageParams): Promise<void> {
 
 function buildPromptHash(
   data: string,
+  school_id: string,
+  teacher_id: string,
   subject: string,
   class_level: string,
   difficulty: string,
@@ -457,6 +443,6 @@ function buildPromptHash(
 ): string {
   return crypto
     .createHash("sha256")
-    .update(data + subject + class_level + difficulty + mcq_count + theory_count)
+    .update(data + school_id + teacher_id + subject + class_level + difficulty + mcq_count + theory_count)
     .digest("hex");
 }

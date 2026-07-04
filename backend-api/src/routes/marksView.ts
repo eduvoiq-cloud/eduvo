@@ -14,6 +14,7 @@ router.use(requireRole('superadmin', 'schooladmin', 'teacher'));
 // Returns distinct class_name + section combinations for the school.
 // Used to populate dropdowns in the admin marks page.
 router.get('/classes', async (req: Request, res: Response) => {
+  try {
   const { data, error } = await supabaseAdmin
     .from('students')
     .select('class_name, section')
@@ -39,12 +40,16 @@ router.get('/classes', async (req: Request, res: Response) => {
   );
 
   sendSuccess(res, classes);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/marks-view/class?class_name=&section=&term=&exam_type=
 // Returns all marks for every student in a class, joined with student info.
 // Supports optional term and exam_type filters.
 router.get('/class', async (req: Request, res: Response) => {
+  try {
   const { class_name, section, term, exam_type, subject } = req.query as Record<string, string>;
 
   if (!class_name) {
@@ -215,11 +220,15 @@ router.get('/class', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, result);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/marks-view/student/:id
 // Returns all marks for a single student along with student profile info.
 router.get('/student/:id', async (req: Request, res: Response) => {
+  try {
   const { id } = req.params;
   const { term, exam_type } = req.query as Record<string, string>;
 
@@ -401,6 +410,9 @@ router.get('/student/:id', async (req: Request, res: Response) => {
     test_submissions: enrichedAttempts,
     test_submissions_count: enrichedAttempts.length,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

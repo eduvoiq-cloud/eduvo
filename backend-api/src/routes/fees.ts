@@ -15,6 +15,7 @@ const router = Router();
  * Auth: student token
  */
 router.get('/my-status', authenticateStudent, async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
 
   const { data, error } = await supabaseAdmin
@@ -54,6 +55,9 @@ router.get('/my-status', authenticateStudent, async (req: Request, res: Response
     academic_year: data.academic_year ?? null,
     notes: data.notes ?? null,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 router.use(authenticate);
@@ -89,6 +93,7 @@ const updatePaymentSchema = z.object({
  * Teachers are scoped to their assigned classes.
  */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const { class_name, section, term, academic_year } = req.query as Record<string, string>;
 
   // Pagination
@@ -170,6 +175,9 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
 
   const total = count ?? 0;
   sendSuccess(res, { data: result, total, page, limit, total_pages: Math.ceil(total / limit) });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -178,6 +186,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
  * Uses select → update/insert instead of upsert to avoid constraint issues.
  */
 router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = updatePaymentSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -268,6 +277,9 @@ router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'tea
   });
 
   sendSuccess(res, data, 'Payment updated successfully');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -276,6 +288,7 @@ router.put('/:student_id/payment', requireRole('superadmin', 'schooladmin', 'tea
  * Legacy endpoint — kept for backward compatibility.
  */
 router.post('/:student_id/toggle', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = toggleFeeSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -314,6 +327,9 @@ router.post('/:student_id/toggle', requireRole('superadmin', 'schooladmin', 'tea
   });
 
   sendSuccess(res, data, `Fee marked as ${parsed.data.fee_paid ? 'paid' : 'unpaid'}`);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -322,6 +338,7 @@ router.post('/:student_id/toggle', requireRole('superadmin', 'schooladmin', 'tea
  * Body: { class_name, section, total_fee_amount, term?, academic_year? }
  */
 router.post('/class-bulk', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     class_name: z.string().min(1),
     section: z.string().min(1),
@@ -442,6 +459,9 @@ router.post('/class-bulk', requireRole('superadmin', 'schooladmin', 'teacher'), 
     updated,
     inserted,
   }, `Total fees set to ${total_fee_amount} for ${students.length} students in ${class_name} ${section}`);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -451,6 +471,7 @@ router.post('/class-bulk', requireRole('superadmin', 'schooladmin', 'teacher'), 
  * Fetches each student's fee record and creates a personalised notification.
  */
 router.post('/send-reminder', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     class_name: z.string().min(1),
     section: z.string().min(1),
@@ -576,6 +597,9 @@ router.post('/send-reminder', requireRole('superadmin', 'schooladmin', 'teacher'
     skipped: skipped.length,
     skipped_names: skipped,
   }, `Fee reminders sent to ${sent} student(s)`);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -585,6 +609,7 @@ router.post('/send-reminder', requireRole('superadmin', 'schooladmin', 'teacher'
  * Body: { class_name, section, custom_note?, term?, academic_year? }
  */
 router.post('/preview-reminder', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     class_name: z.string().min(1),
     section: z.string().min(1),
@@ -655,6 +680,9 @@ router.post('/preview-reminder', requireRole('superadmin', 'schooladmin', 'teach
   });
 
   sendSuccess(res, previews);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

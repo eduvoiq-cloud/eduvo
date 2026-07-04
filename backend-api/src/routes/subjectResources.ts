@@ -211,6 +211,7 @@ router.post(
   requireRole('superadmin', 'schooladmin', 'teacher'),
   upload.array('files', MAX_FILES_PER_RESOURCE),
   async (req: Request, res: Response) => {
+    try {
     const files = req.files as Express.Multer.File[] | undefined;
     if (!files || files.length === 0) {
       sendError(res, 'No files provided', 400);
@@ -266,6 +267,9 @@ router.post(
     }
 
     sendSuccess(res, { urls: uploadedUrls }, 'Files uploaded successfully');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -291,6 +295,7 @@ router.post(
   requireRole('superadmin', 'schooladmin', 'teacher'),
   createRateLimit,
   async (req: Request, res: Response) => {
+    try {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -391,6 +396,9 @@ router.post(
     });
 
     sendSuccess(res, resource, 'Resource created successfully', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -404,6 +412,7 @@ router.get(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const teacherId = req.user!.id;
     const schoolId = req.user!.school_id;
 
@@ -435,6 +444,9 @@ router.get(
     }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -448,6 +460,7 @@ router.get(
   authenticate,
   requireRole('superadmin', 'schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id;
 
     if (!schoolId && req.user!.role !== 'superadmin') {
@@ -526,6 +539,9 @@ router.get(
       total_this_week: (rows ?? []).length,
       by_teacher: stats,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -539,6 +555,7 @@ router.get(
   '/',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     let schoolId: string;
     let className: string;
     let section: string;
@@ -603,6 +620,9 @@ router.get(
     }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -614,6 +634,7 @@ router.get(
   '/subjects',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     let schoolId: string;
     let className: string;
     let section: string;
@@ -649,6 +670,9 @@ router.get(
 
     const subjects = [...new Set((data ?? []).map((r: Record<string, unknown>) => r.subject as string))].sort();
     sendSuccess(res, subjects);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -668,6 +692,7 @@ router.patch(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { id } = req.params;
     const parsed = patchSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -725,6 +750,9 @@ router.patch(
     }
 
     sendSuccess(res, updated, 'Resource updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -737,6 +765,7 @@ router.delete(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { id } = req.params;
 
     const { data: existing, error: fetchErr } = await supabaseAdmin
@@ -799,6 +828,9 @@ router.delete(
     });
 
     sendSuccess(res, { id }, 'Resource deleted successfully');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

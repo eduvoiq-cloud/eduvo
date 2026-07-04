@@ -7,9 +7,10 @@ import { sendSuccess, sendError, sendValidationError } from '../utils/response';
 import { logAudit } from '../utils/audit';
 import { normaliseTerm } from '../utils/term';
 import { getTokensForStudents, getTokensForUsers, sendPushMulticast } from '../services/fcmService';
-import { testSubmitRateLimit } from '../middleware/rateLimit';
+import { testSubmitRateLimit, generateRateLimit } from '../middleware/rateLimit';
 import { updateStreakWithMilestone } from '../services/streakService';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { geminiRawWithFallback } from '../utils/geminiRaw';
+import { checkDailyLimit, saveUsageRecord } from '../services/geminiService';
 
 const router = Router();
 
@@ -85,7 +86,7 @@ const theoryMarkSchema = z.object({
   attempt_id: z.string().uuid(),
   theory_marks: z.array(z.object({
     question_id: z.string().uuid(),
-    marks_awarded: z.number().min(0),
+    marks_awarded: z.number().min(0).max(1000),
   })).min(1),
 });
 
@@ -142,7 +143,7 @@ async function teacherOwnsClass(
  * Identical capability to the old /api/daily-tests/generate endpoint.
  * Supports text-based generation and image/PDF upload via base64.
  */
-router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
+router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), generateRateLimit, async (req: Request, res: Response) => {
   const schema = z.object({
     class: z.string().min(1),
     subject: z.string().min(1),
@@ -187,10 +188,13 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
     return;
   }
 
+  const allowed = await checkDailyLimit(req.user!.id, req.user!.school_id ?? '');
+  if (!allowed) {
+    return sendError(res, 'Daily AI generation limit reached. Resets tomorrow.', 429);
+  }
+
   const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY ?? '';
   if (!apiKey) { sendError(res, 'AI generation is not configured', 503); return; }
-
-  // Build difficulty line
   let difficultyLine: string;
   if (difficulty_mode === 'easy') {
     difficultyLine = `All ${count} questions must be easy level.`;
@@ -345,55 +349,29 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
 
   // Question generation is lightweight — use Flash Lite (cheap + fast).
   // Falls back to gemini-2.5-flash if Lite is overloaded (503).
-  // Override via GEMINI_MODEL_QUESTIONS env var if needed.
+  // Uses raw REST API (not SDK) so thinkingBudget:0 is guaranteed to be sent.
   const primaryModel  = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
   const fallbackModel = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-  const modelsToTry   = primaryModel === fallbackModel ? [primaryModel] : [primaryModel, fallbackModel];
-
-  const genAI = new GoogleGenerativeAI(apiKey);
 
   let raw = '';
-  let lastErr: unknown;
-
-  for (const modelName of modelsToTry) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema,
-          // Disable thinking tokens — MCQ generation from a topic/chapter is
-          // simple extraction, not complex reasoning. Flash Lite + no thinking
-          // is ~20x cheaper than Flash with thinking.
-          thinkingConfig: { thinkingBudget: 0 },
-        } as Record<string, unknown>,
-      });
-      const result = await model.generateContent(contentParts);
-      raw = result.response.text().trim();
-      lastErr = null;
-      break; // success — stop trying
-    } catch (err) {
-      lastErr = err;
-      const status = (err as Record<string, unknown>)?.status as number | undefined;
-      if (status === 503 || status === 429) {
-        console.warn(`[tests/generate] ${modelName} returned ${status}, trying fallback…`);
-        continue; // try next model
-      }
-      // Any other error (auth, bad request, etc.) — fail immediately
-      console.error('[tests/generate] Gemini error:', err);
-      const msg = (err instanceof Error ? err.message : '') || 'Failed to generate questions. Please try again.';
-      sendError(res, msg, 500);
-      return;
+  try {
+    const result = await geminiRawWithFallback(primaryModel, fallbackModel, {
+      apiKey,
+      parts: contentParts as Array<{ text?: string; inlineData?: { mimeType: string; data: string } }>,
+      responseSchema: responseSchema as Record<string, unknown>,
+      disableThinking: true,
+    });
+    raw = result.text.trim();
+    if (result.thinkingTokens > 0) {
+      console.warn(`[tests/generate] thinking tokens fired: ${result.thinkingTokens} on ${result.modelUsed} — check thinkingBudget`);
     }
-  }
-
-  if (lastErr) {
-    console.error('[tests/generate] All models failed:', lastErr);
-    const status = (lastErr as Record<string, unknown>)?.status as number | undefined;
-    if (status === 503 || status === 429) {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[tests/generate] Gemini error:', err);
+    if (msg.includes('503') || msg.includes('429') || msg.includes('overloaded')) {
       sendError(res, 'AI is currently overloaded. Please try again in a moment.', 503);
     } else {
-      sendError(res, 'Failed to generate questions. Please try again.', 500);
+      sendError(res, msg || 'Failed to generate questions. Please try again.', 500);
     }
     return;
   }
@@ -425,6 +403,16 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     }));
 
     sendSuccess(res, { questions, chapter_library_id: chapter_library_id ?? null, selected_topics: selected_topics ?? null }, 'Questions generated');
+
+    // Record usage (fire-and-forget — don't block the response)
+    saveUsageRecord({
+      user_id: req.user!.id,
+      school_id: req.user!.school_id ?? '',
+      feature: 'test_generate',
+      tokens_used: 0,
+      prompt_hash: '',
+      cached_result: '',
+    }).catch((err) => console.error('[tests/generate] saveUsageRecord error:', err));
   } catch (err) {
     console.error('[tests/generate] post-parse error:', err);
     sendError(res, 'Failed to generate questions. Please try again.', 500);
@@ -902,8 +890,15 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
  * Applies shuffle if configured.
  */
 router.post('/attempt/start', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
-  const { test_id, platform: rawPlatform } = req.body as { test_id?: string; platform?: string };
-  if (!test_id) { sendError(res, 'test_id is required', 400); return; }
+  const startSchema = z.object({
+    test_id: z.string().uuid('Invalid test ID'),
+    platform: z.string().optional()
+  });
+  const parsed = startSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendValidationError(res, parsed.error.flatten());
+  }
+  const { test_id, platform: rawPlatform } = parsed.data;
 
   // Default to 'mobile' if not provided (backwards compat with existing app)
   const platform: 'mobile' | 'web' = rawPlatform === 'web' ? 'web' : 'mobile';
@@ -1237,6 +1232,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
  * Auto-submits if time limit exceeded.
  */
 router.post('/attempt/submit', authenticateStudent, requireRole('student'), testSubmitRateLimit, async (req: Request, res: Response) => {
+  try {
   // FIX 18: Reject an empty submission before any schema parsing.
   // If the student submitted a form with zero answers selected, return a clear
   // 400 so they know nothing was recorded. The attempt is NOT consumed.
@@ -1513,6 +1509,10 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
   });
 
   sendSuccess(res, { mcq_score: mcqScore, total_mcq_marks: totalMcqMarks }, 'Test submitted');
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unexpected error';
+    return sendError(res, 'Failed to submit test attempt', 500);
+  }
 });
 
 // ── POST /api/tests/theory/mark ───────────────────────────────────────────────
@@ -1575,12 +1575,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
       });
 
     if (question && marks_awarded > (question as { marks: number }).marks) {
-      sendError(
-        res,
-        `Marks awarded (${marks_awarded}) cannot exceed question max marks (${(question as { marks: number }).marks}) for question ${question_id}`,
-        400
-      );
-      return;
+      return sendError(res, 'Marks awarded cannot exceed question marks', 400);
     }
 
     const { error: uErr } = await supabaseAdmin

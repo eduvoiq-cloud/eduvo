@@ -250,6 +250,7 @@ router.get(
   authenticateAny,
   requireRole('teacher', 'schooladmin', 'superadmin', 'student'),
   async (req: Request, res: Response) => {
+    try {
     const isStudent = req.tokenType === 'student';
     const studentId: string | null = req.student?.id ?? null;
 
@@ -287,13 +288,11 @@ router.get(
       schoolId = qSchoolId;
     }
 
-    // Cutoff: only show homework from the last 7 days onward
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 7);
-    const cutoff = cutoffDate.toISOString().slice(0, 10);
-
     // Fetch homework with subject, teacher info, and acknowledgement status in one query
     // Uses LEFT JOIN on homework_acknowledgements filtered by student_id to avoid N+1 queries
+    // No due_date cutoff — we return all homework rows so students can see their full
+    // history (pending, completed, and missed). Files may be null after 7-day cleanup
+    // but the DB records always remain intact.
     const selectFields = isStudent && studentId
       ? `id, title, description, due_date, file_url, created_at, ai_check_enabled,
          subjects ( name ),
@@ -309,7 +308,6 @@ router.get(
       .eq('school_id', schoolId)
       .ilike('class_name', className.trim())
       .ilike('section', section.trim())
-      .gte('due_date', cutoff)
       .order('due_date', { ascending: true });
 
     if (hwErr) {
@@ -394,6 +392,9 @@ router.get(
     }
 
     sendSuccess(res, baseResult);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -413,6 +414,7 @@ router.post(
   requireRole('teacher', 'schooladmin', 'superadmin'),
   createHomeworkRateLimit,
   async (req: Request, res: Response) => {
+    try {
     const parsed = createHomeworkSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -647,6 +649,9 @@ router.post(
     };
 
     sendSuccess(res, result, 'Homework created', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -663,6 +668,7 @@ router.put(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = updateHomeworkSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -754,6 +760,9 @@ router.put(
     };
 
     sendSuccess(res, result, 'Homework updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -768,6 +777,7 @@ router.delete(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const userRole = req.user!.role;
     const homeworkId = req.params.id;
@@ -827,6 +837,9 @@ router.delete(
     });
 
     sendSuccess(res, { success: true }, 'Homework deleted');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -840,6 +853,7 @@ router.post(
   '/:id/acknowledge',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
     const schoolId = req.student!.school_id;
     const homeworkId = req.params.id;
@@ -884,6 +898,9 @@ router.post(
     }
 
     sendSuccess(res, { success: true }, 'Homework acknowledged');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -898,6 +915,7 @@ router.get(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const homeworkId = req.params.homework_id;
     const userId = req.user!.id;
     const userRole = req.user!.role;
@@ -955,6 +973,9 @@ router.get(
       acknowledged_count: ackCount ?? 0,
       total_students: totalStudents ?? 0,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -972,29 +993,24 @@ router.get(
   '/pending-count',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
     const schoolId = req.student!.school_id;
     const className = req.student!.class_name;
     const section = req.student!.section;
-    // Match the mobile homework feed cutoff: show pending for last 7 days onward,
-    // so overdue homework doesn't disappear from the dashboard counter.
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - 7);
-    const cutoff = cutoffDate.toISOString().slice(0, 10);
-
     if (!className || !section) {
       sendError(res, 'Student class/section not set', 400);
       return;
     }
 
-    // Fetch all homework from the last 7 days onward for this class (include due_date for overdue check)
+    // Fetch all homework for this class — no date cutoff so the badge count
+    // always matches what the student sees in the homework list.
     const { data: homeworkList, error: hwErr } = await supabaseAdmin
       .from('homework')
       .select('id, due_date')
       .eq('school_id', schoolId)
       .ilike('class_name', className.trim())
-      .ilike('section', section.trim())
-      .gte('due_date', cutoff);
+      .ilike('section', section.trim());
 
     if (hwErr) {
       sendError(res, hwErr.message, 500);
@@ -1045,6 +1061,9 @@ router.get(
     }).length;
 
     sendSuccess(res, { count: pendingCount });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1090,6 +1109,7 @@ router.post(
     });
   },
   async (req: Request, res: Response) => {
+    try {
     const fields = req.files as Record<string, Express.Multer.File[]> | undefined;
     // Support both 'files' (new multi-upload) and 'file' (legacy single upload)
     const uploadedFiles: Express.Multer.File[] = [
@@ -1167,6 +1187,9 @@ router.post(
       'File(s) uploaded successfully.',
       201
     );
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1180,6 +1203,7 @@ router.get(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const schoolId = req.user!.school_id;
     if (!schoolId) { sendError(res, 'Account not linked to a school', 403); return; }
@@ -1200,6 +1224,9 @@ router.get(
     const { data, error } = await query;
     if (error) { sendError(res, error.message, 500); return; }
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1213,6 +1240,7 @@ router.post(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const schoolId = req.user!.school_id;
     if (!schoolId) { sendError(res, 'Account not linked to a school', 403); return; }
@@ -1238,6 +1266,9 @@ router.post(
 
     if (error) { sendError(res, error.message, 500); return; }
     sendSuccess(res, data, 'Template saved', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1250,6 +1281,7 @@ router.delete(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const { id } = req.params;
 
@@ -1265,6 +1297,9 @@ router.delete(
     const { error } = await supabaseAdmin.from('teacher_homework_templates').delete().eq('id', id);
     if (error) { sendError(res, error.message, 500); return; }
     sendSuccess(res, { success: true }, 'Template deleted');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1280,6 +1315,7 @@ router.get(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const schoolId = req.user!.school_id;
     if (!schoolId) { sendError(res, 'Account not linked to a school', 403); return; }
@@ -1307,6 +1343,9 @@ router.get(
     if (!data) { sendSuccess(res, null, 'No previous AI settings found'); return; }
 
     sendSuccess(res, data);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1321,6 +1360,7 @@ router.get(
   authenticateAny,
   requireRole('teacher', 'schooladmin', 'superadmin', 'student'),
   async (req: Request, res: Response) => {
+    try {
     const isStudent = req.tokenType === 'student';
     const studentId: string | null = req.student?.id ?? null;
     const schoolId: string | null = isStudent
@@ -1401,6 +1441,9 @@ router.get(
       check_suspicious: hwRow.check_suspicious,
       existing_submission: existingSubmission,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1428,6 +1471,7 @@ router.post(
   authenticateStudent,
   studentAiRateLimit,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
     const schoolId = req.student!.school_id;
     const className = req.student!.class_name;
@@ -1609,6 +1653,9 @@ router.post(
         ? 'Submitted! Your submission has been flagged for teacher review.'
         : 'Submitted! AI will check this tonight, results available tomorrow morning.',
     }, 'Homework submitted', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1652,6 +1699,7 @@ router.post(
     });
   },
   async (req: Request, res: Response) => {
+    try {
     const files = req.files as Express.Multer.File[] | undefined;
     if (!files || files.length === 0) {
       sendError(res, 'No images provided. Send a multipart/form-data request with "images" field.', 400);
@@ -1741,6 +1789,9 @@ router.post(
     }
 
     sendSuccess(res, { images: results }, 'Images uploaded successfully.', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1755,6 +1806,7 @@ router.get(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const userRole = req.user!.role;
     const homeworkId = req.params.id;
@@ -1821,6 +1873,9 @@ router.get(
       section: hwRow.section,
       students: rows,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1840,6 +1895,7 @@ router.get(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const userRole = req.user!.role;
     const homeworkId = req.params.id;
@@ -1992,6 +2048,9 @@ router.get(
       flagged_count: result.length,
       submissions: result,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -2015,6 +2074,7 @@ router.post(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userId = req.user!.id;
     const userRole = req.user!.role;
     const { submissionId } = req.params;
@@ -2149,6 +2209,9 @@ router.post(
       status: 'checked',
       teacher_reviewed: true,
     }, 'Submission reviewed');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -2170,6 +2233,7 @@ router.get(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const userRole = req.user!.role;
     const schoolId = req.user!.school_id;
     if (!schoolId) { sendError(res, 'Account not linked to a school', 403); return; }
@@ -2289,6 +2353,9 @@ router.get(
       teachers_with_pending: teachersWithPending,
       week_start: weekAgoIso,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

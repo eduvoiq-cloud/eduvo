@@ -33,6 +33,7 @@ router.get(
   '/weak-topics',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
 
     const { data, error } = await supabaseAdmin
@@ -44,6 +45,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -52,6 +56,7 @@ router.get(
   '/weak-topics/:subject',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
 
     const { data, error } = await supabaseAdmin
@@ -64,6 +69,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -74,6 +82,7 @@ router.get(
   '/streak',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
 
     const { data, error } = await supabaseAdmin
@@ -136,6 +145,9 @@ router.get(
     }
 
     sendSuccess(res, data);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -144,6 +156,7 @@ router.get(
   '/streak/log',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
 
     const rawDays = parseInt((req.query.days as string) ?? '30', 10);
@@ -165,6 +178,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -176,6 +192,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
     const { studentId } = req.params;
 
@@ -199,6 +216,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -208,6 +228,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
     const { studentId } = req.params;
 
@@ -230,6 +251,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? { student_id: studentId, current_streak: 0, total_active_days: 0 });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -252,6 +276,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
     const className = (req.query.class as string | undefined)?.trim();
     const section = (req.query.section as string | undefined)?.trim();
@@ -312,6 +337,9 @@ router.get(
     });
 
     sendSuccess(res, leaderboard);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -327,6 +355,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
 
     // Get all distinct class+section combos for this school
@@ -397,6 +426,9 @@ router.get(
     }
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

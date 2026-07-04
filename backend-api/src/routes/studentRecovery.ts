@@ -240,6 +240,7 @@ function calculateIntegrityScore(
  * Returns the subjects array per cycle for the badge display.
  */
 router.get('/packs', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
 
   const { data, error } = await supabaseAdmin
@@ -301,6 +302,9 @@ router.get('/packs', async (req: Request, res: Response) => {
   }));
 
   sendSuccess(res, [...cycleCards, ...legacyCards]);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/student-recovery/packs/by-cycle/:cycleId ────────────────────────
@@ -309,6 +313,7 @@ router.get('/packs', async (req: Request, res: Response) => {
  * Each element has the full pack_content for rendering in subject tabs.
  */
 router.get('/packs/by-cycle/:cycleId', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
   const schoolId  = req.student!.school_id as string;
   const cycleId   = req.params.cycleId;
@@ -351,6 +356,9 @@ router.get('/packs/by-cycle/:cycleId', async (req: Request, res: Response) => {
   );
 
   sendSuccess(res, enriched);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/student-recovery/packs/:id ──────────────────────────────────────
@@ -358,6 +366,7 @@ router.get('/packs/by-cycle/:cycleId', async (req: Request, res: Response) => {
  * Returns full pack_content for one pack + whether a recovery test is available.
  */
 router.get('/packs/:id', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
   const packId    = req.params.id;
 
@@ -441,6 +450,9 @@ router.get('/packs/:id', async (req: Request, res: Response) => {
     test_id: testId,
     test_total_questions: testTotalQuestions,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/student-recovery/tests/by-cycle/:cycleId ────────────────────────
@@ -448,6 +460,7 @@ router.get('/packs/:id', async (req: Request, res: Response) => {
  * Returns available recovery tests for a cycle (one per subject).
  */
 router.get('/tests/by-cycle/:cycleId', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
   const cycleId   = req.params.cycleId;
 
@@ -496,6 +509,9 @@ router.get('/tests/by-cycle/:cycleId', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, result);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/student-recovery/tests ──────────────────────────────────────────
@@ -503,6 +519,7 @@ router.get('/tests/by-cycle/:cycleId', async (req: Request, res: Response) => {
  * Returns available tests (not yet completed) + already completed tests.
  */
 router.get('/tests', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
 
   // Fetch all available tests for this student
@@ -580,6 +597,9 @@ router.get('/tests', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, { available, completed });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/student-recovery/tests/:id ──────────────────────────────────────
@@ -589,6 +609,7 @@ router.get('/tests', async (req: Request, res: Response) => {
  * The client will receive correct_index only after submission.
  */
 router.get('/tests/:id', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
   const testId    = req.params.id;
 
@@ -651,6 +672,9 @@ router.get('/tests/:id', async (req: Request, res: Response) => {
     total_questions: t.total_questions ?? safeQuestions.length,
     questions: safeQuestions,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/student-recovery/tests/:id/submit ───────────────────────────────
@@ -663,6 +687,7 @@ const submitSchema = z.object({
 });
 
 router.post('/tests/:id/submit', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
   const schoolId  = req.student!.school_id;
   const testId    = req.params.id;
@@ -820,6 +845,9 @@ router.post('/tests/:id/submit', async (req: Request, res: Response) => {
     improvement_percentage: improvementPercentage,
     questions: questionsWithAnswers,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/student-recovery/tests/:id/integrity ───────────────────────────
@@ -838,6 +866,7 @@ const integritySchema = z.object({
 });
 
 router.post('/tests/:id/integrity', async (req: Request, res: Response) => {
+  try {
   const studentId = req.student!.id;
   const schoolId  = req.student!.school_id;
 
@@ -957,6 +986,9 @@ router.post('/tests/:id/integrity', async (req: Request, res: Response) => {
     exit_count,
     total_exit_duration_seconds,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

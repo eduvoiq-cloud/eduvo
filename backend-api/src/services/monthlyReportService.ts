@@ -11,6 +11,7 @@
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { geminiRawGenerateJSON } from '../utils/geminiRaw';
 import { supabaseAdmin } from '../config/supabase';
 import { sendWhatsAppMessage } from './whatsappService';
 
@@ -459,28 +460,20 @@ Rules:
     required: ['structured_lines', 'summary_en', 'summary_hi', 'summary_gu'],
   };
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema,
-      // Disable thinking tokens — monthly reports are structured summaries of
-      // pre-computed numbers, not open-ended reasoning tasks. Thinking mode adds
-      // 8k–20k tokens per call with no quality benefit here.
-      thinkingConfig: { thinkingBudget: 0 },
-    } as Record<string, unknown>,
-  });
-
-  const result = await model.generateContent(prompt);
-  const raw    = result.response.text().trim();
-
+  // Uses raw REST API — thinkingBudget:0 is guaranteed to reach the API
   let parsed: MonthlyReportContent;
   try {
-    parsed = JSON.parse(raw) as MonthlyReportContent;
-  } catch {
+    const result = await geminiRawGenerateJSON<MonthlyReportContent>({
+      apiKey,
+      model: modelName,
+      parts: [{ text: prompt }],
+      responseSchema: responseSchema as Record<string, unknown>,
+      disableThinking: true,
+    });
+    parsed = result.data;
+  } catch (err) {
     throw new Error(
-      `[Monthly] Gemini returned invalid JSON for student ${data.studentId}: ${raw.slice(0, 200)}`
+      `[Monthly] Gemini failed for student ${data.studentId}: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 

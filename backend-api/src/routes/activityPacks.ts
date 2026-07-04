@@ -25,7 +25,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { authenticate, authenticateStudent } from '../middleware/auth';
 import { requireRole } from '../middleware/roles';
 import { sendSuccess, sendError, sendValidationError } from '../utils/response';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { geminiRawWithFallback } from '../utils/geminiRaw';
 import { getTokensForStudents, getTokensForUsers, sendPushMulticast } from '../services/fcmService';
 import { updateStreakWithMilestone } from '../services/streakService';
 
@@ -89,10 +89,14 @@ router.get(
   authenticate,
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const teacherId = req.user!.id;
     const schoolId = req.user!.school_id!;
     const allowed = await hasActivityPermission(teacherId, schoolId);
     sendSuccess(res, { can_create_activity_packs: allowed });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -223,55 +227,30 @@ type must be one of: "verbal", "written", "physical"`;
     };
 
     try {
-      const genAI = new GoogleGenerativeAI(apiKey);
-
-      // Try Flash Lite first, fall back to full Flash on 503/429
       const fallbackModelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
-      const activityModels = modelName === fallbackModelName ? [modelName] : [modelName, fallbackModelName];
 
-      let parsed2: { activities: Array<{ instruction: string; type: string }> } | null = null;
-      let lastActivityErr: unknown = null;
-
-      for (const actModel of activityModels) {
-        try {
-          const model = genAI.getGenerativeModel({
-            model: actModel,
-            generationConfig: {
-              responseMimeType: 'application/json',
-              responseSchema,
-            } as Record<string, unknown>,
-          });
-
-          const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
-            { text: prompt },
-          ];
-          if (file_data && file_mime) {
-            contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
-          }
-
-          const result = await model.generateContent(contentParts);
-          const raw = result.response.text().trim();
-
-          try {
-            parsed2 = JSON.parse(raw);
-          } catch {
-            sendError(res, 'AI returned invalid format. Please try again.', 500);
-            return;
-          }
-          lastActivityErr = null;
-          break; // success
-        } catch (err) {
-          lastActivityErr = err;
-          const status = (err as Record<string, unknown>)?.status as number | undefined;
-          if ((status === 503 || status === 429) && actModel !== fallbackModelName) {
-            console.warn(`[activity-packs/generate] ${actModel} returned ${status}, trying fallback…`);
-            continue;
-          }
-          throw err; // non-retryable
-        }
+      const contentParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+        { text: prompt },
+      ];
+      if (file_data && file_mime) {
+        contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
       }
 
-      if (lastActivityErr) throw lastActivityErr;
+      // Uses raw REST API — thinkingBudget:0 is guaranteed to reach the API
+      const rawResult = await geminiRawWithFallback(modelName, fallbackModelName, {
+        apiKey,
+        parts: contentParts,
+        responseSchema: responseSchema as Record<string, unknown>,
+        disableThinking: true,
+      });
+
+      let parsed2: { activities: Array<{ instruction: string; type: string }> } | null = null;
+      try {
+        parsed2 = JSON.parse(rawResult.text.trim());
+      } catch {
+        sendError(res, 'AI returned invalid format. Please try again.', 500);
+        return;
+      }
 
       if (!parsed2 || !Array.isArray(parsed2.activities) || parsed2.activities.length === 0) {
         sendError(res, 'AI did not return valid activities. Please try again.', 500);
@@ -318,6 +297,7 @@ type must be one of: "verbal", "written", "physical"`;
 
 // POST /api/activity-packs — create pack + insert completions + FCM
 router.post('/', authenticate, requireRole('teacher'), async (req: Request, res: Response) => {
+  try {
   const activitySchema = z.object({
     instruction: z.string().min(1),
     type: z.enum(['verbal', 'written', 'physical']),
@@ -415,10 +395,14 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
   });
 
   sendSuccess(res, data, 'Activity pack created', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // GET /api/activity-packs — teacher's own packs
 router.get('/', authenticate, requireRole('teacher'), async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id!;
   const date = req.query.date as string | undefined;
@@ -436,6 +420,9 @@ router.get('/', authenticate, requireRole('teacher'), async (req: Request, res: 
   if (error) { sendError(res, error.message, 500); return; }
 
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // GET /api/activity-packs/school — admin view
@@ -444,6 +431,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
     const cls = req.query.class as string | undefined;
     const section = req.query.section as string | undefined;
@@ -466,6 +454,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -475,6 +466,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
     const today = new Date().toISOString().slice(0, 10);
 
@@ -553,11 +545,15 @@ router.get(
       class_completion: classStats,
       inactive_teachers: inactiveTeachers,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
 // DELETE /api/activity-packs/:id
 router.delete('/:id', authenticate, requireRole('teacher'), async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id!;
 
@@ -582,6 +578,9 @@ router.delete('/:id', authenticate, requireRole('teacher'), async (req: Request,
   if (error) { sendError(res, error.message, 500); return; }
 
   sendSuccess(res, { id: req.params.id }, 'Activity pack deleted');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // GET /api/activity-packs/:id/completions — teacher views completion status
@@ -590,6 +589,7 @@ router.get(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
 
     const { data: pack } = await supabaseAdmin
@@ -613,6 +613,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -625,6 +628,7 @@ router.get(
   '/student/today',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
     const schoolId = req.student!.school_id;
     const className = req.student!.class_name ?? '';
@@ -669,6 +673,9 @@ router.get(
     }));
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -677,6 +684,7 @@ router.post(
   '/:id/complete',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       reading_minutes: z.number().min(0).optional(),
     });
@@ -760,6 +768,9 @@ router.post(
     });
 
     sendSuccess(res, { ...completion, streak: newStreak }, 'Activity marked as complete');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -768,6 +779,7 @@ router.get(
   '/student/history',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.student!.id;
 
     const rawLimit = parseInt((req.query.limit as string) ?? '20', 10);
@@ -786,6 +798,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

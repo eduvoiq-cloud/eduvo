@@ -44,6 +44,7 @@ router.get(
   '/:student_id',
   requireRole('superadmin', 'schooladmin', 'teacher', 'student'),
   async (req: Request, res: Response) => {
+    try {
     const { student_id } = req.params;
     const requestingUser = req.user!;
 
@@ -219,6 +220,9 @@ router.get(
       attendance_percentage,
       subjects,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

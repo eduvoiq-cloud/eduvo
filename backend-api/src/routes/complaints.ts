@@ -115,6 +115,7 @@ router.post(
   authenticateStudent,
   complaintRateLimit,
   async (req: Request, res: Response) => {
+    try {
     const parsed = createComplaintSchema.safeParse(req.body);
     if (!parsed.success) {
       const flat = parsed.error.flatten();
@@ -241,6 +242,9 @@ router.post(
     });
 
     sendSuccess(res, { success: true, complaint_id: complaint.id }, 'Complaint submitted', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -255,6 +259,7 @@ router.get(
   authenticate,
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { status } = req.query as Record<string, string>;
 
     let query = supabaseAdmin
@@ -311,6 +316,9 @@ router.get(
     });
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -325,6 +333,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const { status } = req.query as Record<string, string>;
 
     if (!req.user!.school_id && req.user!.role !== 'superadmin') {
@@ -387,6 +396,9 @@ router.get(
     });
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -400,6 +412,7 @@ router.get(
   '/my-teachers',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const student = req.student!;
 
     if (!student.class_name || !student.section) {
@@ -451,6 +464,9 @@ router.get(
     }));
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -463,6 +479,7 @@ router.get(
   '/student',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const { data, error } = await supabaseAdmin
       .from('complaints')
       .select('id, subject, message, recipient_type, status, resolution_note, reviewed_at, created_at')
@@ -475,6 +492,9 @@ router.get(
     }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -489,6 +509,7 @@ router.put(
   authenticate,
   requireRole('teacher', 'schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = updateStatusSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -558,6 +579,9 @@ router.put(
     });
 
     sendSuccess(res, updated, 'Complaint status updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

@@ -16,6 +16,7 @@ const router = Router();
 // Student-facing: returns all report cards for the authenticated student.
 // Uses authenticateAny so it works with the student token.
 router.get('/my', authenticateAny, async (req: Request, res: Response) => {
+  try {
   const studentId = req.tokenType === 'student' ? req.student!.id : null;
 
   if (!studentId) {
@@ -56,12 +57,16 @@ router.get('/my', authenticateAny, async (req: Request, res: Response) => {
   const enriched = (cards ?? []).map((c) => ({ ...c, board }));
 
   sendSuccess(res, enriched);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/report-cards/student/:studentId ──────────────────────────────────
 // Parent-facing: returns report cards for a specific student.
 // The parent must have the student linked (parent_id on students table).
 router.get('/student/:studentId', authenticateAny, async (req: Request, res: Response) => {
+  try {
   const { studentId } = req.params;
 
   // Require a staff/user token (parent) — not a student token
@@ -114,6 +119,9 @@ router.get('/student/:studentId', authenticateAny, async (req: Request, res: Res
   }
 
   sendSuccess(res, (cards2 ?? []).map((c) => ({ ...c, board: board2 })));
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── All teacher routes below require a staff JWT ──────────────────────────────
@@ -182,6 +190,7 @@ router.get(
   '/readiness',
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = reportCardSchema.safeParse(req.query);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -269,17 +278,18 @@ router.get(
       missing,
       all_uploaded: missing.length === 0,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
 // ── GET /api/report-cards/class ──────────────────────────────────────────────
-// Teacher-facing: check if report cards already exist for a given
-// class+section+term+exam_type, and return a summary.
-
 router.get(
   '/class',
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = reportCardSchema.safeParse(req.query);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -379,17 +389,18 @@ router.get(
         };
       }),
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
 // ── POST /api/report-cards/notify ────────────────────────────────────────────
-// Re-send notifications to all students & parents for already-generated cards,
-// without regenerating the PDFs.
-
 router.post(
   '/notify',
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = reportCardSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -500,15 +511,18 @@ router.post(
     }
 
     sendSuccess(res, { notified: studentIds.length });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
 // ── POST /api/report-cards/generate ──────────────────────────────────────────
-
 router.post(
   '/generate',
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = reportCardSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -652,6 +666,9 @@ router.post(
     }
 
     await archive.finalize();
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
 
     // ── Fire-and-forget: store report cards + notify students & parents ───────
     setImmediate(() => {

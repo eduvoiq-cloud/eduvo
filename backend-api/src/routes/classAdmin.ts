@@ -67,6 +67,7 @@ router.get(
   '/my-classes',
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const teacherId = req.user!.id;
     const schoolId  = req.user!.school_id;
 
@@ -88,6 +89,9 @@ router.get(
     }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -102,6 +106,7 @@ router.get(
   '/check',
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { class_name, section } = req.query as Record<string, string>;
 
     if (!class_name || !section) {
@@ -143,18 +148,18 @@ router.get(
         teacher_name: teacherName,
       },
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
 // ── GET /api/class-admin/list ─────────────────────────────────────────────────
-/**
- * Returns all class admin appointments for the school, with teacher names.
- * Auth: schooladmin only.
- */
 router.get(
   '/list',
   requireRole('schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id;
     if (!schoolId) {
       sendError(res, 'Your account is not linked to a school', 403);
@@ -183,20 +188,18 @@ router.get(
     }));
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
 // ── POST /api/class-admin/appoint ─────────────────────────────────────────────
-/**
- * Appoint a teacher as class admin for a class+section.
- * Upserts on (school_id, class_name, section) — replaces any existing admin.
- * Body: { teacher_id, class_name, section }
- * Auth: schooladmin only.
- */
 router.post(
   '/appoint',
   requireRole('schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       teacher_id: z.string().uuid('teacher_id must be a valid UUID'),
       class_name: z.string().min(1).max(50),
@@ -265,19 +268,18 @@ router.post(
     });
 
     sendSuccess(res, { success: true }, 'Class admin appointed successfully', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
 // ── DELETE /api/class-admin/remove ────────────────────────────────────────────
-/**
- * Remove the class admin for a given class+section.
- * Body: { class_name, section }
- * Auth: schooladmin only.
- */
 router.delete(
   '/remove',
   requireRole('schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       class_name: z.string().min(1).max(50),
       section:    z.string().min(1).max(20),
@@ -337,6 +339,9 @@ router.delete(
     });
 
     sendSuccess(res, { success: true }, 'Class admin removed successfully');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

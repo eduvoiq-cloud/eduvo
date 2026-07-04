@@ -35,6 +35,7 @@ const studentFcmTokenSchema = z.object({
  * Body: { student_id: string, fcm_token: string, platform?: 'android'|'ios'|'web' }
  */
 router.post('/fcm-token-student', authenticateStudent, async (req: Request, res: Response) => {
+  try {
   const parsed = studentFcmTokenSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -69,6 +70,9 @@ router.post('/fcm-token-student', authenticateStudent, async (req: Request, res:
     .eq('id', student_id);
 
   sendSuccess(res, null, 'FCM token registered');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── All routes below require staff authentication ─────────────────────────────
@@ -87,6 +91,7 @@ router.use(authenticate);
  * Body: { fcm_token: string }
  */
 router.post('/fcm-token', async (req: Request, res: Response) => {
+  try {
   const parsed = fcmTokenSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -117,6 +122,9 @@ router.post('/fcm-token', async (req: Request, res: Response) => {
   await logAudit(req.user!.id, 'FCM_TOKEN_REGISTERED', {});
 
   sendSuccess(res, null, 'FCM token registered');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -126,6 +134,7 @@ router.post('/fcm-token', async (req: Request, res: Response) => {
  * schooladmin can only see users in their own school.
  */
 router.get('/', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   const { role, school_id } = req.query as Record<string, string>;
 
   // Pagination
@@ -161,12 +170,16 @@ router.get('/', requireRole('superadmin', 'schooladmin'), async (req: Request, r
 
   const total = count ?? 0;
   sendSuccess(res, { data: data ?? [], total, page, limit, total_pages: Math.ceil(total / limit) });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
  * GET /api/users/:id
  */
 router.get('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   const { data, error } = await supabaseAdmin
     .from('users')
     .select('id, name, email, role, school_id, created_at')
@@ -185,6 +198,9 @@ router.get('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request
   }
 
   sendSuccess(res, data);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -192,6 +208,7 @@ router.get('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request
  * Update a user's name or email.
  */
 router.patch('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = updateUserSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -227,6 +244,9 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin'), async (req: Reque
   await logAudit(req.user!.id, 'USER_UPDATED', { target_user_id: req.params.id });
 
   sendSuccess(res, data, 'User updated');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -235,6 +255,7 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin'), async (req: Reque
  * schooladmin can only delete users in their school (and not other admins).
  */
 router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   const { data: target, error: fetchError } = await supabaseAdmin
     .from('users')
     .select('id, role, school_id')
@@ -255,6 +276,25 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
     // schooladmin cannot delete other admins
     if (target.role === 'schooladmin' || target.role === 'superadmin') {
       sendError(res, 'You cannot delete admin accounts', 403);
+      return;
+    }
+  }
+
+  // Prevent deleting the last superadmin
+  if (target.role === 'superadmin') {
+    const { count: superadminCount, error: countErr } = await supabaseAdmin
+      .from('users')
+      .select('id', { count: 'exact', head: true })
+      .eq('role', 'superadmin')
+      .or('is_deleted.eq.false,is_deleted.is.null');
+
+    if (countErr) {
+      sendError(res, countErr.message, 500);
+      return;
+    }
+
+    if ((superadminCount ?? 0) <= 1) {
+      sendError(res, 'Cannot delete the last superadmin account. Create another superadmin first.', 400);
       return;
     }
   }
@@ -288,6 +328,9 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
   });
 
   sendSuccess(res, null, 'User deleted');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

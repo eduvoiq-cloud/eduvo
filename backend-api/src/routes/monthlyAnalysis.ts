@@ -64,6 +64,7 @@ router.get(
   '/insights/:studentId',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
 
     if (!(await checkAccess(req, res, studentId))) return;
@@ -150,6 +151,9 @@ router.get(
       streak,
       marks_summary: marksSummary,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -159,6 +163,7 @@ router.get(
   '/report/:studentId',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
 
     if (!(await checkAccess(req, res, studentId))) return;
@@ -174,6 +179,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, { report: data ?? null });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -188,6 +196,7 @@ router.post(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
     const schoolId  = req.user!.school_id;
 
@@ -207,6 +216,9 @@ router.post(
       },
       'Recalculation complete'
     );
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

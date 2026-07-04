@@ -1763,12 +1763,11 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
       // elapsed from started_at would get remaining ≈ 0 and instantly auto-submit.
       if (hasTimeLimit) {
         const safeSeconds = Math.max(30, payload.seconds_remaining ?? payload.time_limit_minutes * 60);
-        // Record the device wall-clock time paired with safeSeconds so the
-        // AppState foreground handler can recompute elapsed using the device's
-        // own monotonic clock (no server clock comparison needed).
-        timerSetAtRef.current = Date.now();
+        // Store the seconds in a ref — the timer will be started in
+        // handleIntegrityAcknowledge so it only counts down once the first
+        // question is actually visible, not while the warning modal is shown.
         timerSecondsAtSetRef.current = safeSeconds;
-        setSecondsLeft(safeSeconds);
+        // Do NOT call setSecondsLeft here.
       }
 
       setPhase('integrity_warning');
@@ -1803,9 +1802,15 @@ export default function TestAttemptScreen({ route, navigation }: TestAttemptScre
 
   // ── Integrity warning acknowledged — begin monitoring and enter test ────────
   const handleIntegrityAcknowledge = useCallback(() => {
+    // Start the timer NOW — only after the student has dismissed the warning
+    // and the first question is about to appear.
+    if (hasTimeLimit && timerSecondsAtSetRef.current !== null) {
+      timerSetAtRef.current = Date.now();
+      setSecondsLeft(timerSecondsAtSetRef.current);
+    }
     startTracking();
     setPhase('active');
-  }, [startTracking]);
+  }, [hasTimeLimit, setSecondsLeft, startTracking]);
 
   // ── Answer handlers ─────────────────────────────────────────────────────────
   const handleSelectOption = useCallback((opt: OptionKey) => {

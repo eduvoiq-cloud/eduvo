@@ -26,6 +26,7 @@ router.use(authenticate);
  *   class  (number, required)  — 1 to 12
  */
 router.get('/subjects', async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     board: z.string().min(1),
     class: z.coerce.number().int().min(1).max(12),
@@ -59,6 +60,9 @@ router.get('/subjects', async (req: Request, res: Response) => {
   const subjects = [...new Set(data?.map((r: { subject: string }) => r.subject) ?? [])];
 
   sendSuccess(res, { subjects });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/chapter-library/chapters ────────────────────────────────────────
@@ -71,6 +75,7 @@ router.get('/subjects', async (req: Request, res: Response) => {
  *   subject  (string, required)
  */
 router.get('/chapters', async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     board: z.string().min(1),
     class: z.coerce.number().int().min(1).max(12),
@@ -108,6 +113,9 @@ router.get('/chapters', async (req: Request, res: Response) => {
   }));
 
   sendSuccess(res, { chapters });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

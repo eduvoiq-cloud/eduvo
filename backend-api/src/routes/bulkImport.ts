@@ -394,6 +394,10 @@ router.post(
       return;
     }
 
+    if (dataRows.length > 500) {
+      return sendError(res, 'Maximum 500 rows per import. Please split into multiple files.', 400);
+    }
+
     // Fetch existing students for this school to check DB duplicates
     const { data: existingStudents, error: dbErr } = await supabaseAdmin
       .from('students')
@@ -698,7 +702,7 @@ router.post('/students/confirm', requireRole('superadmin', 'schooladmin'), async
 
   if (batchInsertErr) {
     console.error('[bulkImport] Batch insert failed — no students imported:', batchInsertErr.message);
-    sendError(res, `Batch insert failed — no students were imported: ${batchInsertErr.message}`, 500);
+    sendError(res, 'Database operation failed. Please try again.', 500);
     return;
   }
 
@@ -863,6 +867,10 @@ router.post(
     if (dataRows.length === 0) {
       sendError(res, 'The file contains no data rows.', 400);
       return;
+    }
+
+    if (dataRows.length > 500) {
+      return sendError(res, 'Maximum 500 rows per import. Please split into multiple files.', 400);
     }
 
     // Collect uploaded emails for a targeted duplicate check.

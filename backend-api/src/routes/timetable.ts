@@ -145,6 +145,7 @@ router.get(
   '/class',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     const { class: className, section } = req.query as Record<string, string>;
     let school_id = req.query.school_id as string | undefined;
 
@@ -217,6 +218,9 @@ router.get(
     res.setHeader('Cache-Control', 'no-store');
 
     sendSuccess(res, groupByDay(rows));
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -230,6 +234,7 @@ router.get(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     let teacherId: string;
 
     if (req.user!.role === 'teacher') {
@@ -276,6 +281,9 @@ router.get(
     }));
 
     sendSuccess(res, groupByDay(rows));
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -289,6 +297,7 @@ router.post(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = createPeriodSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -403,6 +412,9 @@ router.post(
     });
 
     sendSuccess(res, inserted, 'Period created', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -416,6 +428,7 @@ router.put(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { id } = req.params;
 
     const parsed = updatePeriodSchema.safeParse(req.body);
@@ -486,6 +499,9 @@ router.put(
     });
 
     sendSuccess(res, updated, 'Period updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -499,6 +515,7 @@ router.delete(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { id } = req.params;
     const userId = req.user!.id;
     const userRole = req.user!.role;
@@ -540,6 +557,9 @@ router.delete(
     });
 
     sendSuccess(res, { id }, 'Period deleted');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -554,6 +574,7 @@ router.post(
   authenticate,
   requireRole('superadmin', 'schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = copyWeekSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -659,6 +680,9 @@ router.post(
       `Copied ${newRows.length} period(s) from ${from_class}-${from_section} to ${to_class}-${to_section}`,
       201
     );
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -691,6 +715,7 @@ router.post(
     });
   },
   async (req: Request, res: Response) => {
+    try {
     if (!req.file) {
       sendError(res, 'No file provided.', 400);
       return;
@@ -852,6 +877,9 @@ router.post(
       'Timetable uploaded successfully.',
       201
     );
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -868,6 +896,7 @@ router.get(
   '/file',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     const { class: className, section } = req.query as Record<string, string>;
 
     if (!className || !section) {
@@ -942,6 +971,9 @@ router.get(
       audit_log_id: match.id as string,
       uploader_id: match.user_id as string,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 /**
@@ -955,6 +987,7 @@ router.delete(
   authenticate,
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { class: className, section } = req.query as Record<string, string>;
 
     if (!className || !section) {
@@ -1041,6 +1074,9 @@ router.delete(
     });
 
     sendSuccess(res, { deleted: true }, 'Timetable file deleted successfully');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

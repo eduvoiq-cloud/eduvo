@@ -51,6 +51,7 @@ const updateMarkSchema = createMarkSchema.partial();
 
 /** GET /api/marks?student_id=&subject=&term=&limit=&offset=&from_date= */
 router.get('/', async (req: Request, res: Response) => {
+  try {
   const { student_id, subject, term } = req.query as Record<string, string>;
 
   // Pagination support: ?limit=100&offset=0 (default limit 100, max 500)
@@ -164,10 +165,14 @@ router.get('/', async (req: Request, res: Response) => {
 
   const total = count ?? 0;
   sendSuccess(res, { data: data ?? [], total, limit, offset });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** POST /api/marks — schooladmin, teacher */
 router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = createMarkSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -184,7 +189,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   if (req.user!.role !== 'superadmin') {
     const { data: student } = await supabaseAdmin
       .from('students')
-      .select('school_id')
+      .select('school_id, class_name, section')
       .eq('id', parsed.data.student_id)
       .maybeSingle();
 
@@ -192,13 +197,45 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
       sendError(res, 'Student not found in your school', 403);
       return;
     }
+
+    // Teachers must be assigned to the student's class and section
+    if (req.user!.role === 'teacher') {
+      const { data: assignment } = await supabaseAdmin
+        .from('teacher_assignments')
+        .select('id')
+        .eq('teacher_id', req.user!.id)
+        .eq('class_name', student.class_name)
+        .eq('section', student.section)
+        .maybeSingle();
+
+      if (!assignment) {
+        sendError(res, "You are not assigned to this student's class", 403);
+        return;
+      }
+    }
+  }
+
+  // Check for duplicate: same student, subject, exam_type, and term
+  const normalisedTerm = normaliseTerm(parsed.data.term) ?? parsed.data.term;
+  const { data: existingMark } = await supabaseAdmin
+    .from('marks')
+    .select('id')
+    .eq('student_id', parsed.data.student_id)
+    .eq('subject', parsed.data.subject)
+    .eq('exam_type', parsed.data.exam_type)
+    .eq('term', normalisedTerm)
+    .maybeSingle();
+
+  if (existingMark) {
+    sendError(res, 'Marks already entered for this student, subject, exam type and term. Use edit to update existing marks.', 409);
+    return;
   }
 
   const { data, error } = await supabaseAdmin
     .from('marks')
     .insert({
       ...parsed.data,
-      term: normaliseTerm(parsed.data.term) ?? parsed.data.term,
+      term: normalisedTerm,
       recorded_by: req.user!.id,
     })
     .select()
@@ -282,10 +319,14 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   });
 
   sendSuccess(res, data, 'Mark recorded', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** PATCH /api/marks/:id — schooladmin, teacher */
 router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = updateMarkSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -365,10 +406,14 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
   await logAudit(req.user!.id, 'MARK_UPDATED', { mark_id: req.params.id });
 
   sendSuccess(res, data, 'Mark updated');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** DELETE /api/marks/:id — superadmin, schooladmin only */
 router.delete('/:id', requireRole('superadmin', 'schooladmin'), markDeleteRateLimit, async (req: Request, res: Response) => {
+  try {
   // Verify the mark belongs to the requesting user's school before deleting
   if (req.user!.role !== 'superadmin') {
     const { data: existing } = await supabaseAdmin
@@ -403,6 +448,9 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), markDeleteRateLi
   await logAudit(req.user!.id, 'MARK_DELETED', { mark_id: req.params.id });
 
   sendSuccess(res, null, 'Mark deleted');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

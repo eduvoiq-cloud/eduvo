@@ -109,6 +109,7 @@ async function getOwnedSchedule(
  * Used by the dashboard widget.
  */
 router.get('/pending-count', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id as string;
 
@@ -140,6 +141,9 @@ router.get('/pending-count', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, { count: count ?? 0 });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery-schedules ───────────────────────────────────────────────
@@ -147,6 +151,7 @@ router.get('/pending-count', async (req: Request, res: Response) => {
  * Returns all schedules where status IN ('pending_teacher_approval', 'postponed').
  */
 router.get('/', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id as string;
 
@@ -188,6 +193,9 @@ router.get('/', async (req: Request, res: Response) => {
   );
 
   sendSuccess(res, filtered);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery-schedules/all ──────────────────────────────────────────
@@ -196,6 +204,7 @@ router.get('/', async (req: Request, res: Response) => {
  * Used for the "This Month's Recovery Tests" read-only table.
  */
 router.get('/all', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id as string;
 
@@ -242,6 +251,9 @@ router.get('/all', async (req: Request, res: Response) => {
   );
 
   sendSuccess(res, filtered);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── PUT /api/recovery-schedules/:id/approve ──────────────────────────────────
@@ -251,6 +263,7 @@ router.get('/all', async (req: Request, res: Response) => {
  * Then automatically triggers pack generation and test generation in the background.
  */
 router.put('/:id/approve', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id as string;
 
@@ -293,6 +306,9 @@ router.put('/:id/approve', async (req: Request, res: Response) => {
     data,
     `Recovery test approved for ${schedule.subject as string} — Generation started`
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 
   // Auto-trigger pack generation for this class+section using the new cycle-based system
   setImmediate(async () => {
@@ -328,6 +344,7 @@ router.put('/:id/approve', async (req: Request, res: Response) => {
  * We store 'approved' as the final status so the row disappears from the pending list.
  */
 router.put('/:id/postpone', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id as string;
 
@@ -410,6 +427,9 @@ router.put('/:id/postpone', async (req: Request, res: Response) => {
     data,
     `Recovery test postponed to ${new_test_date} for ${schedule.subject as string}${packDateIsInPast ? ' — pack generation started immediately' : ''}`
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── PUT /api/recovery-schedules/:id/cancel ────────────────────────────────────
@@ -419,6 +439,7 @@ router.put('/:id/postpone', async (req: Request, res: Response) => {
  * Also cancels any recovery_packs rows for this schedule.
  */
 router.put('/:id/cancel', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id as string;
 
@@ -476,6 +497,9 @@ router.put('/:id/cancel', async (req: Request, res: Response) => {
     data,
     `Recovery test cancelled for ${schedule.subject as string}`
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/recovery-schedules/:id/generation-status ─────────────────────────
@@ -492,6 +516,7 @@ router.put('/:id/cancel', async (req: Request, res: Response) => {
  * }
  */
 router.get('/:id/generation-status', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolIdRaw = req.user!.school_id;
 
@@ -558,6 +583,9 @@ router.get('/:id/generation-status', async (req: Request, res: Response) => {
       available_date: schedule.scheduled_test_date as string | null,
     },
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

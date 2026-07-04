@@ -118,6 +118,7 @@ const resetPasswordSchema = z.object({
  * Supabase Auth already throttles repeated failures server-side).
  */
 router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) => {
+  try {
   const parsed = staffLoginSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -197,6 +198,9 @@ router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) 
       phone: (p.phone as string | null) ?? null,
     },
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/login/student ──────────────────────────────────────────────
@@ -209,6 +213,7 @@ router.post('/login/staff', loginRateLimit, async (req: Request, res: Response) 
  * Rate limit: 10 attempts / hour per phone_number.
  */
 router.post('/login/student', studentLoginRateLimit, async (req: Request, res: Response) => {
+  try {
   const parsed = studentLoginSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -290,6 +295,9 @@ router.post('/login/student', studentLoginRateLimit, async (req: Request, res: R
       school_id: student.school_id,
     },
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/student/change-password ────────────────────────────────────
@@ -308,6 +316,7 @@ router.post(
   '/student/change-password',
   authenticateStudent,
   async (req: Request, res: Response) => {
+    try {
     const parsed = changePasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -384,6 +393,9 @@ router.post(
     await logAudit(studentId, 'STUDENT_PASSWORD_CHANGED', { student_id: studentId });
 
     sendSuccess(res, null, 'Password changed successfully');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -401,6 +413,7 @@ router.post(
   authenticate,
   requireRole('schooladmin'),
   async (req: Request, res: Response) => {
+    try {
     const parsed = resetPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -460,6 +473,9 @@ router.post(
     });
 
     sendSuccess(res, null, 'Password reset to default successfully');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -477,6 +493,7 @@ const staffChangePasswordSchema = z.object({
 });
 
 router.post('/staff/change-password', authenticate, async (req: Request, res: Response) => {
+  try {
   const parsed = staffChangePasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -537,6 +554,9 @@ router.post('/staff/change-password', authenticate, async (req: Request, res: Re
     refresh_token: newSession.session.refresh_token,
     expires_at: newSession.session.expires_at,
   }, 'Password changed successfully');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/staff/forgot-password ──────────────────────────────────────
@@ -557,6 +577,7 @@ const forgotPasswordSchema = z.object({
 });
 
 router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Request, res: Response) => {
+  try {
   const parsed = forgotPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -683,6 +704,9 @@ router.post('/staff/forgot-password', forgotPasswordRateLimit, async (req: Reque
   }
 
   genericOk();
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/staff/reset-password ───────────────────────────────────────
@@ -703,6 +727,7 @@ const staffResetPasswordSchema = z.object({
 });
 
 router.post('/staff/reset-password', async (req: Request, res: Response) => {
+  try {
   const parsed = staffResetPasswordSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -764,6 +789,9 @@ router.post('/staff/reset-password', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, null, 'Password reset successfully. You can now sign in.');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/refresh ────────────────────────────────────────────────────
@@ -777,6 +805,7 @@ const refreshSchema = z.object({
 });
 
 router.post('/refresh', async (req: Request, res: Response) => {
+  try {
   const parsed = refreshSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -797,6 +826,9 @@ router.post('/refresh', async (req: Request, res: Response) => {
     refresh_token: data.session.refresh_token,
     expires_at: data.session.expires_at,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/auth/me ──────────────────────────────────────────────────────────
@@ -810,6 +842,7 @@ router.post('/refresh', async (req: Request, res: Response) => {
  * frontend always has up-to-date flag state (even after session rehydration).
  */
 router.get('/me', authenticateAny, async (req: Request, res: Response) => {
+  try {
   if (req.tokenType === 'student') {
     const s = req.student!;
     sendSuccess(res, {
@@ -892,6 +925,9 @@ router.get('/me', authenticateAny, async (req: Request, res: Response) => {
     },
     schools,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/logout ─────────────────────────────────────────────────────
@@ -906,6 +942,7 @@ router.get('/me', authenticateAny, async (req: Request, res: Response) => {
  * Accepts both token types.
  */
 router.post('/logout', authenticateAny, async (req: Request, res: Response) => {
+  try {
   if (req.tokenType === 'staff') {
     const token = req.headers.authorization!.split(' ')[1];
     // Sign out the specific session using the admin client
@@ -927,6 +964,9 @@ router.post('/logout', authenticateAny, async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, null, 'Logged out successfully');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/delete-account-request ────────────────────────────────────
@@ -936,6 +976,7 @@ router.post('/logout', authenticateAny, async (req: Request, res: Response) => {
  * Accepts an account deletion request and notifies all superadmins.
  */
 router.post('/delete-account-request', deleteAccountRequestRateLimit, async (req: Request, res: Response) => {
+  try {
   const schema = z.object({
     email: z.string().email().max(254),
     reason: z.enum(['no_longer_using', 'privacy_concerns', 'other']),
@@ -990,6 +1031,9 @@ router.post('/delete-account-request', deleteAccountRequestRateLimit, async (req
   });
 
   sendSuccess(res, null, 'Your request has been received. We will process it within 7 days.');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── OTP helpers ───────────────────────────────────────────────────────────────
@@ -1021,6 +1065,7 @@ router.post(
   '/student/forgot-password',
   studentOtpRateLimit,
   async (req: Request, res: Response) => {
+    try {
     const parsed = studentForgotPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
       sendValidationError(res, parsed.error.flatten());
@@ -1093,6 +1138,9 @@ router.post(
     }
 
     genericOk();
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -1111,6 +1159,7 @@ const studentVerifyOtpSchema = z.object({
 });
 
 router.post('/student/verify-otp', async (req: Request, res: Response) => {
+  try {
   const parsed = studentVerifyOtpSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -1156,6 +1205,9 @@ router.post('/student/verify-otp', async (req: Request, res: Response) => {
   await logAudit(null, 'STUDENT_OTP_VERIFIED', { phone_number });
 
   sendSuccess(res, { reset_token: resetToken }, 'OTP verified successfully.');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/auth/student/reset-password-otp ────────────────────────────────
@@ -1173,6 +1225,7 @@ const studentResetPasswordOtpSchema = z.object({
 });
 
 router.post('/student/reset-password-otp', async (req: Request, res: Response) => {
+  try {
   const parsed = studentResetPasswordOtpSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -1239,6 +1292,9 @@ router.post('/student/reset-password-otp', async (req: Request, res: Response) =
   await logAudit(student.id, 'STUDENT_PASSWORD_RESET_OTP', { student_id: student.id });
 
   sendSuccess(res, null, 'Password reset successfully. You can now log in.');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

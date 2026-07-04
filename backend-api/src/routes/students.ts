@@ -42,6 +42,7 @@ const updateStudentSchema = createStudentSchema.partial();
  *  to that class via teacher_assignments. They cannot list all school students.
  */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const school_id = req.query.school_id as string | undefined;
   const search = req.query.search as string | undefined;
   const class_name = req.query.class_name as string | undefined;
@@ -130,10 +131,14 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
   } else {
     sendSuccess(res, data ?? []);
   }
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** GET /api/students/:id */
 router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const { data, error } = await supabaseAdmin
     .from('students')
     .select('id, full_name, roll_number, class_name, section, school_id, date_of_birth, phone_number, parent_id, is_first_login, is_deleted, created_at')
@@ -154,10 +159,14 @@ router.get('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (r
   }
 
   sendSuccess(res, data);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** POST /api/students — schooladmin, teacher */
 router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = createStudentSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -196,10 +205,14 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   await logAudit(req.user!.id, 'STUDENT_CREATED', { student_id: data.id });
 
   sendSuccess(res, data, 'Student created', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** PATCH /api/students/:id — schooladmin, teacher */
 router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = updateStudentSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -238,10 +251,14 @@ router.patch('/:id', requireRole('superadmin', 'schooladmin', 'teacher'), async 
   await logAudit(req.user!.id, 'STUDENT_UPDATED', { student_id: req.params.id });
 
   sendSuccess(res, data, 'Student updated');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** DELETE /api/students/:id — superadmin, schooladmin only (soft delete) */
 router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   // Verify student exists and belongs to the admin's school
   const { data: existing, error: fetchErr } = await supabaseAdmin
     .from('students')
@@ -278,6 +295,9 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
   await logAudit(req.user!.id, 'STUDENT_DELETED', { student_id: req.params.id });
 
   sendSuccess(res, null, 'Student deleted');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

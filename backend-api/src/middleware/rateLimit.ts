@@ -259,3 +259,21 @@ export const studentAiRateLimit = rateLimit({
 });
 
 
+
+/**
+ * AI question generation rate limit — max 10 generations per teacher per day.
+ * Keyed by teacher user ID. Applied to all AI generation endpoints.
+ */
+export const generateRateLimit = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: parseInt(process.env.AI_MAX_DAILY_GENERATIONS ?? '10', 10),
+  keyGenerator: (req: Request) => `generate:${(req as Request & { user?: { id?: string } }).user?.id ?? req.ip ?? 'unknown'}`,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: false,
+  store: makeStore('generate'),
+  message: {
+    success: false,
+    message: 'Daily limit of AI generations reached. Resets tomorrow.',
+  },
+});

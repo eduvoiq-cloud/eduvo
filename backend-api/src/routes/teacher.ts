@@ -78,6 +78,7 @@ const updateComplaintSchema = z.object({
  * (via teacher_assignments) when ?assigned=true is passed.
  */
 router.get('/subjects', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const schoolId = req.user!.school_id;
 
@@ -141,6 +142,9 @@ router.get('/subjects', async (req: Request, res: Response) => {
 
   if (error) { sendError(res, error.message, 500); return; }
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -199,6 +203,7 @@ async function verifyAssignment(
  * is named `class` but the frontend expects `class_name`).
  */
 router.get('/my-classes', async (req: Request, res: Response) => {
+  try {
   // Note: teacher_assignments does not have a created_at column — order by class_name instead
   const { data, error } = await supabaseAdmin
     .from('teacher_assignments')
@@ -218,6 +223,9 @@ router.get('/my-classes', async (req: Request, res: Response) => {
   normalised.sort((a, b) => String(a.class_name ?? '').localeCompare(String(b.class_name ?? '')));
 
   sendSuccess(res, normalised);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -225,6 +233,7 @@ router.get('/my-classes', async (req: Request, res: Response) => {
  * Returns non-deleted students for a class/section the teacher is assigned to.
  */
 router.get('/students', async (req: Request, res: Response) => {
+  try {
   const { class: className, section } = req.query as Record<string, string>;
 
   if (!className || !section) {
@@ -255,6 +264,9 @@ router.get('/students', async (req: Request, res: Response) => {
 
   if (error) { sendError(res, error.message, 500); return; }
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -262,6 +274,7 @@ router.get('/students', async (req: Request, res: Response) => {
  * Insert a mark. Verifies teacher is assigned to the subject+class.
  */
 router.post('/marks', async (req: Request, res: Response) => {
+  try {
   const parsed = createMarkSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -310,6 +323,9 @@ router.post('/marks', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, data, 'Mark recorded', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -317,6 +333,7 @@ router.post('/marks', async (req: Request, res: Response) => {
  * Update an existing mark. Logs old and new values.
  */
 router.put('/marks/:id', async (req: Request, res: Response) => {
+  try {
   const parsed = updateMarkSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -354,6 +371,9 @@ router.put('/marks/:id', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, data, 'Mark updated');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -361,6 +381,7 @@ router.put('/marks/:id', async (req: Request, res: Response) => {
  * Toggle fee paid/unpaid for a student.
  */
 router.post('/fee', async (req: Request, res: Response) => {
+  try {
   const parsed = toggleFeeSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -396,6 +417,9 @@ router.post('/fee', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, data, `Fee marked as ${fee_paid ? 'paid' : 'unpaid'}`);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -404,6 +428,7 @@ router.post('/fee', async (req: Request, res: Response) => {
  * Automatically derives fee_paid from the amounts.
  */
 router.put('/fees/:student_id/payment', async (req: Request, res: Response) => {
+  try {
   const parsed = updatePaymentSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -454,6 +479,9 @@ router.put('/fees/:student_id/payment', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, data, 'Payment updated successfully');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -461,6 +489,7 @@ router.put('/fees/:student_id/payment', async (req: Request, res: Response) => {
  * Returns all complaints from the teacher's school, newest first.
  */
 router.get('/complaints', async (req: Request, res: Response) => {
+  try {
   const { status } = req.query as Record<string, string>;
 
   let query = supabaseAdmin
@@ -474,6 +503,9 @@ router.get('/complaints', async (req: Request, res: Response) => {
   const { data, error } = await query;
   if (error) { sendError(res, error.message, 500); return; }
   sendSuccess(res, data ?? []);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -481,6 +513,7 @@ router.get('/complaints', async (req: Request, res: Response) => {
  * Update complaint status. Logs the change.
  */
 router.put('/complaints/:id', async (req: Request, res: Response) => {
+  try {
   const parsed = updateComplaintSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -514,6 +547,9 @@ router.put('/complaints/:id', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, data, 'Complaint status updated');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -522,6 +558,7 @@ router.put('/complaints/:id', async (req: Request, res: Response) => {
  * Returns { saved: number, skipped: string[] }
  */
 router.post('/attendance/manual', async (req: Request, res: Response) => {
+  try {
   const parsed = manualAttendanceSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -579,6 +616,9 @@ router.post('/attendance/manual', async (req: Request, res: Response) => {
   });
 
   sendSuccess(res, { saved: toInsert.length, skipped });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -588,6 +628,7 @@ router.post('/attendance/manual', async (req: Request, res: Response) => {
  * Sends a notification to the student's parent.
  */
 router.put('/attendance/correct', async (req: Request, res: Response) => {
+  try {
   const parsed = correctAttendanceSchema.safeParse(req.body);
   if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
@@ -655,6 +696,9 @@ router.put('/attendance/correct', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, updated, 'Attendance corrected');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -678,9 +722,11 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
   try {
     // 1. Fetch the test and verify it belongs to this school
     // NOTE: the live DB column is "class", not "class_name" (see supabase-migrations.sql)
+    // NOTE: max_score is NOT selected from tests — it doesn't exist on older rows.
+    //       We compute it from test_questions.marks below (same pattern as tests.ts).
     const { data: test, error: testErr } = await supabaseAdmin
       .from('tests')
-      .select('id, title, subject, class, section, max_score, school_id')
+      .select('id, title, subject, class, section, school_id')
       .eq('id', testId)
       .eq('school_id', schoolId)
       .maybeSingle();
@@ -694,7 +740,6 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
       subject: string;
       class: string;
       section: string;
-      max_score: number | null;
       school_id: string;
     };
 
@@ -736,8 +781,24 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
     const highestScore = scores.length > 0 ? scores.reduce((a, b) => (b > a ? b : a), scores[0]) : 0;
     const lowestScore  = scores.length > 0 ? scores.reduce((a, b) => (b < a ? b : a), scores[0]) : 0;
 
-    // 5. Score distribution (as % of max_score)
-    const maxScore = testRow.max_score ?? (scores.length > 0 ? highestScore : 100);
+    // 5. Compute max_score from test_questions.marks (same pattern as tests.ts)
+    //    This works for both new and existing tests regardless of whether the
+    //    tests.max_score column has been populated.
+    const { data: questionMarks } = await supabaseAdmin
+      .from('test_questions')
+      .select('marks')
+      .eq('test_id', testId);
+
+    let maxScore = (questionMarks ?? []).reduce(
+      (sum: number, q: { marks: number }) => sum + Number(q.marks), 0
+    );
+
+    // Final fallback: use highest score seen (or 100 if no attempts yet)
+    if (maxScore === 0) {
+      maxScore = scores.length > 0 ? highestScore : 100;
+    }
+
+    // 6. Score distribution (as % of max_score)
     const buckets = [
       { range: '0-20',   min: 0,  max: 20,  count: 0 },
       { range: '21-40',  min: 21, max: 40,  count: 0 },
@@ -758,7 +819,7 @@ router.get('/test-analytics/:testId', async (req: Request, res: Response) => {
 
     const scoreDistribution = buckets.map(({ range, count }) => ({ range, count }));
 
-    // 6. Question analytics — MCQ only
+    // 7. Question analytics — MCQ only
     const { data: questions, error: qErr } = await supabaseAdmin
       .from('test_questions')
       .select('id, question_text, question_type, order_index')

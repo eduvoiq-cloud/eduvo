@@ -34,6 +34,7 @@ const profileSchema = z.object({
  * including board, result_template, name, and address from the schools table.
  */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const school_id = req.user!.school_id;
 
   if (!school_id) {
@@ -89,6 +90,9 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
     name:            resolvedName,
     address:         resolvedAddress,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -96,6 +100,7 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
  * Upserts settings for the authenticated schooladmin's school.
  */
 router.put('/', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = upsertSettingsSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -127,6 +132,9 @@ router.put('/', requireRole('superadmin', 'schooladmin'), async (req: Request, r
   });
 
   sendSuccess(res, data, 'Settings saved');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/settings/add-medium ─────────────────────────────────────────────
@@ -139,6 +147,7 @@ router.put('/', requireRole('superadmin', 'schooladmin'), async (req: Request, r
  * - Returns the new school record
  */
 router.post('/add-medium', requireRole('schooladmin'), async (req: Request, res: Response) => {
+  try {
   const adminId  = req.user!.id;
   const schoolId = req.user!.primary_school_id ?? req.user!.school_id;
 
@@ -233,6 +242,9 @@ router.post('/add-medium', requireRole('schooladmin'), async (req: Request, res:
   });
 
   sendSuccess(res, newSchool, `${newMedium.charAt(0).toUpperCase() + newMedium.slice(1)} medium account created successfully`, 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── PUT /api/settings/profile ─────────────────────────────────────────────────
@@ -242,6 +254,7 @@ router.post('/add-medium', requireRole('schooladmin'), async (req: Request, res:
  * - display_name and display_address are stored on the school_settings table
  */
 router.put('/profile', requireRole('schooladmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = profileSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -296,6 +309,9 @@ router.put('/profile', requireRole('schooladmin'), async (req: Request, res: Res
   });
 
   sendSuccess(res, changedFields, 'School profile updated');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

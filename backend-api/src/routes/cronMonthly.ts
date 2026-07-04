@@ -140,12 +140,18 @@ async function handleSubmitBatch(req: Request, res: Response): Promise<void> {
 
   console.log(`[cron/monthly/submit-batch] Triggered for ${monthLabel}`);
 
+  try {
   // Respond immediately so the cron service doesn't time out
   res.status(202).json({
     success: true,
     message: 'Monthly report batch job started',
     month:   monthLabel,
   });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    if (!res.headersSent) sendError(res, message, 500);
+    return;
+  }
 
   // ── Background processing ─────────────────────────────────────────────────
   setImmediate(async () => {
@@ -289,11 +295,17 @@ async function handleDeliver(req: Request, res: Response): Promise<void> {
 
   console.log('[cron/monthly/deliver] Triggered');
 
+  try {
   // Respond immediately
   res.status(202).json({
     success: true,
     message: 'Monthly deliver job started',
   });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'An unexpected error occurred';
+    if (!res.headersSent) sendError(res, message, 500);
+    return;
+  }
 
   setImmediate(async () => {
     try {
@@ -581,6 +593,7 @@ router.post(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
     const schoolId  = req.user!.school_id;
 
@@ -600,6 +613,9 @@ router.post(
       },
       'Recalculation complete'
     );
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

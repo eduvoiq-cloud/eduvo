@@ -26,6 +26,7 @@ const createAssignmentSchema = z.object({
 
 /** GET /api/assignments?school_id= */
 router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const { school_id, teacher_id } = req.query as Record<string, string>;
 
   let query = supabaseAdmin
@@ -54,10 +55,14 @@ router.get('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req:
   }
 
   sendSuccess(res, data);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** POST /api/assignments */
 router.post('/', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   const parsed = createAssignmentSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -99,10 +104,14 @@ router.post('/', requireRole('superadmin', 'schooladmin'), async (req: Request, 
   });
 
   sendSuccess(res, data, 'Assignment created', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /** DELETE /api/assignments/:id */
 router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
   // Verify ownership before deleting
   const { data: existing } = await supabaseAdmin
     .from('teacher_assignments')
@@ -133,6 +142,9 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
   await logAudit(req.user!.id, 'ASSIGNMENT_DELETED', { assignment_id: req.params.id });
 
   sendSuccess(res, null, 'Assignment removed');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

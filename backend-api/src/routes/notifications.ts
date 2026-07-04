@@ -45,6 +45,7 @@ function normaliseRow(row: Record<string, unknown>): Record<string, unknown> {
  * Query param: unread_only=true  -> only return unread notifications.
  */
 router.get('/', async (req: Request, res: Response) => {
+  try {
   const unreadOnly = req.query.unread_only === 'true';
 
   // Pagination
@@ -92,6 +93,9 @@ router.get('/', async (req: Request, res: Response) => {
     total_pages: Math.ceil(total / limit),
     unread_count: unreadCount ?? 0,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -99,6 +103,7 @@ router.get('/', async (req: Request, res: Response) => {
  * schooladmin and teacher can send notifications to recipients.
  */
 router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
+  try {
   const parsed = createNotificationSchema.safeParse(req.body);
   if (!parsed.success) {
     sendValidationError(res, parsed.error.flatten());
@@ -106,6 +111,50 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
   }
 
   const { title, body, recipient_ids, type } = parsed.data;
+
+  // Verify all recipient_ids belong to the sender's school before inserting.
+  // Recipients can be either staff/parent users or students.
+  const senderSchoolId = req.user!.school_id;
+
+  // Check users table (staff / parents)
+  const { data: userRecipients, error: userLookupError } = await supabaseAdmin
+    .from('users')
+    .select('id, school_id')
+    .in('id', recipient_ids);
+
+  if (userLookupError) {
+    sendError(res, userLookupError.message, 500);
+    return;
+  }
+
+  // Check students table
+  const { data: studentRecipients, error: studentLookupError } = await supabaseAdmin
+    .from('students')
+    .select('id, school_id')
+    .in('id', recipient_ids);
+
+  if (studentLookupError) {
+    sendError(res, studentLookupError.message, 500);
+    return;
+  }
+
+  // Build a map of id -> school_id from both tables
+  const recipientSchoolMap = new Map<string, string>();
+  for (const u of (userRecipients ?? [])) {
+    recipientSchoolMap.set(u.id, u.school_id);
+  }
+  for (const s of (studentRecipients ?? [])) {
+    recipientSchoolMap.set(s.id, s.school_id);
+  }
+
+  // Every recipient_id must be found and must belong to the sender's school
+  for (const id of recipient_ids) {
+    const schoolId = recipientSchoolMap.get(id);
+    if (!schoolId || schoolId !== senderSchoolId) {
+      sendError(res, 'One or more recipients not found in your school', 403);
+      return;
+    }
+  }
 
   // Fan out: one row per recipient.
   // Write to both 'body' (schema column) and 'message' (legacy column, kept for
@@ -175,6 +224,9 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
     `Notification sent to ${recipient_ids.length} recipient(s)`,
     201
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -183,6 +235,7 @@ router.post('/', requireRole('superadmin', 'schooladmin', 'teacher'), async (req
  * NOTE: registered before /:id/read to avoid route shadowing.
  */
 router.put('/read-all', async (req: Request, res: Response) => {
+  try {
   const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
 
   const { data, error } = await supabaseAdmin
@@ -198,6 +251,9 @@ router.put('/read-all', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, { updated: data?.length ?? 0 }, 'All notifications marked as read');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -205,6 +261,7 @@ router.put('/read-all', async (req: Request, res: Response) => {
  * Mark a single notification as read (is_read = true).
  */
 router.put('/:id/read', async (req: Request, res: Response) => {
+  try {
   const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
 
   const { data, error } = await supabaseAdmin
@@ -221,6 +278,9 @@ router.put('/:id/read', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, normaliseRow(data as Record<string, unknown>), 'Notification marked as read');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -228,6 +288,7 @@ router.put('/:id/read', async (req: Request, res: Response) => {
  * Kept for backwards compatibility with existing mobile/web clients.
  */
 router.patch('/:id/read', async (req: Request, res: Response) => {
+  try {
   const recipientId = req.tokenType === 'student' ? req.student!.id : req.user!.id;
 
   const { data, error } = await supabaseAdmin
@@ -244,6 +305,9 @@ router.patch('/:id/read', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, normaliseRow(data as Record<string, unknown>), 'Notification marked as read');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 /**
@@ -251,6 +315,19 @@ router.patch('/:id/read', async (req: Request, res: Response) => {
  * Hard-delete a notification. superadmin and schooladmin only.
  */
 router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Request, res: Response) => {
+  try {
+  // Ownership check: fetch the notification and verify it belongs to the caller's school.
+  const { data: notification, error: fetchError } = await supabaseAdmin
+    .from('notifications')
+    .select('id, school_id')
+    .eq('id', req.params.id)
+    .single();
+
+  if (fetchError || !notification || notification.school_id !== req.user!.school_id) {
+    sendError(res, 'Notification not found', 404);
+    return;
+  }
+
   const { error } = await supabaseAdmin
     .from('notifications')
     .delete()
@@ -264,6 +341,9 @@ router.delete('/:id', requireRole('superadmin', 'schooladmin'), async (req: Requ
   await logAudit(req.user!.id, 'NOTIFICATION_DELETED', { notification_id: req.params.id });
 
   sendSuccess(res, null, 'Notification deleted');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

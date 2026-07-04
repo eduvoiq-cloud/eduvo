@@ -53,6 +53,7 @@ router.use(authenticate, requireRole('teacher'));
  * Response: { units: [{ unit_number: number, file_count: number }] }
  */
 router.get('/units', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const { class_name, subject } = req.query as Record<string, string | undefined>;
 
@@ -85,20 +86,14 @@ router.get('/units', async (req: Request, res: Response) => {
     .sort((a, b) => a.unit_number - b.unit_number);
 
   sendSuccess(res, { units });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/teacher-library/files ───────────────────────────────────────────
-/**
- * Returns all files for the authenticated teacher matching the filters.
- *
- * Query params:
- *   class_name   — required
- *   subject      — required
- *   unit_number  — required
- *
- * Response: { files: [{ id, file_name, file_url, created_at }] }
- */
 router.get('/files', async (req: Request, res: Response) => {
+  try {
   const teacherId = req.user!.id;
   const { class_name, subject, unit_number } = req.query as Record<string, string | undefined>;
 
@@ -128,6 +123,9 @@ router.get('/files', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, { files: data ?? [] });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── POST /api/teacher-library/upload ─────────────────────────────────────────
@@ -147,6 +145,7 @@ router.get('/files', async (req: Request, res: Response) => {
  * Response: { file: { id, file_name, file_url, created_at } }
  */
 router.post('/upload', upload.single('file'), async (req: Request, res: Response) => {
+  try {
   const file = req.file;
   if (!file) {
     sendError(res, 'No file provided', 400);
@@ -170,11 +169,13 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
   const schoolId  = req.user!.school_id ?? 'global';
 
   // Build storage path
-  const timestamp   = Date.now();
-  const safeName    = file.originalname
+  const timestamp      = Date.now();
+  const safeName       = file.originalname
     .replace(/[^a-zA-Z0-9._-]/g, '_')
     .slice(0, 100);
-  const storagePath = `${schoolId}/${teacherId}/${class_name.trim()}/${subject.trim()}/unit-${unitNum}/${timestamp}-${safeName}`;
+  const safeClassName  = class_name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeSubject    = subject.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const storagePath = `${schoolId}/${teacherId}/${safeClassName}/${safeSubject}/unit-${unitNum}/${timestamp}-${safeName}`;
 
   // Upload to Supabase Storage
   const { error: uploadErr } = await supabaseAdmin
@@ -223,6 +224,9 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
   }
 
   sendSuccess(res, { file: record }, 'File uploaded successfully', 201);
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── DELETE /api/teacher-library/files/:fileId ─────────────────────────────────
@@ -233,6 +237,7 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
  * Response: { success: true }
  */
 router.delete('/files/:fileId', async (req: Request, res: Response) => {
+  try {
   const { fileId } = req.params;
   const teacherId  = req.user!.id;
 
@@ -280,6 +285,9 @@ router.delete('/files/:fileId', async (req: Request, res: Response) => {
   }
 
   sendSuccess(res, { success: true }, 'File deleted successfully');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;

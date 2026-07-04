@@ -66,6 +66,7 @@ router.post(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       teacher_id: z.string().uuid(),
       can_create_daily_tests: z.boolean().default(false),
@@ -119,6 +120,9 @@ router.post(
     });
 
     sendSuccess(res, access, 'Teacher premium access updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -129,6 +133,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
 
     const { data, error } = await supabaseAdmin
@@ -143,6 +148,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -153,6 +161,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
     const year = req.query.year as string | undefined;
 
@@ -172,6 +181,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -182,6 +194,7 @@ router.get(
   authenticate,
   requireRole('superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const year   = req.query.year   as string | undefined;
     const status = req.query.status as string | undefined;
 
@@ -201,6 +214,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -211,6 +227,7 @@ router.patch(
   authenticate,
   requireRole('superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       payout_status: z.enum(['pending', 'invoiced', 'paid']),
     });
@@ -233,6 +250,9 @@ router.patch(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data, 'Payout status updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -243,6 +263,7 @@ router.post(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       teacher_id: z.string().uuid(),
       can_create_daily_tests: z.boolean().default(false),
@@ -297,6 +318,9 @@ router.post(
     });
 
     sendSuccess(res, access, 'Teacher premium access updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -307,6 +331,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
 
     const { data, error } = await supabaseAdmin
@@ -321,6 +346,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -331,6 +359,7 @@ router.get(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schoolId = req.user!.school_id!;
     const year = req.query.year as string | undefined;
 
@@ -350,6 +379,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -360,6 +392,7 @@ router.get(
   authenticate,
   requireRole('superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const year = req.query.year as string | undefined;
     const status = req.query.status as string | undefined;
 
@@ -379,6 +412,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -391,6 +427,7 @@ router.post(
   authenticate,
   requireRole('superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       school_id: z.string().uuid().optional(),
       month: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'month must be YYYY-MM-DD (first of month)'),
@@ -462,6 +499,9 @@ router.post(
     }
 
     sendSuccess(res, results, `Revenue calculated for ${results.length} school(s)`);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -473,6 +513,7 @@ router.get(
   authenticate,
   requireRole('superadmin'),
   async (req: Request, res: Response) => {
+    try {
     // Fetch all schools
     const { data: schools, error: schoolsErr } = await supabaseAdmin
       .from('schools')
@@ -574,6 +615,9 @@ router.get(
     });
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -584,6 +628,7 @@ router.patch(
   authenticate,
   requireRole('superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       payout_status: z.enum(['pending', 'invoiced', 'paid']),
     });
@@ -606,6 +651,9 @@ router.patch(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, data, 'Payout status updated');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

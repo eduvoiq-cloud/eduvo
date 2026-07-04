@@ -11,7 +11,7 @@
  *   POST /api/weekly-analysis/run  (secret-guarded cron endpoint on Railway)
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { geminiRawGenerateJSON } from '../utils/geminiRaw';
 import { supabaseAdmin } from '../config/supabase';
 import { getTokensForUsers } from './fcmService';
 import { sendPushMulticast } from './fcmService';
@@ -340,7 +340,6 @@ Return as JSON: {"report_text": "<your summary here>"}`;
 
     const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
 
-    // Structured output schema — weekly report is a single text field
     const responseSchema = {
       type: 'object' as const,
       properties: {
@@ -349,30 +348,16 @@ Return as JSON: {"report_text": "<your summary here>"}`;
       required: ['report_text'],
     };
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
+    // Uses raw REST API — thinkingBudget:0 is guaranteed to reach the API
+    const result = await geminiRawGenerateJSON<{ report_text: string }>({
+      apiKey,
       model: modelName,
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema,
-        // Disable thinking tokens — weekly report is a 150-word summary from
-        // pre-computed data. Thinking mode adds 8k–20k tokens per student call.
-        thinkingConfig: { thinkingBudget: 0 },
-      } as Record<string, unknown>,
+      parts: [{ text: prompt }],
+      responseSchema: responseSchema as Record<string, unknown>,
+      disableThinking: true,
     });
 
-    const result = await model.generateContent(prompt);
-    const raw = result.response.text().trim();
-
-    let parsed: { report_text: string };
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // Fallback: treat the whole response as the report text
-      parsed = { report_text: raw };
-    }
-
-    const text = parsed.report_text?.trim() ?? raw;
+    const text = result.data.report_text?.trim() ?? '';
 
     // Trim to 150 words approximately (safety net)
     const words = text.split(/\s+/);

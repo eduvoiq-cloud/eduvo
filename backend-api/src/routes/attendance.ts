@@ -87,34 +87,38 @@ router.get(
   '/',
   requireRole('superadmin', 'schooladmin', 'teacher', 'student'),
   async (req: Request, res: Response) => {
-    const { student_id, date } = req.query as Record<string, string>;
+    try {
+      const { student_id, date } = req.query as Record<string, string>;
 
-    if (!student_id || !date) {
-      sendError(res, 'student_id and date are required', 400);
-      return;
-    }
-
-    // Student token: can only query own records
-    if (req.tokenType === 'student') {
-      if (req.student!.id !== student_id) {
-        sendError(res, 'Access denied', 403);
+      if (!student_id || !date) {
+        sendError(res, 'student_id and date are required', 400);
         return;
       }
+
+      // Student token: can only query own records
+      if (req.tokenType === 'student') {
+        if (req.student!.id !== student_id) {
+          sendError(res, 'Access denied', 403);
+          return;
+        }
+      }
+
+      const { data, error } = await supabaseAdmin
+        .from('attendance')
+        .select('id, student_id, date, status, source, created_at')
+        .eq('student_id', student_id)
+        .eq('date', date)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        sendDbError(res, error, 'attendance GET /');
+        return;
+      }
+
+      sendSuccess(res, data ?? []);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
     }
-
-    const { data, error } = await supabaseAdmin
-      .from('attendance')
-      .select('id, student_id, date, status, source, created_at')
-      .eq('student_id', student_id)
-      .eq('date', date)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      sendDbError(res, error, 'attendance GET /');
-      return;
-    }
-
-    sendSuccess(res, data ?? []);
   }
 );
 /**
@@ -129,26 +133,68 @@ router.get(
   '/check',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
-    const className = (req.query.class_name as string) ?? '';
-    const section   = (req.query.section as string) ?? '';
-    const date      = (req.query.date as string) || todayDate();
+    try {
+      const className = (req.query.class_name as string) ?? '';
+      const section   = (req.query.section as string) ?? '';
+      const date      = (req.query.date as string) || todayDate();
 
-    const school_id = req.user!.school_id;
-    if (!school_id) {
-      sendError(res, 'Your account is not linked to a school', 403);
-      return;
-    }
+      const school_id = req.user!.school_id;
+      if (!school_id) {
+        sendError(res, 'Your account is not linked to a school', 403);
+        return;
+      }
 
-    // If no class_name provided, return school-wide summary for the dashboard stat card
-    if (!className) {
-      // Use a join-based approach instead of fetching all IDs into an IN clause.
-      // At large schools (5000+ students), IN (all_ids) is slow and sends huge payloads.
-      const { data: students, error: stuErr } = await supabaseAdmin
+      // If no class_name provided, return school-wide summary for the dashboard stat card
+      if (!className) {
+        // Use a join-based approach instead of fetching all IDs into an IN clause.
+        // At large schools (5000+ students), IN (all_ids) is slow and sends huge payloads.
+        const { data: students, error: stuErr } = await supabaseAdmin
+          .from('students')
+          .select('id')
+          .eq('school_id', school_id)
+          .eq('is_deleted', false);
+
+        if (stuErr) { sendError(res, stuErr.message, 500); return; }
+
+        const allIds = (students ?? []).map((s: { id: string }) => s.id);
+        if (allIds.length === 0) {
+          sendSuccess(res, { students: [], existing: [] });
+          return;
+        }
+
+        // Fetch only today's attendance records for these students in one query.
+        // Split into batches of 500 to avoid URL length limits in PostgREST.
+        const BATCH = 500;
+        const existing: Array<{ student_id: string; status: string; source: string }> = [];
+        for (let i = 0; i < allIds.length; i += BATCH) {
+          const batch = allIds.slice(i, i + BATCH);
+          const { data: batchData, error: attErr } = await supabaseAdmin
+            .from('attendance')
+            .select('student_id, status, source')
+            .in('student_id', batch)
+            .eq('date', date);
+          if (attErr) { sendError(res, attErr.message, 500); return; }
+          existing.push(...(batchData ?? []));
+        }
+
+        sendSuccess(res, {
+          students: students ?? [],
+          existing,
+        });
+        return;
+      }
+
+      // Specific class requested
+      let studentQuery = supabaseAdmin
         .from('students')
-        .select('id')
+        .select('id, full_name, class_name, section')
         .eq('school_id', school_id)
+        .ilike('class_name', className.trim())
         .eq('is_deleted', false);
 
+      if (section) studentQuery = studentQuery.ilike('section', section.trim());
+
+      const { data: students, error: stuErr } = await studentQuery;
       if (stuErr) { sendError(res, stuErr.message, 500); return; }
 
       const allIds = (students ?? []).map((s: { id: string }) => s.id);
@@ -157,59 +203,21 @@ router.get(
         return;
       }
 
-      // Fetch only today's attendance records for these students in one query.
-      // Split into batches of 500 to avoid URL length limits in PostgREST.
-      const BATCH = 500;
-      const existing: Array<{ student_id: string; status: string; source: string }> = [];
-      for (let i = 0; i < allIds.length; i += BATCH) {
-        const batch = allIds.slice(i, i + BATCH);
-        const { data: batchData, error: attErr } = await supabaseAdmin
-          .from('attendance')
-          .select('student_id, status, source')
-          .in('student_id', batch)
-          .eq('date', date);
-        if (attErr) { sendError(res, attErr.message, 500); return; }
-        existing.push(...(batchData ?? []));
-      }
+      const { data: existing, error: attErr } = await supabaseAdmin
+        .from('attendance')
+        .select('student_id, status, source')
+        .in('student_id', allIds)
+        .eq('date', date);
+
+      if (attErr) { sendError(res, attErr.message, 500); return; }
 
       sendSuccess(res, {
         students: students ?? [],
-        existing,
+        existing: existing ?? [],
       });
-      return;
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
     }
-
-    // Specific class requested
-    let studentQuery = supabaseAdmin
-      .from('students')
-      .select('id, full_name, class_name, section')
-      .eq('school_id', school_id)
-      .ilike('class_name', className.trim())
-      .eq('is_deleted', false);
-
-    if (section) studentQuery = studentQuery.ilike('section', section.trim());
-
-    const { data: students, error: stuErr } = await studentQuery;
-    if (stuErr) { sendError(res, stuErr.message, 500); return; }
-
-    const allIds = (students ?? []).map((s: { id: string }) => s.id);
-    if (allIds.length === 0) {
-      sendSuccess(res, { students: [], existing: [] });
-      return;
-    }
-
-    const { data: existing, error: attErr } = await supabaseAdmin
-      .from('attendance')
-      .select('student_id, status, source')
-      .in('student_id', allIds)
-      .eq('date', date);
-
-    if (attErr) { sendError(res, attErr.message, 500); return; }
-
-    sendSuccess(res, {
-      students: students ?? [],
-      existing: existing ?? [],
-    });
   }
 );
 
@@ -219,62 +227,79 @@ router.post(
   '/bulk',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
-    const schema = z.object({
-      records: z.array(z.object({
-        student_id: z.string().uuid(),
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        status: z.enum(['present', 'absent', 'late', 'excused']),
-        notes: z.string().optional(),
-      })),
-    });
+    try {
+      const schema = z.object({
+        records: z.array(z.object({
+          student_id: z.string().uuid(),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          status: z.enum(['present', 'absent', 'late', 'excused']),
+          notes: z.string().optional(),
+        })),
+      });
 
-    const parsed = schema.safeParse(req.body);
-    if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) { sendValidationError(res, parsed.error.flatten()); return; }
 
-    const userId = req.user!.id;
+      const userId = req.user!.id;
 
-    // ── School ownership check ────────────────────────────────────────────────
-    // For non-superadmin users, verify every submitted student_id belongs to
-    // the caller's school. This prevents a teacher from writing attendance for
-    // students in another school by supplying foreign UUIDs.
-    if (req.user!.role !== 'superadmin') {
-      const schoolId = req.user!.school_id;
-      if (!schoolId) {
-        sendError(res, 'Your account is not linked to a school', 403);
-        return;
+      // ── Date range validation ─────────────────────────────────────────────────
+      const uniqueDates = [...new Set(parsed.data.records.map((r) => r.date))];
+      const nowUtc = new Date();
+      const todayUtc = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate()));
+      for (const d of uniqueDates) {
+        const recordDate = new Date(d + 'T00:00:00Z');
+        const diffDays = (todayUtc.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays < 0 || diffDays > 30) {
+          sendError(res, 'Attendance can only be marked for today or within the last 30 days', 400);
+          return;
+        }
       }
 
-      const submittedIds = parsed.data.records.map((r) => r.student_id);
-      const { data: validStudents, error: validErr } = await supabaseAdmin
-        .from('students')
-        .select('id')
-        .in('id', submittedIds)
-        .eq('school_id', schoolId)
-        .eq('is_deleted', false);
+      // ── School ownership check ────────────────────────────────────────────────
+      // For non-superadmin users, verify every submitted student_id belongs to
+      // the caller's school. This prevents a teacher from writing attendance for
+      // students in another school by supplying foreign UUIDs.
+      if (req.user!.role !== 'superadmin') {
+        const schoolId = req.user!.school_id;
+        if (!schoolId) {
+          sendError(res, 'Your account is not linked to a school', 403);
+          return;
+        }
 
-      if (validErr) { sendError(res, validErr.message, 500); return; }
+        const submittedIds = parsed.data.records.map((r) => r.student_id);
+        const { data: validStudents, error: validErr } = await supabaseAdmin
+          .from('students')
+          .select('id')
+          .in('id', submittedIds)
+          .eq('school_id', schoolId)
+          .eq('is_deleted', false);
 
-      const validIds = new Set((validStudents ?? []).map((s: { id: string }) => s.id));
-      if (validIds.size !== submittedIds.length) {
-        sendError(res, 'One or more students do not belong to your school', 403);
-        return;
+        if (validErr) { sendError(res, validErr.message, 500); return; }
+
+        const validIds = new Set((validStudents ?? []).map((s: { id: string }) => s.id));
+        if (validIds.size !== submittedIds.length) {
+          sendError(res, 'One or more students do not belong to your school', 403);
+          return;
+        }
       }
+
+      const rows = parsed.data.records.map((r) => ({
+        ...r,
+        recorded_by: userId,
+        source: 'manual',
+      }));
+
+      const { data, error } = await supabaseAdmin
+        .from('attendance')
+        .upsert(rows, { onConflict: 'student_id,date', ignoreDuplicates: false })
+        .select();
+
+      if (error) { sendDbError(res, error, 'attendance POST /bulk'); return; }
+
+      sendSuccess(res, data ?? [], 'Attendance saved');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
     }
-
-    const rows = parsed.data.records.map((r) => ({
-      ...r,
-      recorded_by: userId,
-      source: 'manual',
-    }));
-
-    const { data, error } = await supabaseAdmin
-      .from('attendance')
-      .upsert(rows, { onConflict: 'student_id,date', ignoreDuplicates: false })
-      .select();
-
-    if (error) { sendDbError(res, error, 'attendance POST /bulk'); return; }
-
-    sendSuccess(res, data ?? [], 'Attendance saved');
   }
 );
 
@@ -292,6 +317,7 @@ router.get(
   '/class',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { class: className, section } = req.query as Record<string, string>;
     const date = (req.query.date as string) || todayDate();
 
@@ -381,6 +407,9 @@ router.get(
     });
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -396,6 +425,7 @@ router.post(
   requireRole('superadmin', 'schooladmin', 'teacher'),
   submitRateLimit,
   async (req: Request, res: Response) => {
+    try {
     const schema = z.object({
       class: z.string().min(1).max(20),
       section: z.string().min(1).max(10),
@@ -413,6 +443,18 @@ router.post(
     const { class: className, section, date, absent_student_ids } = parsed.data;
     const userId = req.user!.id;
     const userRole = req.user!.role;
+
+    // ── Date range validation ─────────────────────────────────────────────────
+    {
+      const nowUtc = new Date();
+      const todayUtc = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate()));
+      const recordDate = new Date(date + 'T00:00:00Z');
+      const diffDays = (todayUtc.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24);
+      if (diffDays < 0 || diffDays > 30) {
+        sendError(res, 'Attendance can only be marked for today or within the last 30 days', 400);
+        return;
+      }
+    }
 
     // school_id always comes from the auth token for non-superadmin users
     // to prevent cross-school data access by manipulating the request body
@@ -520,6 +562,9 @@ router.post(
     });
 
     sendSuccess(res, { success: true, present_count: presentCount, absent_count: absentCount }, 'Attendance submitted', 201);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -536,6 +581,7 @@ router.put(
   '/correct',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const schema = z.union([
       z.object({
         attendance_id: z.string().uuid(),
@@ -578,9 +624,33 @@ router.put(
         return;
       }
       original = data;
+
+      // ── Date range validation (update path) ──────────────────────────────────
+      {
+        const nowUtc = new Date();
+        const todayUtc = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate()));
+        const recordDate = new Date(original.date + 'T00:00:00Z');
+        const diffDays = (todayUtc.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays > 14) {
+          sendError(res, 'Attendance corrections are only allowed within 14 days of the original date', 400);
+          return;
+        }
+      }
     } else {
       // Create path: no record exists yet (student was not_marked)
       const { student_id, date } = parsed.data as { student_id: string; date: string };
+
+      // ── Date range validation (create path) ──────────────────────────────────
+      {
+        const nowUtc = new Date();
+        const todayUtc = new Date(Date.UTC(nowUtc.getUTCFullYear(), nowUtc.getUTCMonth(), nowUtc.getUTCDate()));
+        const recordDate = new Date(date + 'T00:00:00Z');
+        const diffDays = (todayUtc.getTime() - recordDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays > 14) {
+          sendError(res, 'Attendance corrections are only allowed within 14 days of the original date', 400);
+          return;
+        }
+      }
 
       // Check the student exists
       const { data: student, error: stuErr } = await supabaseAdmin
@@ -723,6 +793,9 @@ router.put(
     }
 
     sendSuccess(res, { attendance_id: original.id, old_status: oldStatus, new_status }, 'Attendance corrected');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -736,6 +809,7 @@ router.get(
   '/history',
   requireRole('superadmin', 'schooladmin', 'teacher', 'student'),
   async (req: Request, res: Response) => {
+    try {
     const { student_id, start_date, end_date } = req.query as Record<string, string>;
 
     if (!student_id || !start_date || !end_date) {
@@ -792,6 +866,9 @@ router.get(
         percentage,
       },
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -806,6 +883,7 @@ router.get(
   '/class-history',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     const { class: className, section, start_date, end_date } = req.query as Record<string, string>;
 
     if (!className || !section || !start_date || !end_date) {
@@ -902,6 +980,9 @@ router.get(
     });
 
     sendSuccess(res, result);
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -915,6 +996,7 @@ router.get(
   '/today-summary',
   requireRole('superadmin', 'schooladmin', 'teacher'),
   async (req: Request, res: Response) => {
+    try {
     // school_id always comes from the auth token for non-superadmin users
     let school_id: string;
     if (req.user!.role === 'superadmin') {
@@ -1001,6 +1083,9 @@ router.get(
       absent: absentCount,
       not_submitted_classes: notSubmittedClasses,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

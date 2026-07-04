@@ -49,6 +49,7 @@ function parseClassLevel(className: string): number {
  * Protected by CRON_SECRET header — not authenticated via JWT.
  */
 router.post('/run', async (req: Request, res: Response) => {
+  try {
   const cronSecret = (process.env.CRON_SECRET ?? '').trim();
   const rawHeader = req.headers['x-cron-secret'];
   const providedSecret = (Array.isArray(rawHeader) ? rawHeader[0] : rawHeader ?? '').trim();
@@ -71,6 +72,9 @@ router.post('/run', async (req: Request, res: Response) => {
     });
 
   sendSuccess(res, { message: 'Weekly analysis job started', week: getLastSunday() }, 'Job started');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 // ── GET /api/weekly-analysis/report/:studentId ────────────────────────────────
@@ -82,6 +86,7 @@ router.get(
   '/report/:studentId',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
 
     // Access check
@@ -108,6 +113,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, { report: data ?? null });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -117,6 +125,7 @@ router.get(
   '/reports/:studentId',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
 
     // Access check
@@ -143,6 +152,9 @@ router.get(
     if (error) { sendError(res, error.message, 500); return; }
 
     sendSuccess(res, { reports: data ?? [] });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -157,6 +169,7 @@ router.get(
   '/insights/:studentId',
   authenticateAny,
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
 
     // Access check
@@ -238,6 +251,9 @@ router.get(
       },
       marks_summary: marksSummary,
     });
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 
@@ -248,6 +264,7 @@ router.post(
   authenticate,
   requireRole('schooladmin', 'superadmin'),
   async (req: Request, res: Response) => {
+    try {
     const studentId = req.params.studentId as string;
     const schoolId = req.user!.school_id;
 
@@ -307,6 +324,9 @@ router.post(
       weak_topics_calculated: weakTopics.length,
       report_text: reportText,
     }, 'Recalculation complete');
+    } catch (err: unknown) {
+      return sendError(res, 'An unexpected error occurred', 500);
+    }
   }
 );
 

@@ -15,7 +15,7 @@
  */
 
 import crypto from 'crypto';
-import { GoogleGenerativeAI, type Part } from '@google/generative-ai';
+import { geminiRawGenerate } from '../utils/geminiRaw';
 import { supabaseAdmin } from '../config/supabase';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -343,21 +343,6 @@ function evaluateNumerical(submissionText: string, referenceAnswer: string): Eva
 
 // ── Gemini helpers ────────────────────────────────────────────────────────────
 
-function getGeminiModel() {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
-  const genAI = new GoogleGenerativeAI(apiKey);
-  return genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
-    generationConfig: {
-      responseMimeType: 'application/json',
-      // Disable thinking tokens — homework grading is straightforward evaluation,
-      // not open-ended reasoning. Thinking adds 8k–20k tokens per submission.
-      thinkingConfig: { thinkingBudget: 0 },
-    } as Record<string, unknown>,
-  });
-}
-
 /**
  * Parse the JSON result from Gemini, stripping any markdown fences.
  * Returns null if parsing fails.
@@ -397,7 +382,8 @@ export async function evaluateTypedAnswer(
   submissionText: string,
   minWordCount: number | null
 ): Promise<EvalResult> {
-  const model = getGeminiModel();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { result: 'partial', confidence: 0.0, feedback: 'AI not configured. Please check manually.' };
 
   const refNote = referenceAnswer?.trim()
     ? referenceAnswer.trim()
@@ -424,10 +410,25 @@ IMPORTANT: Do not provide the correct answer or solution method in your feedback
 Return ONLY valid JSON:
 {"result": "correct" or "incorrect" or "partial", "confidence": 0.0 to 1.0, "feedback": "string"}`;
 
+  const evalResponseSchema = {
+    type: 'object' as const,
+    properties: {
+      result:     { type: 'string' as const, enum: ['correct', 'incorrect', 'partial'] },
+      confidence: { type: 'number' as const },
+      feedback:   { type: 'string' as const },
+    },
+    required: ['result', 'confidence', 'feedback'],
+  };
+
   try {
-    const response = await model.generateContent(prompt);
-    const text = response.response.text().trim();
-    const parsed = parseGeminiJson(text);
+    const { text } = await geminiRawGenerate({
+      apiKey,
+      model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+      parts: [{ text: prompt }],
+      responseSchema: evalResponseSchema as Record<string, unknown>,
+      disableThinking: true,
+    });
+    const parsed = parseGeminiJson(text.trim());
     if (!parsed) {
       return { result: 'partial', confidence: 0.5, feedback: 'AI could not evaluate. Please check manually.' };
     }
@@ -450,7 +451,8 @@ export async function evaluatePhotoAnswer(
   minWordCount: number | null,
   referenceFileUrl: string | null = null
 ): Promise<EvalResult> {
-  const model = getGeminiModel();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { result: 'unclear', confidence: 0.0, feedback: 'AI not configured. Please check manually.' };
 
   const refNote = referenceAnswer?.trim()
     ? `Teacher's reference/expected method or answer: ${referenceAnswer.trim()}`
@@ -481,8 +483,8 @@ IMPORTANT: Do not provide the correct answer or solution method in your feedback
 Return ONLY valid JSON:
 {"result": "correct" or "incorrect" or "partial" or "unclear", "confidence": 0.0 to 1.0, "feedback": "string"}`;
 
-  // Fetch image as base64 for Gemini vision
-  const parts: Part[] = [];
+  // Build parts for the raw REST call (vision)
+  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
 
   // Optionally prepend teacher's reference image first
   if (referenceFileUrl) {
@@ -493,7 +495,6 @@ Return ONLY valid JSON:
         const base64 = Buffer.from(buffer).toString('base64');
         const contentType = resp.headers.get('content-type') ?? 'image/jpeg';
         parts.push({ inlineData: { mimeType: contentType, data: base64 } });
-        // Label part so model understands context
         parts.push({ text: '[Above image: Teacher reference solution]' });
       }
     } catch (err) {
@@ -501,7 +502,6 @@ Return ONLY valid JSON:
     }
   }
 
-  // Student submission images (max 3)
   if (parts.length > 0) {
     parts.push({ text: '[Below: Student submission]' });
   }
@@ -518,16 +518,21 @@ Return ONLY valid JSON:
     }
   }
 
-  if (parts.filter(p => 'inlineData' in p).length === 0) {
+  if (parts.filter(p => p.inlineData).length === 0) {
     return { result: 'unclear', confidence: 0.0, feedback: 'Could not load submission images for evaluation.' };
   }
 
   parts.push({ text: promptText });
 
+  // Vision eval uses raw REST — same pattern as text eval, thinkingBudget:0 guaranteed
   try {
-    const response = await model.generateContent({ contents: [{ role: 'user', parts }] });
-    const text = response.response.text().trim();
-    const parsed = parseGeminiJson(text);
+    const { text } = await geminiRawGenerate({
+      apiKey,
+      model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+      parts,
+      disableThinking: true,
+    });
+    const parsed = parseGeminiJson(text.trim());
     if (!parsed) {
       return { result: 'unclear', confidence: 0.5, feedback: 'AI could not evaluate image. Teacher review needed.' };
     }

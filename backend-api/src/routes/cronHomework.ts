@@ -137,6 +137,7 @@ function verifyCronSecret(req: Request, res: Response): boolean {
 router.get('/evaluate-batch', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  try {
   const locked = await acquireLock();
   if (!locked) {
     // A previous run is still in progress — skip gracefully so the server
@@ -152,6 +153,9 @@ router.get('/evaluate-batch', async (req: Request, res: Response) => {
 
   const startedAt = new Date().toISOString();
   sendSuccess(res, { message: 'Homework batch evaluation started', started_at: startedAt }, 'Job started');
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 
   setImmediate(async () => {
     try {
@@ -170,6 +174,7 @@ router.get('/evaluate-batch', async (req: Request, res: Response) => {
 router.post('/evaluate-batch', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  try {
   const locked = await acquireLock();
   if (!locked) {
     // A previous run is still in progress — skip gracefully.
@@ -191,6 +196,9 @@ router.post('/evaluate-batch', async (req: Request, res: Response) => {
     { message: 'Homework batch evaluation started', started_at: startedAt },
     'Job started'
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 
   setImmediate(async () => {
     try {
@@ -220,10 +228,10 @@ router.post('/evaluate-batch', async (req: Request, res: Response) => {
 router.post('/reset-stuck', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  try {
   const olderThanMinutes = Math.max(1, Number(req.body?.older_than_minutes ?? 30));
   const threshold = new Date(Date.now() - olderThanMinutes * 60 * 1000).toISOString();
 
-  try {
     const { error, count } = await supabaseAdmin
       .from('homework_submissions')
       .update({ status: 'submitted' })
@@ -463,6 +471,7 @@ async function runCleanupOldFiles(): Promise<CleanupResult> {
 router.post('/cleanup-old-files', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  try {
   const startedAt = new Date().toISOString();
 
   // Respond immediately so the cron caller isn't blocked while we work
@@ -471,6 +480,9 @@ router.post('/cleanup-old-files', async (req: Request, res: Response) => {
     { message: 'Homework file cleanup started', started_at: startedAt },
     'Job started'
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 
   setImmediate(async () => {
     try {
@@ -489,12 +501,16 @@ router.post('/cleanup-old-files', async (req: Request, res: Response) => {
 router.get('/cleanup-old-files', async (req: Request, res: Response) => {
   if (!verifyCronSecret(req, res)) return;
 
+  try {
   const startedAt = new Date().toISOString();
   sendSuccess(
     res,
     { message: 'Homework file cleanup started', started_at: startedAt },
     'Job started'
   );
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 
   setImmediate(async () => {
     try {

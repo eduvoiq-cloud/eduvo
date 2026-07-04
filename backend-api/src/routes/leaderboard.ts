@@ -64,6 +64,7 @@ function daysUntilMonthEnd(): number {
  * Accessible by student token. The student can only view their own class.
  */
 router.get('/class', authenticateStudent, async (req: Request, res: Response) => {
+  try {
   const requestingStudentId = req.student!.id;
   const className = (req.query.class_name as string | undefined)?.trim();
   const section   = (req.query.section   as string | undefined)?.trim();
@@ -317,6 +318,9 @@ router.get('/class', authenticateStudent, async (req: Request, res: Response) =>
     month_start: start,
     total_students: students.length,
   });
+  } catch (err: unknown) {
+    return sendError(res, 'An unexpected error occurred', 500);
+  }
 });
 
 export default router;
