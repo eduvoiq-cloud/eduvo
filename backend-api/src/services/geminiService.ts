@@ -87,7 +87,7 @@ export async function extractFromFile(
   const mime = file.mimetype.toLowerCase();
   const originalName = (file.originalname ?? "").toLowerCase();
 
-  // ── PDF: send as base64 directly to Gemini vision ──────────────────────────
+  // â”€â”€ PDF: send as base64 directly to Gemini vision â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (mime === "application/pdf" || originalName.endsWith(".pdf")) {
     const base64 = file.buffer.toString("base64");
     return {
@@ -97,7 +97,7 @@ export async function extractFromFile(
     };
   }
 
-  // ── DOCX: extract text with mammoth ────────────────────────────────────────
+  // â”€â”€ DOCX: extract text with mammoth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (
     mime === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
     originalName.endsWith(".docx")
@@ -111,7 +111,7 @@ export async function extractFromFile(
     };
   }
 
-  // ── TXT: read as utf-8 ─────────────────────────────────────────────────────
+  // â”€â”€ TXT: read as utf-8 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   if (mime === "text/plain" || originalName.endsWith(".txt")) {
     const cleaned = cleanText(file.buffer.toString("utf-8"));
     return {
@@ -144,7 +144,7 @@ function cleanText(raw: string): string {
 
 /**
  * Calls Gemini to generate MCQ and theory questions.
- * For PDFs: sends the file as inlineData (vision) — works for scanned PDFs too.
+ * For PDFs: sends the file as inlineData (vision) â€” works for scanned PDFs too.
  * For text: sends as a text prompt.
  */
 export async function generateQuestions(
@@ -171,7 +171,7 @@ export async function generateQuestions(
     );
   }
 
-  // Build a deterministic hash — return cached result if available
+  // Build a deterministic hash â€” return cached result if available
   const promptHash = buildPromptHash(
     extraction.data,
     school_id,
@@ -187,7 +187,7 @@ export async function generateQuestions(
     return JSON.parse(cached) as GeneratedContent;
   }
 
-  // ── Build Gemini request ───────────────────────────────────────────────────
+  // â”€â”€ Build Gemini request â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured.");
@@ -232,7 +232,7 @@ Return this exact JSON structure:
   let requestParts: Part[];
 
   if (extraction.type === "pdf_base64") {
-    // Send PDF as inline vision data — Gemini reads it natively (scanned or digital)
+    // Send PDF as inline vision data â€” Gemini reads it natively (scanned or digital)
     requestParts = [
       {
         inlineData: {
@@ -251,8 +251,8 @@ Return this exact JSON structure:
     ];
   }
 
-  // ── Response schema for structured JSON output ────────────────────────────
-  // Mirrors the pattern used in tests.ts /generate — tells Gemini to return
+  // â”€â”€ Response schema for structured JSON output â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Mirrors the pattern used in tests.ts /generate â€” tells Gemini to return
   // clean JSON without markdown fences or prose wrappers.
   const responseSchema = {
     type: "object" as const,
@@ -290,7 +290,7 @@ Return this exact JSON structure:
   };
 
   // Use GEMINI_MODEL_QUESTIONS for question generation (same as tests.ts /generate).
-  // Flash Lite is sufficient — MCQ generation is simple extraction, not complex reasoning.
+  // Flash Lite is sufficient â€” MCQ generation is simple extraction, not complex reasoning.
   // GEMINI_MODEL (full Flash) is reserved for homework eval and monthly reports.
   // Uses raw REST API so thinkingBudget:0 is guaranteed to reach the API (SDK v0.24 drops it).
   const modelId = process.env.GEMINI_MODEL_QUESTIONS ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
@@ -319,10 +319,10 @@ Return this exact JSON structure:
   const t_gs4_geminiCallDone = performance.now();
 
   if (thinkingTokens > 0) {
-    console.warn(`[geminiService] thinking tokens fired: ${thinkingTokens} — check thinkingBudget config`);
+    console.warn(`[geminiService] thinking tokens fired: ${thinkingTokens} â€” check thinkingBudget config`);
   }
 
-  // Parse JSON — strip accidental markdown fences
+  // Parse JSON â€” strip accidental markdown fences
   let parsed: GeneratedContent;
   try {
     const jsonText = rawText

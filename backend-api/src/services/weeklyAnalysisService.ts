@@ -16,7 +16,7 @@ import { supabaseAdmin } from '../config/supabase';
 import { getTokensForUsers } from './fcmService';
 import { sendPushMulticast } from './fcmService';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface StudentRecord {
   id: string;
@@ -60,7 +60,7 @@ interface AttendanceRow {
   status: string;
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Returns the Monday-based week start (Sunday) as YYYY-MM-DD. */
 export function getLastSunday(): string {
@@ -85,9 +85,9 @@ function parseClassLevel(className: string): number {
  *   - Combine: 60% weight on daily test avg, 40% on marks avg
  *   - weakness_score = 100 - combined_avg  (higher = weaker)
  *
- * @param dailyTestAvgPct  0–100 average score percentage from daily tests for this topic
- * @param marksAvgPct      0–100 average score percentage from marks table for this subject
- * @returns weakness_score 0–100
+ * @param dailyTestAvgPct  0â€“100 average score percentage from daily tests for this topic
+ * @param marksAvgPct      0â€“100 average score percentage from marks table for this subject
+ * @returns weakness_score 0â€“100
  */
 function calcWeaknessScore(
   dailyTestAvgPct: number | null,
@@ -102,14 +102,14 @@ function calcWeaknessScore(
   } else if (marksAvgPct !== null) {
     combined = marksAvgPct;
   } else {
-    return 50; // No data — neutral score
+    return 50; // No data â€” neutral score
   }
 
   const score = Math.round(100 - combined);
   return Math.max(0, Math.min(100, score));
 }
 
-// ── Step 1: Calculate and upsert weak topics ──────────────────────────────────
+// â”€â”€ Step 1: Calculate and upsert weak topics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function calculateWeakTopics(studentId: string, classLevel: number): Promise<WeakTopicRow[]> {
   const now = new Date().toISOString();
@@ -130,7 +130,7 @@ export async function calculateWeakTopics(studentId: string, classLevel: number)
     created_at: m.created_at as string,
   }));
 
-  // Build subject → marks average map
+  // Build subject â†’ marks average map
   const subjectMarksMap = new Map<string, number[]>();
   for (const m of markRows) {
     if (!subjectMarksMap.has(m.subject)) subjectMarksMap.set(m.subject, []);
@@ -142,7 +142,7 @@ export async function calculateWeakTopics(studentId: string, classLevel: number)
   const topicScoresMap = new Map<string, { subject: string; scores: number[] }>();
 
   if (classLevel >= 7) {
-    // Pull from marks table — auto-written notes tag: "auto:attempt:<attempt_id>"
+    // Pull from marks table â€” auto-written notes tag: "auto:attempt:<attempt_id>"
     // We already have markRows from above which includes all test scores.
     // Build topic map from subject-level marks (best available without daily_tests table)
     for (const [subject, pcts] of subjectMarksMap.entries()) {
@@ -187,7 +187,7 @@ export async function calculateWeakTopics(studentId: string, classLevel: number)
   for (const [subject, pcts] of subjectMarksMap.entries()) {
     // Only add if no topic-level entry exists for this subject
     const hasTopicEntry = weakTopicsToUpsert.some((w) => w.subject === subject);
-    if (!hasTopicEntry && classLevel >= 7) continue; // Classes 7-12: skip — covered by topic entries
+    if (!hasTopicEntry && classLevel >= 7) continue; // Classes 7-12: skip â€” covered by topic entries
     if (classLevel < 7) {
       // Classes 1-6: use subject as topic
       const avgPct = pcts.reduce((a, b) => a + b, 0) / pcts.length;
@@ -223,7 +223,7 @@ export async function calculateWeakTopics(studentId: string, classLevel: number)
   }));
 }
 
-// ── Step 2: Generate AI weekly report ─────────────────────────────────────────
+// â”€â”€ Step 2: Generate AI weekly report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function generateWeeklyReport(
   student: StudentRecord,
@@ -301,7 +301,7 @@ export async function generateWeeklyReport(
   const presentDays = attRecords.filter((r) => r.status === 'present' || r.status === 'late').length;
   const attendancePct = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
 
-  // Process daily test scores — now pulled from recent marks records instead
+  // Process daily test scores â€” now pulled from recent marks records instead
   const recentTestMarks = marksData.filter((m) => m.exam_type === 'class_test' || m.exam_type === 'quiz' || m.exam_type === 'unit_test');
 
   // Process activity completions
@@ -331,7 +331,7 @@ Write a parent-friendly weekly summary (max 150 words, simple English with occas
 4. Streak encouragement if streak > 3 days
 5. Warm closing line
 
-Avoid generic phrases. Be specific using the actual data. Do not use bullet points — write in flowing paragraphs.
+Avoid generic phrases. Be specific using the actual data. Do not use bullet points â€” write in flowing paragraphs.
 Return as JSON: {"report_text": "<your summary here>"}`;
 
   try {
@@ -348,7 +348,7 @@ Return as JSON: {"report_text": "<your summary here>"}`;
       required: ['report_text'],
     };
 
-    // Uses raw REST API — thinkingBudget:0 is guaranteed to reach the API
+    // Uses raw REST API â€” thinkingBudget:0 is guaranteed to reach the API
     const result = await geminiRawGenerateJSON<{ report_text: string }>({
       apiKey,
       model: modelName,
@@ -368,11 +368,11 @@ Return as JSON: {"report_text": "<your summary here>"}`;
   } catch (err) {
     console.error('[weeklyAnalysis] Gemini error for student', student.id, err);
     // Return a fallback message instead of failing the whole job
-    return `This week's performance summary for your child (Class ${classLevel}) is being prepared. Attendance: ${attendancePct}%. Current study streak: ${streakDays} days. Please check the app for detailed subject-wise progress. Keep encouraging your child — har din thodi mehnat kaafi hoti hai! 🌟`;
+    return `This week's performance summary for your child (Class ${classLevel}) is being prepared. Attendance: ${attendancePct}%. Current study streak: ${streakDays} days. Please check the app for detailed subject-wise progress. Keep encouraging your child â€” har din thodi mehnat kaafi hoti hai! ðŸŒŸ`;
   }
 }
 
-// ── Step 3: Store report and send FCM ─────────────────────────────────────────
+// â”€â”€ Step 3: Store report and send FCM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function storeReportAndNotify(
   student: StudentRecord,
@@ -403,7 +403,7 @@ async function storeReportAndNotify(
       if (tokens.length > 0) {
         await sendPushMulticast(
           tokens,
-          "📊 Weekly Success Report Ready!",
+          "ðŸ“Š Weekly Success Report Ready!",
           `Your child's weekly performance report for ${student.full_name} is ready. Tap to view their progress!`,
           { type: 'weekly_report', student_id: student.id, week_start_date: weekStartDate }
         );
@@ -414,7 +414,7 @@ async function storeReportAndNotify(
   }
 }
 
-// ── Main job runner ───────────────────────────────────────────────────────────
+// â”€â”€ Main job runner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface WeeklyAnalysisResult {
   total: number;
@@ -477,7 +477,7 @@ export async function runWeeklyAnalysis(): Promise<WeeklyAnalysisResult> {
       await storeReportAndNotify(student, weekStartDate, reportText);
 
       result.succeeded++;
-      console.log(`[weeklyAnalysis] ✓ Student ${student.id} (${student.full_name})`);
+      console.log(`[weeklyAnalysis] âœ“ Student ${student.id} (${student.full_name})`);
 
       // Small delay to respect Gemini rate limits
       await new Promise((r) => setTimeout(r, 500));
@@ -485,7 +485,7 @@ export async function runWeeklyAnalysis(): Promise<WeeklyAnalysisResult> {
       result.failed++;
       const errMsg = err instanceof Error ? err.message : String(err);
       result.errors.push({ student_id: student.id, error: errMsg });
-      console.error(`[weeklyAnalysis] ✗ Student ${student.id}:`, errMsg);
+      console.error(`[weeklyAnalysis] âœ— Student ${student.id}:`, errMsg);
     }
   }
 

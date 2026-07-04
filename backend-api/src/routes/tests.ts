@@ -14,7 +14,7 @@ import { checkDailyLimit, saveUsageRecord } from '../services/geminiService';
 
 const router = Router();
 
-// ── Schemas ───────────────────────────────────────────────────────────────────
+// â”€â”€ Schemas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const questionSchema = z.object({
   question_text: z.string().min(1),
@@ -50,7 +50,7 @@ const createTestSchema = z.object({
   chapter: z.string().optional().nullable(),
   language: z.enum(['English','Gujarati','Hindi','Sanskrit','Marathi','Tamil','Telugu','Kannada','Bengali','Punjabi']).optional().nullable(),
   contributes_to_streak: z.boolean().default(false),
-  // Chapter library fields (nullable — manual mode leaves them null)
+  // Chapter library fields (nullable â€” manual mode leaves them null)
   chapter_library_id: z.string().uuid().optional().nullable(),
   selected_topics: z.string().optional().nullable(),
   // Web proctoring
@@ -70,7 +70,7 @@ const submitAttemptSchema = z.object({
       s.replace(/<[^>]*>/g, '').trim()
     ).optional(),
   })).min(1),
-  // Web proctoring integrity fields (optional — mobile submits without them)
+  // Web proctoring integrity fields (optional â€” mobile submits without them)
   integrity: z.object({
     tab_exit_count:              z.number().int().min(0).optional().default(0),
     total_exit_duration_seconds: z.number().int().min(0).optional().default(0),
@@ -90,7 +90,7 @@ const theoryMarkSchema = z.object({
   })).min(1),
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Shuffle an array in-place using Fisher-Yates and return it. */
 function shuffle<T>(arr: T[]): T[] {
@@ -137,7 +137,7 @@ async function teacherOwnsClass(
   return (byClass ?? []).length > 0;
 }
 
-// ── POST /api/tests/generate ──────────────────────────────────────────────────
+// â”€â”€ POST /api/tests/generate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * AI-generate MCQ questions using Gemini.
  * Identical capability to the old /api/daily-tests/generate endpoint.
@@ -220,15 +220,15 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
 
   const LANG_INSTRUCTIONS: Record<string, string> = {
     English:  'Write all questions and options in English.',
-    Gujarati: 'Write all questions and options in Gujarati language using Gujarati script (e.g. ગુજરાતી). Do NOT write in English or transliteration.',
-    Hindi:    'Write all questions and options in Hindi language using Devanagari script (e.g. हिंदी). Do NOT write in English or transliteration.',
+    Gujarati: 'Write all questions and options in Gujarati language using Gujarati script (e.g. àª—à«àªœàª°àª¾àª¤à«€). Do NOT write in English or transliteration.',
+    Hindi:    'Write all questions and options in Hindi language using Devanagari script (e.g. à¤¹à¤¿à¤‚à¤¦à¥€). Do NOT write in English or transliteration.',
     Sanskrit: 'Write all questions and options in Sanskrit language using Devanagari script. Do NOT write in English or transliteration.',
-    Marathi:  'Write all questions and options in Marathi language using Devanagari script (e.g. मराठी). Do NOT write in English or transliteration.',
-    Tamil:    'Write all questions and options in Tamil language using Tamil script (e.g. தமிழ்). Do NOT write in English or transliteration.',
-    Telugu:   'Write all questions and options in Telugu language using Telugu script (e.g. తెలుగు). Do NOT write in English or transliteration.',
-    Kannada:  'Write all questions and options in Kannada language using Kannada script (e.g. ಕನ್ನಡ). Do NOT write in English or transliteration.',
-    Bengali:  'Write all questions and options in Bengali language using Bengali script (e.g. বাংলা). Do NOT write in English or transliteration.',
-    Punjabi:  'Write all questions and options in Punjabi language using Gurmukhi script (e.g. ਪੰਜਾਬੀ). Do NOT write in English or transliteration.',
+    Marathi:  'Write all questions and options in Marathi language using Devanagari script (e.g. à¤®à¤°à¤¾à¤ à¥€). Do NOT write in English or transliteration.',
+    Tamil:    'Write all questions and options in Tamil language using Tamil script (e.g. à®¤à®®à®¿à®´à¯). Do NOT write in English or transliteration.',
+    Telugu:   'Write all questions and options in Telugu language using Telugu script (e.g. à°¤à±†à°²à±à°—à±). Do NOT write in English or transliteration.',
+    Kannada:  'Write all questions and options in Kannada language using Kannada script (e.g. à²•à²¨à³à²¨à²¡). Do NOT write in English or transliteration.',
+    Bengali:  'Write all questions and options in Bengali language using Bengali script (e.g. à¦¬à¦¾à¦‚à¦²à¦¾). Do NOT write in English or transliteration.',
+    Punjabi:  'Write all questions and options in Punjabi language using Gurmukhi script (e.g. à¨ªà©°à¨œà¨¾à¨¬à©€). Do NOT write in English or transliteration.',
   };
   const languageInstruction = LANG_INSTRUCTIONS[language] ?? LANG_INSTRUCTIONS.English;
   const fileContext = file_data ? ' Use the provided image/document as the primary source for generating questions.' : '';
@@ -236,7 +236,7 @@ router.post('/generate', authenticate, requireRole('teacher', 'schooladmin', 'su
   let prompt: string;
 
   if (isTeacherLibraryMode && teacher_library_unit) {
-    // ── Teacher library unit mode prompt ─────────────────────────────────────
+    // â”€â”€ Teacher library unit mode prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     prompt = `You are an experienced ${teacher_library_unit.subject} teacher for Class ${teacher_library_unit.class_name}.
 Generate exactly ${count} multiple choice questions.
 Generate questions ONLY from the provided textbook content.
@@ -246,11 +246,11 @@ Requirements:
 - Each question has exactly 4 options (A-D)
 - Mark correct answer index (0-3)
 - explanation: one factual sentence (max 20 words)
-- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong — appropriate for Class ${teacher_library_unit.class_name} level
+- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong â€” appropriate for Class ${teacher_library_unit.class_name} level
 - Test conceptual understanding, not just recall
 IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   } else if (isLibraryMode && chapter_number && chapter_name) {
-    // ── Library mode prompt ──────────────────────────────────────────────────
+    // â”€â”€ Library mode prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const topicsLine = selected_topics?.trim()
       ? `Focus on these specific topics: ${selected_topics.trim()}.`
       : '';
@@ -262,11 +262,11 @@ Requirements:
 - Each question has exactly 4 options (A-D)
 - Mark correct answer index (0-3)
 - explanation: one factual sentence (max 20 words)
-- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong — appropriate for Class ${cls} level
+- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong â€” appropriate for Class ${cls} level
 - Test conceptual understanding, not just recall
 IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   } else {
-    // ── Manual / topic mode prompt (unchanged) ───────────────────────────────
+    // â”€â”€ Manual / topic mode prompt (unchanged) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     prompt = `You are an experienced ${subject} teacher for Class ${cls} following ${board} curriculum in India.${chapterLine}
 Generate exactly ${count} multiple choice questions based on the topic: '${topic}'.${fileContext}
 Requirements:
@@ -308,7 +308,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
   }
 
-  // ── Teacher library unit mode: download files from Supabase Storage ────────
+  // â”€â”€ Teacher library unit mode: download files from Supabase Storage â”€â”€â”€â”€â”€â”€â”€â”€
   if (isTeacherLibraryMode && teacher_library_unit) {
     const { data: libraryFiles, error: libErr } = await supabaseAdmin
       .from('teacher_library_files')
@@ -347,7 +347,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     }
   }
 
-  // Question generation is lightweight — use Flash Lite (cheap + fast).
+  // Question generation is lightweight â€” use Flash Lite (cheap + fast).
   // Falls back to gemini-2.5-flash if Lite is overloaded (503).
   // Uses raw REST API (not SDK) so thinkingBudget:0 is guaranteed to be sent.
   const primaryModel  = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
@@ -363,7 +363,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     });
     raw = result.text.trim();
     if (result.thinkingTokens > 0) {
-      console.warn(`[tests/generate] thinking tokens fired: ${result.thinkingTokens} on ${result.modelUsed} — check thinkingBudget`);
+      console.warn(`[tests/generate] thinking tokens fired: ${result.thinkingTokens} on ${result.modelUsed} â€” check thinkingBudget`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -404,7 +404,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
 
     sendSuccess(res, { questions, chapter_library_id: chapter_library_id ?? null, selected_topics: selected_topics ?? null }, 'Questions generated');
 
-    // Record usage (fire-and-forget — don't block the response)
+    // Record usage (fire-and-forget â€” don't block the response)
     saveUsageRecord({
       user_id: req.user!.id,
       school_id: req.user!.school_id ?? '',
@@ -419,7 +419,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   }
 });
 
-// ── POST /api/tests/create ────────────────────────────────────────────────────
+// â”€â”€ POST /api/tests/create â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher creates a test with questions.
  * Only a teacher assigned to that class/section can create.
@@ -431,14 +431,14 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
 
   const { questions, ...testFields } = parsed.data;
 
-  // Enforce single question type per test — a test must be all-MCQ or all-theory, never mixed
+  // Enforce single question type per test â€” a test must be all-MCQ or all-theory, never mixed
   const qTypes = new Set(questions.map((q) => q.question_type));
   if (qTypes.size > 1) {
     sendError(res, 'A test must contain only MCQ questions or only Theory questions, not both. Please create separate tests for each type.', 400);
     return;
   }
 
-  // Reject past dates — use IST so teachers in India aren't blocked between midnight–5:30 AM
+  // Reject past dates â€” use IST so teachers in India aren't blocked between midnightâ€“5:30 AM
   const todayStr = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
   if (testFields.date < todayStr) {
     sendError(res, 'Test date cannot be in the past', 400);
@@ -448,13 +448,13 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
   // Resolve subject_id + subject name.
   // The frontend passes either a UUID (subject_id) or a plain name string.
   // The tests table has BOTH a legacy `subject text NOT NULL` column and a
-  // nullable `subject_id uuid` column — we must populate both.
+  // nullable `subject_id uuid` column â€” we must populate both.
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let resolvedSubjectId: string | null = null;
   let resolvedSubjectName: string = testFields.subject_id; // default: treat value as name
 
   if (UUID_RE.test(testFields.subject_id)) {
-    // Value is already a UUID — look up the name
+    // Value is already a UUID â€” look up the name
     resolvedSubjectId = testFields.subject_id;
     const { data: subjectRow } = await supabaseAdmin
       .from('subjects')
@@ -463,7 +463,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
       .maybeSingle();
     if (subjectRow?.name) resolvedSubjectName = subjectRow.name;
   } else {
-    // Value is a subject name — look up the UUID
+    // Value is a subject name â€” look up the UUID
     resolvedSubjectName = testFields.subject_id.trim();
     const { data: subjectRow } = await supabaseAdmin
       .from('subjects')
@@ -527,7 +527,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
   }
 
   // Insert all questions.
-  // Schema drift fallback removed — 2026-06-23. Schema confirmed stable.
+  // Schema drift fallback removed â€” 2026-06-23. Schema confirmed stable.
   // questions table has: test_id, order_index, question_text, question_type,
   // option_a/b/c/d, correct_option, marks, explanation, reasoning
   const questionRows = questions.map((q, idx) => ({
@@ -605,7 +605,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
           );
           if (failureCount > 0) {
             console.error(
-              `[FCM] Test notification — sent: ${successCount}, failed: ${failureCount}, test: ${test.id}`
+              `[FCM] Test notification â€” sent: ${successCount}, failed: ${failureCount}, test: ${test.id}`
             );
           }
         }
@@ -622,7 +622,7 @@ router.post('/create', authenticate, requireRole('teacher', 'schooladmin', 'supe
   }
 });
 
-// ── GET /api/tests/my-tests ───────────────────────────────────────────────────
+// â”€â”€ GET /api/tests/my-tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher sees all tests they created, with question count.
  * Filterable by class, section, term.
@@ -676,7 +676,7 @@ router.get('/my-tests', authenticate, requireRole('teacher', 'schooladmin', 'sup
   sendSuccess(res, result);
 });
 
-// ── GET /api/tests/student ────────────────────────────────────────────────────
+// â”€â”€ GET /api/tests/student â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Student gets all tests for their class/section.
  * Tests are visible to ALL students by default.
@@ -684,7 +684,7 @@ router.get('/my-tests', authenticate, requireRole('teacher', 'schooladmin', 'sup
  * correct_option is NEVER included.
  */
 router.get('/student', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
-  // authenticateStudent already resolved and verified the student — use it directly
+  // authenticateStudent already resolved and verified the student â€” use it directly
   const studentRecord = {
     id: req.student!.id,
     class_name: req.student!.class_name,
@@ -697,15 +697,15 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     return;
   }
 
-  // ── Pagination + date filter ────────────────────────────────────────────────
-  // limit: default 20, max 50 — prevents returning hundreds of old tests
+  // â”€â”€ Pagination + date filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // limit: default 20, max 50 â€” prevents returning hundreds of old tests
   // offset: default 0
   // from_date: optional ISO date string to filter tests on or after a date
   const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
   const offset = parseInt(req.query.offset as string) || 0;
   const fromDate = req.query.from_date as string | undefined;
 
-  // Fetch tests — no correct_option, no shuffle config exposed
+  // Fetch tests â€” no correct_option, no shuffle config exposed
   let testsQuery = supabaseAdmin
     .from('tests')
     .select(`
@@ -773,7 +773,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
       .select('notes, max_score')
       .eq('student_id', studentId)
       .like('notes', 'auto:attempt:%'),
-    // Direct count query — check both tables (test_questions = dashboard-created, questions = mobile-created)
+    // Direct count query â€” check both tables (test_questions = dashboard-created, questions = mobile-created)
     supabaseAdmin
       .from('test_questions')
       .select('test_id')
@@ -855,7 +855,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
     // For a completed attempt: prefer total_score (MCQ + theory), fall back to mcq_score.
     // For mixed MCQ+theory tests, theory marking is still pending when total_score is null
     // even if mcq_score is already set. Only flag as pending when there are actually
-    // unmarked theory answers — not just when both scores are null.
+    // unmarked theory answers â€” not just when both scores are null.
     const mcqScore = attempt?.mcq_score ?? null;
     const totalScore = attempt?.total_score ?? null;
     const maxScore = attempt ? (maxScoreByAttempt.get(attempt.id) ?? null) : null;
@@ -883,7 +883,7 @@ router.get('/student', authenticateStudent, requireRole('student'), async (req: 
   sendSuccess(res, { data: enriched, total: testsCount ?? 0, limit, offset });
 });
 
-// ── POST /api/tests/attempt/start ────────────────────────────────────────────
+// â”€â”€ POST /api/tests/attempt/start â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Student starts a test attempt.
  * Returns all questions WITHOUT correct_option.
@@ -903,7 +903,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
   // Default to 'mobile' if not provided (backwards compat with existing app)
   const platform: 'mobile' | 'web' = rawPlatform === 'web' ? 'web' : 'mobile';
 
-  // authenticateStudent already resolved and verified the student — use it directly
+  // authenticateStudent already resolved and verified the student â€” use it directly
   const studentRecord = {
     id: req.student!.id,
     class_name: req.student!.class_name,
@@ -947,7 +947,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     return;
   }
 
-  // ── Date enforcement ────────────────────────────────────────────────────────
+  // â”€â”€ Date enforcement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // A student can only START a new attempt on the exact date the teacher scheduled.
   // Resuming an already in-progress attempt is always allowed (so a page refresh
   // or crash doesn't lock the student out on the same day).
@@ -983,7 +983,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     }
   }
 
-  // ── Time window enforcement ─────────────────────────────────────────────────
+  // â”€â”€ Time window enforcement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // available_from / available_until are HH:MM in IST (UTC+5:30).
   // Only enforce if the student is starting a new attempt (not resuming).
   {
@@ -1064,7 +1064,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
 
     // Existing in-progress attempt: return it with the ORIGINAL started_at so the
     // student never gets fresh time by closing and reopening the test.
-    // Do NOT update started_at — it was set on the first open and is immutable.
+    // Do NOT update started_at â€” it was set on the first open and is immutable.
     const { data: resumedAttempt, error: resumeErr } = await supabaseAdmin
       .from('test_attempts')
       .select('id, started_at')
@@ -1076,7 +1076,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
       return;
     }
 
-    // Return early with the existing attempt — no need to fall through.
+    // Return early with the existing attempt â€” no need to fall through.
     // Fetch questions for this test.
     let resetRawQuestions = null;
     const { data: tqResetData, error: tqResetErr } = await supabaseAdmin
@@ -1119,7 +1119,7 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     return;
   }
 
-  // No existing attempt — fetch questions then create a fresh one
+  // No existing attempt â€” fetch questions then create a fresh one
   let rawQuestionsData = null;
   let qErr = null;
 
@@ -1219,12 +1219,12 @@ router.post('/attempt/start', authenticateStudent, requireRole('student'), async
     time_limit_minutes: test.time_limit_minutes,
     started_at: attempt.started_at,
     seconds_remaining: test.time_limit_minutes > 0 ? freshSecondsRemaining : null,
-    resumed: false, // always a fresh start — never resume a stale attempt
+    resumed: false, // always a fresh start â€” never resume a stale attempt
     questions,
   }, 'Test started');
 });
 
-// ── POST /api/tests/attempt/submit ───────────────────────────────────────────
+// â”€â”€ POST /api/tests/attempt/submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Student submits answers.
  * MCQ graded server-side by fetching correct_option from DB.
@@ -1246,10 +1246,10 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
 
   const { attempt_id, answers, integrity: webIntegrity } = parsed.data;
 
-  // authenticateStudent already resolved and verified the student — use directly
+  // authenticateStudent already resolved and verified the student â€” use directly
   const studentId = req.student!.id;
 
-  // Fetch attempt — must belong to this student and not yet submitted
+  // Fetch attempt â€” must belong to this student and not yet submitted
   const { data: attempt, error: aErr } = await supabaseAdmin
     .from('test_attempts')
     .select('id, test_id, started_at, is_submitted')
@@ -1273,7 +1273,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
   const elapsedMinutes = (now.getTime() - startedAt.getTime()) / 60000;
   const timeLimitExceeded = test ? elapsedMinutes > test.time_limit_minutes : false;
 
-  // Fetch all questions for this test (with correct_option — server-side only)
+  // Fetch all questions for this test (with correct_option â€” server-side only)
   // Try test_questions first (compatibility shim), fallback to questions
   let gradingQuestions = null;
   const { data: tqGrading, error: tqGradingErr } = await supabaseAdmin
@@ -1331,7 +1331,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
         marks_awarded: marksAwarded,
       });
     } else {
-      // Theory — marks_awarded is null until teacher marks
+      // Theory â€” marks_awarded is null until teacher marks
       acc.push({
         attempt_id,
         question_id: ans.question_id,
@@ -1346,12 +1346,12 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
 
   // FIX 18: Guard against a submission where all submitted question_ids are
   // unrecognised (none matched any known question in questionMap). This means
-  // the client sent answers but none could be mapped — likely a question ID
+  // the client sent answers but none could be mapped â€” likely a question ID
   // mismatch or a stale attempt. Do NOT mark as submitted; return a clear 400
   // so the student knows their answers were not recorded and can retry.
   if (answerRows.length === 0) {
     console.error(
-      `[tests] attempt/submit: empty answerRows for attempt ${attempt_id} — possible question ID mismatch or empty submission`
+      `[tests] attempt/submit: empty answerRows for attempt ${attempt_id} â€” possible question ID mismatch or empty submission`
     );
     return sendError(
       res,
@@ -1361,7 +1361,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
   }
 
   // Delete any previously saved answers for this attempt (handles retry safely)
-  // then re-insert fresh — avoids needing a unique constraint for upsert
+  // then re-insert fresh â€” avoids needing a unique constraint for upsert
   await supabaseAdmin
     .from('student_answers')
     .delete()
@@ -1391,7 +1391,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
       total_score: resolvedTotalScore,
       is_submitted: true,
       submitted_at: now.toISOString(),
-      // Web proctoring fields (zero by default — only set if submitted from web portal)
+      // Web proctoring fields (zero by default â€” only set if submitted from web portal)
       ...(webIntegrity ? {
         fullscreen_exit_count:        webIntegrity.fullscreen_exit_count        ?? 0,
         face_absent_count:            webIntegrity.face_absent_count            ?? 0,
@@ -1403,7 +1403,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
 
   if (updateErr) { sendError(res, `Failed to finalise submission: ${updateErr.message}`, 500); return; }
 
-  // ── Auto-write MCQ score into marks table so it appears in View Marks ──────
+  // â”€â”€ Auto-write MCQ score into marks table so it appears in View Marks â”€â”€â”€â”€â”€â”€
   // Fetch test metadata + join subjects to get the subject name (tests store subject_id, not name)
   const { data: testMeta } = await supabaseAdmin
     .from('tests')
@@ -1466,7 +1466,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
     time_limit_exceeded: timeLimitExceeded,
   });
 
-  // ── Streak update (fire-and-forget) ─────────────────────────────────────────
+  // â”€â”€ Streak update (fire-and-forget) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Count a submitted test as a streak activity day.
   // This matches the app UI legend ("Test" contributes to streak) and prevents
   // streaks from not updating when teachers forget to toggle a flag.
@@ -1493,10 +1493,10 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
         if (parentId && streakResult.current_streak > 0) {
           const parentTokens = await getTokensForUsers([parentId]);
           if (parentTokens.length > 0) {
-            const streakMsg = ` 🔥 Streak: ${streakResult.current_streak} day${streakResult.current_streak !== 1 ? 's' : ''}!`;
+            const streakMsg = ` ðŸ”¥ Streak: ${streakResult.current_streak} day${streakResult.current_streak !== 1 ? 's' : ''}!`;
             await sendPushMulticast(
               parentTokens,
-              'Test Completed! 🎉',
+              'Test Completed! ðŸŽ‰',
               `${studentName} scored ${mcqScore}/${totalMcqMarks} on a test!${streakMsg}`,
               { type: 'test_result', test_id: String(attempt.test_id) }
             );
@@ -1515,7 +1515,7 @@ router.post('/attempt/submit', authenticateStudent, requireRole('student'), test
   }
 });
 
-// ── POST /api/tests/theory/mark ───────────────────────────────────────────────
+// â”€â”€ POST /api/tests/theory/mark â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher marks theory answers for a submitted attempt.
  * Only the teacher assigned to that class can do this.
@@ -1560,7 +1560,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
     }
   }
 
-  // Update each theory answer's marks_awarded — validate against question max marks
+  // Update each theory answer's marks_awarded â€” validate against question max marks
   for (const { question_id, marks_awarded } of theory_marks) {
     // Fetch question to verify marks_awarded doesn't exceed question max
     const { data: question } = await supabaseAdmin
@@ -1606,7 +1606,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
     .update({ total_score: totalScore })
     .eq('id', attempt_id);
 
-  // ── Sync total_score into marks table too ─────────────────────────────────
+  // â”€â”€ Sync total_score into marks table too â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // For mixed MCQ+theory tests, update the marks record with the final score
   const { data: attemptDetail } = await supabaseAdmin
     .from('test_attempts')
@@ -1623,7 +1623,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
       .eq('notes', noteTag)
       .maybeSingle();
 
-    // Calculate total possible marks — try test_questions first, fallback to questions table
+    // Calculate total possible marks â€” try test_questions first, fallback to questions table
     // (mobile-app-created tests store questions only in the questions table)
     const { data: testQuestionsForMax } = await supabaseAdmin
       .from('test_questions')
@@ -1685,7 +1685,7 @@ router.post('/theory/mark', authenticate, requireRole('teacher', 'schooladmin', 
   sendSuccess(res, { attempt_id, total_score: totalScore }, 'Theory answers marked');
 });
 
-// ── GET /api/tests/results/by-test/:test_id ──────────────────────────────────
+// â”€â”€ GET /api/tests/results/by-test/:test_id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // IMPORTANT: this route MUST be defined before /results/:attempt_id so that
 // Express doesn't greedily match "by-test" as an attempt_id parameter.
 /**
@@ -1817,7 +1817,7 @@ router.get('/results/by-test/:test_id', authenticateStudent, requireRole('studen
   });
 });
 
-// ── GET /api/tests/results/:attempt_id ───────────────────────────────────────
+// â”€â”€ GET /api/tests/results/:attempt_id â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Student views their results for a submitted attempt.
  * MCQ: shows correct/wrong per question.
@@ -1828,10 +1828,10 @@ router.get('/results/by-test/:test_id', authenticateStudent, requireRole('studen
 router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), async (req: Request, res: Response) => {
   const { attempt_id } = req.params;
 
-  // authenticateStudent already resolved and verified the student — use directly
+  // authenticateStudent already resolved and verified the student â€” use directly
   const studentId = req.student!.id;
 
-  // Fetch attempt — must belong to this student
+  // Fetch attempt â€” must belong to this student
   const { data: attempt, error: aErr } = await supabaseAdmin
     .from('test_attempts')
     .select('id, test_id, mcq_score, total_score, is_submitted, submitted_at, started_at')
@@ -1842,7 +1842,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
   if (aErr || !attempt) { sendError(res, 'Attempt not found', 404); return; }
   if (!attempt.is_submitted) { sendError(res, 'This attempt has not been submitted yet', 400); return; }
 
-  // Fetch answers (no join — no FK exists between student_answers and questions)
+  // Fetch answers (no join â€” no FK exists between student_answers and questions)
   const { data: answers, error: ansErr } = await supabaseAdmin
     .from('student_answers')
     .select('question_id, selected_option, theory_answer, is_correct, marks_awarded')
@@ -1951,7 +1951,7 @@ router.get('/results/:attempt_id', authenticateStudent, requireRole('student'), 
   });
 });
 
-// ── Compatibility routes for frontend testsApi ────────────────────────────────
+// â”€â”€ Compatibility routes for frontend testsApi â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // The frontend calls GET /api/tests and POST /api/tests with a different
 // schema than the student-facing routes above. These shim routes bridge the gap.
 
@@ -2024,8 +2024,8 @@ router.get('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'
  * Body: { title, subject, class_name, section, term, date, questions[] }
  *
  * Live DB schema:
- *   tests          → class (text), subject (text), subject_id (uuid nullable)
- *   test_questions → question_text, question_type, option_a-d, correct_option (text 'a'-'d')
+ *   tests          â†’ class (text), subject (text), subject_id (uuid nullable)
+ *   test_questions â†’ question_text, question_type, option_a-d, correct_option (text 'a'-'d')
  */
 router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher'), async (req: Request, res: Response) => {
   const schema = z.object({
@@ -2062,21 +2062,21 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
 
   const { questions, class_name, ...rest } = parsed.data;
 
-  // Enforce single question type per test — a test must be all-MCQ or all-theory, never mixed
+  // Enforce single question type per test â€” a test must be all-MCQ or all-theory, never mixed
   const questionTypes = new Set(questions.map((q) => q.type));
   if (questionTypes.size > 1) {
     sendError(res, 'A test must contain only MCQ questions or only Theory questions, not both. Please create separate tests for each type.', 400);
     return;
   }
 
-  // Reject past dates — use IST so teachers in India aren't blocked between midnight–5:30 AM
+  // Reject past dates â€” use IST so teachers in India aren't blocked between midnightâ€“5:30 AM
   const todayStr2 = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().slice(0, 10);
   if (rest.date < todayStr2) {
     sendError(res, 'Test date cannot be in the past', 400);
     return;
   }
 
-  // Normalise term to canonical underscore format (e.g. "Term 1" → "term_1", "term1" → "term_1")
+  // Normalise term to canonical underscore format (e.g. "Term 1" â†’ "term_1", "term1" â†’ "term_1")
   const normalisedTerm = normaliseTerm(rest.term) ?? rest.term;
 
   const { data: test, error: testErr } = await supabaseAdmin
@@ -2109,7 +2109,7 @@ router.post('/', authenticate, requireRole('superadmin', 'schooladmin', 'teacher
     return;
   }
 
-  // Map options array to option_a/b/c/d columns; correct_option index → letter
+  // Map options array to option_a/b/c/d columns; correct_option index â†’ letter
   const optionLetters = ['a', 'b', 'c', 'd'] as const;
 
   const questionRows = questions.map((q, idx) => {
@@ -2216,7 +2216,7 @@ router.delete('/:id', authenticate, requireRole('superadmin', 'schooladmin', 'te
   sendSuccess(res, null, 'Test deleted');
 });
 
-// ── GET /api/tests/suspicious-activity ───────────────────────────────────────
+// â”€â”€ GET /api/tests/suspicious-activity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher views suspicious test integrity logs for tests they created in the last 30 days.
  * schooladmin / superadmin see all suspicious activity for their school.
@@ -2231,7 +2231,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
   const isTeacher = req.user!.role === 'teacher';
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  // ── Step 1: Determine which test IDs are in scope ─────────────────────────
+  // â”€â”€ Step 1: Determine which test IDs are in scope â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // For teachers, only tests THEY created. For admins, all school tests.
   let scopedTestIds: string[] | null = null; // null = no restriction (admin)
 
@@ -2246,14 +2246,14 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
 
     scopedTestIds = (myTests ?? []).map((t: { id: string }) => t.id);
 
-    // Teacher has no tests — nothing to show
+    // Teacher has no tests â€” nothing to show
     if (scopedTestIds.length === 0) {
       sendSuccess(res, []);
       return;
     }
   }
 
-  // ── Step 2: Fetch test_attempts scoped to those tests ─────────────────────
+  // â”€â”€ Step 2: Fetch test_attempts scoped to those tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let attemptsQuery = supabaseAdmin
     .from('test_attempts')
     .select('id, test_id')
@@ -2273,13 +2273,13 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     return;
   }
 
-  // Build attempt → test_id map for later enrichment
+  // Build attempt â†’ test_id map for later enrichment
   const attemptToTestId = new Map<string, string>();
   for (const a of (scopedAttempts ?? []) as Array<{ id: string; test_id: string }>) {
     attemptToTestId.set(a.id, a.test_id);
   }
 
-  // ── Step 3: Fetch suspicious integrity logs for those attempts only ────────
+  // â”€â”€ Step 3: Fetch suspicious integrity logs for those attempts only â”€â”€â”€â”€â”€â”€â”€â”€
   const CHUNK = 900; // stay under PostgREST IN() limit
   let logs: Array<Record<string, unknown>> = [];
 
@@ -2311,7 +2311,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     return;
   }
 
-  // ── Step 4: Fetch test metadata (title, subject, date) ────────────────────
+  // â”€â”€ Step 4: Fetch test metadata (title, subject, date) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const testIds = [...new Set(logs.map((l) => attemptToTestId.get(l['test_attempt_id'] as string)).filter(Boolean) as string[])];
   const { data: tests } = await supabaseAdmin
     .from('tests')
@@ -2323,7 +2323,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     testInfoMap.set(t.id, { title: t.title, subject: t.subject, date: t.date });
   }
 
-  // ── Step 5: Fetch student names ────────────────────────────────────────────
+  // â”€â”€ Step 5: Fetch student names â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const studentIds = [...new Set(logs.map((l) => l['student_id'] as string))];
   const { data: students } = await supabaseAdmin
     .from('students')
@@ -2335,7 +2335,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
     studentNameMap.set(s.id, s.full_name);
   }
 
-  // ── Step 6: Build response ─────────────────────────────────────────────────
+  // â”€â”€ Step 6: Build response â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const result = logs.map((log) => {
     const testId = attemptToTestId.get(log['test_attempt_id'] as string) ?? null;
     const testInfo = testId ? testInfoMap.get(testId) : null;
@@ -2360,7 +2360,7 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
   sendSuccess(res, result);
 });
 
-// ── GET /api/tests/:test_id/restrictions ─────────────────────────────────────
+// â”€â”€ GET /api/tests/:test_id/restrictions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher gets the list of students blocked from a specific test.
  * Returns: all students in the class with a flag indicating if they are restricted.
@@ -2418,7 +2418,7 @@ router.get('/:test_id/restrictions', authenticate, requireRole('teacher', 'schoo
   sendSuccess(res, result);
 });
 
-// ── PUT /api/tests/:test_id/restrictions ──────────────────────────────────────
+// â”€â”€ PUT /api/tests/:test_id/restrictions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher sets the complete list of restricted students for a test.
  * Body: { blocked_student_ids: string[] }
@@ -2578,7 +2578,7 @@ router.get('/:test_id/attempts', authenticate, requireRole('teacher', 'schooladm
   sendSuccess(res, result);
 });
 
-// ── GET /api/tests/attempts/:attempt_id/details ──────────────────────────────
+// â”€â”€ GET /api/tests/attempts/:attempt_id/details â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher views full attempt details with all answers and questions for marking.
  * Returns questions with student answers, marks awarded, and for theory shows the student's text answer.
@@ -2733,10 +2733,10 @@ router.get('/attempts/:attempt_id/details', authenticate, requireRole('teacher',
   });
 });
 
-// ── POST /api/tests/backfill-marks ───────────────────────────────────────────
+// â”€â”€ POST /api/tests/backfill-marks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Backfills marks table from all existing submitted test_attempts for a school.
- * Safe to run multiple times — uses upsert by notes tag.
+ * Safe to run multiple times â€” uses upsert by notes tag.
  * Teacher/admin only.
  */
 router.post('/backfill-marks', authenticate, requireRole('teacher', 'schooladmin', 'superadmin'), async (req: Request, res: Response) => {
@@ -2811,7 +2811,7 @@ router.post('/backfill-marks', authenticate, requireRole('teacher', 'schooladmin
   sendSuccess(res, { inserted, updated }, `Backfilled ${inserted} new and updated ${updated} existing marks records`);
 });
 
-// ── GET /api/tests/:test_id/results-summary ───────────────────────────────────
+// â”€â”€ GET /api/tests/:test_id/results-summary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Teacher views a full summary for a test:
  * - All students in the class/section with their attempt status & score
@@ -2973,7 +2973,7 @@ router.get('/:test_id/results-summary', authenticate, requireRole('teacher', 'sc
   });
 });
 
-// ── GET /api/tests/:test_id/leaderboard ──────────────────────────────────────
+// â”€â”€ GET /api/tests/:test_id/leaderboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Student views the top 3 scorers for a test after the window has closed.
  * Only available after available_until has passed (or test date is past).
@@ -3074,7 +3074,7 @@ router.get('/:test_id/leaderboard', authenticateStudent, requireRole('student'),
   sendSuccess(res, { leaderboard, max_score: maxScore });
 });
 
-// ── POST /api/student/test-integrity ─────────────────────────────────────────
+// â”€â”€ POST /api/student/test-integrity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 /**
  * Called by the mobile app after a test is successfully submitted.
  * Accepts visibility-tracking data, computes an integrity score, and persists
@@ -3114,7 +3114,7 @@ interface WebIntegrityExtras {
   multiple_faces_count?: number;
 }
 
-// ── Integrity score hardcoded defaults ───────────────────────────────────────
+// â”€â”€ Integrity score hardcoded defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Used as a fallback if the integrity_score_config table is empty or unreachable.
 // DB values override these defaults when present.
 const INTEGRITY_DEFAULTS = {
@@ -3244,7 +3244,7 @@ router.post('/student/test-integrity', authenticateStudent, requireRole('student
     return;
   }
 
-  // 2. Fetch integrity config rows and build key→value map
+  // 2. Fetch integrity config rows and build keyâ†’value map
   const { data: configRows, error: configErr } = await supabaseAdmin
     .from('integrity_score_config')
     .select('config_key, config_value');
@@ -3259,7 +3259,7 @@ router.post('/student/test-integrity', authenticateStudent, requireRole('student
     {}
   );
 
-  // Merge DB values over hardcoded defaults — table empty = defaults win
+  // Merge DB values over hardcoded defaults â€” table empty = defaults win
   const config: IntegrityConfig = {
     base_score:                           rawConfig['base_score']                            ?? INTEGRITY_DEFAULTS.base_score,
     exit_deduction_per_exit:              rawConfig['exit_deduction_per_exit']               ?? INTEGRITY_DEFAULTS.exit_deduction_per_exit,
@@ -3280,7 +3280,7 @@ router.post('/student/test-integrity', authenticateStudent, requireRole('student
   };
   const { integrity_score, is_suspicious, suspicious_reasons } = calculateIntegrityScore(integrityData, config, undefined);
 
-  // 4. Upsert into test_integrity_logs (idempotent — one row per attempt)
+  // 4. Upsert into test_integrity_logs (idempotent â€” one row per attempt)
   // NOTE: column is `test_attempt_id` after fix-integrity-logs-fk.sql migration.
   const { data: existing } = await supabaseAdmin
     .from('test_integrity_logs')

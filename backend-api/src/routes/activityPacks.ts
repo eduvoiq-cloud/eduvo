@@ -1,22 +1,22 @@
 /**
- * /api/activity-packs — teacher-created daily learning activities
+ * /api/activity-packs â€” teacher-created daily learning activities
  *
  * Teacher endpoints:
- *   GET    /api/activity-packs/permission        — check if teacher has access
- *   POST   /api/activity-packs/generate          — Gemini: generate 5 home activities
- *   POST   /api/activity-packs                   — create a pack + send FCM to parents
- *   GET    /api/activity-packs                   — list own packs
- *   DELETE /api/activity-packs/:id               — delete own pack
- *   GET    /api/activity-packs/:id/completions   — view completion status
+ *   GET    /api/activity-packs/permission        â€” check if teacher has access
+ *   POST   /api/activity-packs/generate          â€” Gemini: generate 5 home activities
+ *   POST   /api/activity-packs                   â€” create a pack + send FCM to parents
+ *   GET    /api/activity-packs                   â€” list own packs
+ *   DELETE /api/activity-packs/:id               â€” delete own pack
+ *   GET    /api/activity-packs/:id/completions   â€” view completion status
  *
  * Student / parent endpoints (student token):
- *   GET    /api/activity-packs/student/today     — today's packs for student's class
- *   POST   /api/activity-packs/:id/complete      — parent marks activities done
- *   GET    /api/activity-packs/student/history   — completion history
+ *   GET    /api/activity-packs/student/today     â€” today's packs for student's class
+ *   POST   /api/activity-packs/:id/complete      â€” parent marks activities done
+ *   GET    /api/activity-packs/student/history   â€” completion history
  *
  * Admin:
- *   GET    /api/activity-packs/school            — all packs for school
- *   GET    /api/activity-packs/admin/stats       — creation rate + completion rate by class
+ *   GET    /api/activity-packs/school            â€” all packs for school
+ *   GET    /api/activity-packs/admin/stats       â€” creation rate + completion rate by class
  */
 
 import { Router, Request, Response } from 'express';
@@ -31,7 +31,7 @@ import { updateStreakWithMilestone } from '../services/streakService';
 
 const router = Router();
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Check teacher has activity pack creation permission.
  *  All teachers can create activity packs by default.
@@ -44,7 +44,7 @@ async function hasActivityPermission(teacherId: string, schoolId: string): Promi
     .eq('teacher_id', teacherId)
     .eq('school_id', schoolId)
     .maybeSingle();
-  // No row means unrestricted — only an explicit false blocks access
+  // No row means unrestricted â€” only an explicit false blocks access
   if (data === null) return true;
   return (data as Record<string, unknown>).can_create_activity_packs !== false;
 }
@@ -73,15 +73,15 @@ async function getAllStudentsInClass(
 function classToAge(cls: string): string {
   const num = parseInt(cls.replace(/\D/g, ''), 10);
   if (isNaN(num)) return '6-12';
-  const age = 5 + num; // Class 1 ≈ 6 yrs, Class 6 ≈ 11 yrs
+  const age = 5 + num; // Class 1 â‰ˆ 6 yrs, Class 6 â‰ˆ 11 yrs
   return `${age}-${age + 1}`;
 }
 
 // Streak updates are handled by the shared streakService (see services/streakService.ts)
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // TEACHER ROUTES
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 // GET /api/activity-packs/permission
 router.get(
@@ -100,7 +100,7 @@ router.get(
   }
 );
 
-// POST /api/activity-packs/generate — Gemini generates home activities
+// POST /api/activity-packs/generate â€” Gemini generates home activities
 // Supports image/PDF upload via base64 for content-based activity generation
 router.post(
   '/generate',
@@ -115,7 +115,7 @@ router.post(
       chapter: z.string().optional().default(''),
       count: z.number().int().min(1).max(10).optional().default(5),
       language: z.enum(['English', 'Gujarati', 'Hindi', 'Sanskrit', 'Marathi', 'Tamil', 'Telugu', 'Kannada', 'Bengali', 'Punjabi']).optional().default('English'),
-      // Image/PDF upload — base64 encoded content + mime type
+      // Image/PDF upload â€” base64 encoded content + mime type
       file_data: z.string().optional(),   // base64 encoded file
       file_mime: z.string().optional(),   // e.g. 'image/jpeg', 'image/png', 'application/pdf'
     });
@@ -134,7 +134,7 @@ router.post(
 
     const { class: cls, subject, topic, board, chapter, count, language, file_data, file_mime } = parsed.data;
 
-    // Reject files that are too large (base64 string > ~7.5MB ≈ ~5.6MB raw file)
+    // Reject files that are too large (base64 string > ~7.5MB â‰ˆ ~5.6MB raw file)
     if (file_data && file_data.length > 7_500_000) {
       sendError(res, 'File is too large. Please upload an image or PDF smaller than 5 MB.', 413);
       return;
@@ -157,27 +157,27 @@ router.post(
       ? 'CBSE (Central Board of Secondary Education) curriculum'
       : 'Indian school curriculum';
 
-    // Language instruction — be explicit so non-English outputs are actually in that script/language
+    // Language instruction â€” be explicit so non-English outputs are actually in that script/language
     const languageInstruction = language === 'English'
       ? 'Write all activity instructions in English.'
       : language === 'Gujarati'
-      ? 'Write all activity instructions in Gujarati language using Gujarati script (e.g. ગુજરાતી). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Gujarati language using Gujarati script (e.g. àª—à«àªœàª°àª¾àª¤à«€). Do NOT write in English or transliteration.'
       : language === 'Hindi'
-      ? 'Write all activity instructions in Hindi language using Devanagari script (e.g. हिंदी). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Hindi language using Devanagari script (e.g. à¤¹à¤¿à¤‚à¤¦à¥€). Do NOT write in English or transliteration.'
       : language === 'Sanskrit'
       ? 'Write all activity instructions in Sanskrit language using Devanagari script. Do NOT write in English or transliteration.'
       : language === 'Marathi'
-      ? 'Write all activity instructions in Marathi language using Devanagari script (e.g. मराठी). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Marathi language using Devanagari script (e.g. à¤®à¤°à¤¾à¤ à¥€). Do NOT write in English or transliteration.'
       : language === 'Tamil'
-      ? 'Write all activity instructions in Tamil language using Tamil script (e.g. தமிழ்). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Tamil language using Tamil script (e.g. à®¤à®®à®¿à®´à¯). Do NOT write in English or transliteration.'
       : language === 'Telugu'
-      ? 'Write all activity instructions in Telugu language using Telugu script (e.g. తెలుగు). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Telugu language using Telugu script (e.g. à°¤à±†à°²à±à°—à±). Do NOT write in English or transliteration.'
       : language === 'Kannada'
-      ? 'Write all activity instructions in Kannada language using Kannada script (e.g. ಕನ್ನಡ). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Kannada language using Kannada script (e.g. à²•à²¨à³à²¨à²¡). Do NOT write in English or transliteration.'
       : language === 'Bengali'
-      ? 'Write all activity instructions in Bengali language using Bengali script (e.g. বাংলা). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Bengali language using Bengali script (e.g. à¦¬à¦¾à¦‚à¦²à¦¾). Do NOT write in English or transliteration.'
       : language === 'Punjabi'
-      ? 'Write all activity instructions in Punjabi language using Gurmukhi script (e.g. ਪੰਜਾਬੀ). Do NOT write in English or transliteration.'
+      ? 'Write all activity instructions in Punjabi language using Gurmukhi script (e.g. à¨ªà©°à¨œà¨¾à¨¬à©€). Do NOT write in English or transliteration.'
       : 'Write all activity instructions in English.';
 
     const fileContext = file_data
@@ -206,7 +206,7 @@ type must be one of: "verbal", "written", "physical"`;
     // Falls back to full Flash (GEMINI_MODEL) if Lite is overloaded.
     // Override via GEMINI_MODEL_QUESTIONS if needed.
 
-    // Structured output schema — keep simple (no nested enum) for compatibility
+    // Structured output schema â€” keep simple (no nested enum) for compatibility
     // with gemini-2.0-flash. Type values are validated/normalised below anyway.
     const responseSchema = {
       type: 'object' as const,
@@ -236,7 +236,7 @@ type must be one of: "verbal", "written", "physical"`;
         contentParts.push({ inlineData: { mimeType: file_mime, data: file_data } });
       }
 
-      // Uses raw REST API — thinkingBudget:0 is guaranteed to reach the API
+      // Uses raw REST API â€” thinkingBudget:0 is guaranteed to reach the API
       const rawResult = await geminiRawWithFallback(modelName, fallbackModelName, {
         apiKey,
         parts: contentParts,
@@ -276,7 +276,7 @@ type must be one of: "verbal", "written", "physical"`;
         return;
       }
 
-      // Invalid / missing API key — be specific, don't match '400' broadly
+      // Invalid / missing API key â€” be specific, don't match '400' broadly
       if (
         msg.includes('API_KEY_INVALID') ||
         msg.includes('API key not valid') ||
@@ -285,7 +285,7 @@ type must be one of: "verbal", "written", "physical"`;
         msg.includes('401') ||
         msg.includes('403')
       ) {
-        console.error('[activity-packs/generate] Gemini API key rejected — check GEMINI_API_KEY in Railway env vars');
+        console.error('[activity-packs/generate] Gemini API key rejected â€” check GEMINI_API_KEY in Railway env vars');
         sendError(res, 'AI service is misconfigured. Please contact support.', 503);
         return;
       }
@@ -295,7 +295,7 @@ type must be one of: "verbal", "written", "physical"`;
   }
 );
 
-// POST /api/activity-packs — create pack + insert completions + FCM
+// POST /api/activity-packs â€” create pack + insert completions + FCM
 router.post('/', authenticate, requireRole('teacher'), async (req: Request, res: Response) => {
   try {
   const activitySchema = z.object({
@@ -379,7 +379,7 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
             if (parentTokens.length > 0) {
               await sendPushMulticast(
                 parentTokens,
-                "Today's home activity is ready! 🎯",
+                "Today's home activity is ready! ðŸŽ¯",
                 `${subject} activity on "${topic}" for Class ${cls} is now available.`,
                 { type: 'activity_pack', pack_id: String(pack.id) }
               );
@@ -400,7 +400,7 @@ router.post('/', authenticate, requireRole('teacher'), async (req: Request, res:
   }
 });
 
-// GET /api/activity-packs — teacher's own packs
+// GET /api/activity-packs â€” teacher's own packs
 router.get('/', authenticate, requireRole('teacher'), async (req: Request, res: Response) => {
   try {
   const teacherId = req.user!.id;
@@ -425,7 +425,7 @@ router.get('/', authenticate, requireRole('teacher'), async (req: Request, res: 
   }
 });
 
-// GET /api/activity-packs/school — admin view
+// GET /api/activity-packs/school â€” admin view
 router.get(
   '/school',
   authenticate,
@@ -460,7 +460,7 @@ router.get(
   }
 );
 
-// GET /api/activity-packs/admin/stats — creation rate by teacher, completion rate by class
+// GET /api/activity-packs/admin/stats â€” creation rate by teacher, completion rate by class
 router.get(
   '/admin/stats',
   authenticate,
@@ -583,7 +583,7 @@ router.delete('/:id', authenticate, requireRole('teacher'), async (req: Request,
   }
 });
 
-// GET /api/activity-packs/:id/completions — teacher views completion status
+// GET /api/activity-packs/:id/completions â€” teacher views completion status
 router.get(
   '/:id/completions',
   authenticate,
@@ -619,11 +619,11 @@ router.get(
   }
 );
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // STUDENT / PARENT ROUTES
-// ═══════════════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
-// GET /api/activity-packs/student/today — today's packs (student token)
+// GET /api/activity-packs/student/today â€” today's packs (student token)
 router.get(
   '/student/today',
   authenticateStudent,
@@ -679,7 +679,7 @@ router.get(
   }
 );
 
-// POST /api/activity-packs/:id/complete — parent marks done (student token)
+// POST /api/activity-packs/:id/complete â€” parent marks done (student token)
 router.post(
   '/:id/complete',
   authenticateStudent,
@@ -726,7 +726,7 @@ router.post(
     if (upsertErr) { sendError(res, upsertErr.message, 500); return; }
 
     // Update streak using the shared service
-    // We need studentName + parentId for milestone notifications — fetch them
+    // We need studentName + parentId for milestone notifications â€” fetch them
     const { data: studentRow } = await supabaseAdmin
       .from('students')
       .select('full_name, parent_id')
@@ -755,7 +755,7 @@ router.post(
             if (parentTokens.length > 0) {
               await sendPushMulticast(
                 parentTokens,
-                `Great job! 🌟`,
+                `Great job! ðŸŒŸ`,
                 `${studentName}'s streak is now ${newStreak} day${newStreak !== 1 ? 's' : ''}! Keep it up!`,
                 { type: 'activity_complete', pack_id: String(req.params.id), streak: String(newStreak) }
               );
@@ -774,7 +774,7 @@ router.post(
   }
 );
 
-// GET /api/activity-packs/student/history — student's completion history
+// GET /api/activity-packs/student/history â€” student's completion history
 router.get(
   '/student/history',
   authenticateStudent,

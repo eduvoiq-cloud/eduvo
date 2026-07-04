@@ -10,15 +10,15 @@
  * multiplying costs by 5-20x.
  *
  * Using the REST API directly guarantees the request body is exactly what
- * we specify — no SDK transformation, no field stripping.
+ * we specify â€” no SDK transformation, no field stripping.
  *
  * Thinking budget reference (as of July 2026):
- *   gemini-2.5-flash-lite — thinking OFF by default, can be enabled
- *   gemini-2.5-flash      — thinking ON by default, thinkingBudget:0 disables
- *   gemini-2.5-pro        — thinking ON by default
+ *   gemini-2.5-flash-lite â€” thinking OFF by default, can be enabled
+ *   gemini-2.5-flash      â€” thinking ON by default, thinkingBudget:0 disables
+ *   gemini-2.5-pro        â€” thinking ON by default
  *
  * For all structured-output tasks (MCQ gen, reports, evals) we always set
- * thinkingBudget:0 — thinking adds no quality benefit for these tasks.
+ * thinkingBudget:0 â€” thinking adds no quality benefit for these tasks.
  */
 
 export interface GeminiRawPart {
@@ -129,7 +129,7 @@ export async function geminiRawWithFallback(
       const msg = err instanceof Error ? err.message : String(err);
       const isRetryable = msg.includes('503') || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('overloaded');
       if (isRetryable && model !== fallbackModel) {
-        console.warn(`[geminiRaw] ${model} returned retryable error, trying fallback ${fallbackModel}…`);
+        console.warn(`[geminiRaw] ${model} returned retryable error, trying fallback ${fallbackModel}â€¦`);
         continue;
       }
       throw err;

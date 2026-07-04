@@ -2,12 +2,12 @@
  * monthlyReportService.ts
  *
  * Generates monthly academic reports for students:
- *   A. getStudentMonthlyData   — aggregates data for one student over the past 28-31 days
- *   B. generateMonthlyReport   — calls Gemini to produce a structured multilingual report
- *   C. assembleWhatsAppMessage — formats the WhatsApp-ready text
- *   D. saveAndSendReport       — upserts into monthly_reports, optionally sends WhatsApp
+ *   A. getStudentMonthlyData   â€” aggregates data for one student over the past 28-31 days
+ *   B. generateMonthlyReport   â€” calls Gemini to produce a structured multilingual report
+ *   C. assembleWhatsAppMessage â€” formats the WhatsApp-ready text
+ *   D. saveAndSendReport       â€” upserts into monthly_reports, optionally sends WhatsApp
  *   E. submitGeminiBatch /
- *      checkGeminiBatch        — Gemini Batch API support (off by default)
+ *      checkGeminiBatch        â€” Gemini Batch API support (off by default)
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -15,7 +15,7 @@ import { geminiRawGenerateJSON } from '../utils/geminiRaw';
 import { supabaseAdmin } from '../config/supabase';
 import { sendWhatsAppMessage } from './whatsappService';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface StudentMonthlyData {
   studentId: string;
@@ -70,7 +70,7 @@ export interface MonthlyReportContent {
   summary_gu: string;
 }
 
-// ── PART A — Data Aggregation ─────────────────────────────────────────────────
+// â”€â”€ PART A â€” Data Aggregation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Fetches and aggregates all data for one student covering the 28-31 days
@@ -99,7 +99,7 @@ export async function getStudentMonthlyData(
     testAttemptsRes,
     integrityRes,
   ] = await Promise.all([
-      // Student record — name, class, parent_phone
+      // Student record â€” name, class, parent_phone
       supabaseAdmin
         .from('students')
         .select('full_name, class_name, class, parent_phone, section')
@@ -138,7 +138,7 @@ export async function getStudentMonthlyData(
         .maybeSingle(),
 
       // We'll fetch homework assigned for this student's class+section after
-      // we know their class — done below after student row is fetched.
+      // we know their class â€” done below after student row is fetched.
       // Placeholder: fetch student row first, then homework.
       Promise.resolve({ data: null, error: null }),
 
@@ -158,7 +158,7 @@ export async function getStudentMonthlyData(
         .gte('started_at', monthStartDate.toISOString())
         .lte('started_at', periodEnd.toISOString()),
 
-      // Integrity logs for this student in the period — suspicious tests
+      // Integrity logs for this student in the period â€” suspicious tests
       supabaseAdmin
         .from('test_integrity_logs')
         .select('is_suspicious, suspicious_reasons')
@@ -168,7 +168,7 @@ export async function getStudentMonthlyData(
         .lte('created_at', periodEnd.toISOString()),
     ]);
 
-  // ── Student info ──────────────────────────────────────────────────────────
+  // â”€â”€ Student info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const studentRow = studentRes.data as Record<string, unknown> | null;
   const studentName = (studentRow?.full_name as string) ?? 'Unknown';
   const studentClass =
@@ -176,7 +176,7 @@ export async function getStudentMonthlyData(
   const studentSection = (studentRow?.section as string) ?? '';
   const parentPhone = (studentRow?.parent_phone as string) ?? null;
 
-  // ── Marks: build subject -> average percentage map ────────────────────────
+  // â”€â”€ Marks: build subject -> average percentage map â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const subjectScores = new Map<string, number[]>();
 
   for (const row of marksRes.data ?? []) {
@@ -196,7 +196,7 @@ export async function getStudentMonthlyData(
     marksBySubject[subject] = Math.round(avg * 10) / 10; // 1 decimal place
   }
 
-  // ── Best / weak subject calculation ──────────────────────────────────────
+  // â”€â”€ Best / weak subject calculation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Only consider subjects with at least 2 marks entries
   let bestSubject: string | null = null;
   let bestScore: number | null   = null;
@@ -229,7 +229,7 @@ export async function getStudentMonthlyData(
   // Sort weak subjects worst-first
   weakSubjects.sort((a, b) => a.score - b.score);
 
-  // ── Attendance ────────────────────────────────────────────────────────────
+  // â”€â”€ Attendance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const attRows     = (attendanceRes.data ?? []) as Array<Record<string, unknown>>;
   const attTotal    = attRows.length;
   const attPresent  = attRows.filter(
@@ -238,16 +238,16 @@ export async function getStudentMonthlyData(
   const attPct      =
     attTotal > 0 ? Math.round((attPresent / attTotal) * 100) : 0;
 
-  // ── Weak topics ───────────────────────────────────────────────────────────
+  // â”€â”€ Weak topics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const weakTopicsList = (weakTopicsRes.data ?? []).map(
     (r: Record<string, unknown>) => r.topic as string
   );
 
-  // ── Streak ────────────────────────────────────────────────────────────────
+  // â”€â”€ Streak â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const streakRow    = streakRes.data as Record<string, unknown> | null;
   const currentStreak = Number(streakRow?.current_streak ?? 0);
 
-  // ── Homework assigned vs submitted ────────────────────────────────────────
+  // â”€â”€ Homework assigned vs submitted â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Fetch homework assigned to this student's class+section in the period
   let homeworkAssigned = 0;
   if (studentClass) {
@@ -270,7 +270,7 @@ export async function getStudentMonthlyData(
     (r) => r.status === 'flagged_for_review' || r.flagged_reason != null
   ).length;
 
-  // ── Tests scheduled vs attempted ─────────────────────────────────────────
+  // â”€â”€ Tests scheduled vs attempted â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let testsScheduled = 0;
   if (studentClass) {
     const { data: testRows } = await supabaseAdmin
@@ -287,7 +287,7 @@ export async function getStudentMonthlyData(
   const testsAttempted = attempts.filter((r) => r.is_submitted === true).length;
   const testsMissed = Math.max(0, testsScheduled - testsAttempted);
 
-  // ── Integrity / suspicious activity ──────────────────────────────────────
+  // â”€â”€ Integrity / suspicious activity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const integrityRows = (integrityRes.data ?? []) as Array<Record<string, unknown>>;
   const suspiciousTestCount = integrityRows.length;
   const suspiciousReasons = [
@@ -326,7 +326,7 @@ export async function getStudentMonthlyData(
   };
 }
 
-// ── PART B — Gemini Report Generation ────────────────────────────────────────
+// â”€â”€ PART B â€” Gemini Report Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Calls Gemini to produce a structured multilingual monthly report.
@@ -356,7 +356,7 @@ export async function generateMonthlyReport(
   const allWeakSubjectsStr =
     data.weakSubjects.length > 0
       ? data.weakSubjects.map((w) => `${w.subject} (${w.score}%)`).join(', ')
-      : 'none (all subjects ≥ 70%)';
+      : 'none (all subjects â‰¥ 70%)';
 
   const suspiciousStr =
     data.suspiciousTestCount > 0
@@ -406,11 +406,11 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
 
 Rules:
 - Be specific, not generic
-- ALWAYS mention every subject below 70% by name in summary_en/hi/gu — do not omit any weak subject
+- ALWAYS mention every subject below 70% by name in summary_en/hi/gu â€” do not omit any weak subject
 - The overall field should reference the biggest concern (lowest scoring subject or most critical issue)
 - Mention homework non-submission if homeworkNotSubmitted > 0
 - Mention missed tests if testsMissed > 0
-- Mention suspicious activity if suspiciousTestCount > 0 — use the word "integrity concern" not "cheating"
+- Mention suspicious activity if suspiciousTestCount > 0 â€” use the word "integrity concern" not "cheating"
 - If streak is 0, set streak_days to 0
 - All scores are percentages (0-100)
 - tip must address the biggest concern first`;
@@ -460,7 +460,7 @@ Rules:
     required: ['structured_lines', 'summary_en', 'summary_hi', 'summary_gu'],
   };
 
-  // Uses raw REST API — thinkingBudget:0 is guaranteed to reach the API
+  // Uses raw REST API â€” thinkingBudget:0 is guaranteed to reach the API
   let parsed: MonthlyReportContent;
   try {
     const result = await geminiRawGenerateJSON<MonthlyReportContent>({
@@ -477,7 +477,7 @@ Rules:
     );
   }
 
-  // Normalise nullable fields — Gemini may return "null" string instead of null
+  // Normalise nullable fields â€” Gemini may return "null" string instead of null
   const sl = parsed.structured_lines;
   if ((sl.best_subject as unknown) === 'null' || sl.best_subject === '')
     sl.best_subject = null as unknown as string;
@@ -491,7 +491,7 @@ Rules:
   return parsed;
 }
 
-// ── PART C — WhatsApp Message Assembly ───────────────────────────────────────
+// â”€â”€ PART C â€” WhatsApp Message Assembly â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Assembles a WhatsApp-ready formatted message from report content.
@@ -504,69 +504,69 @@ export function assembleWhatsAppMessage(
   const sl = content.structured_lines;
 
   const lines: string[] = [
-    `📊 *${studentName} — Monthly Report | ${monthLabel}*`,
+    `ðŸ“Š *${studentName} â€” Monthly Report | ${monthLabel}*`,
     '',
-    `✅ Overall: ${sl.overall}`,
-    `📚 Best Subject: ${sl.best_subject ?? 'N/A'} — ${sl.best_score ?? 'N/A'}%`,
+    `âœ… Overall: ${sl.overall}`,
+    `ðŸ“š Best Subject: ${sl.best_subject ?? 'N/A'} â€” ${sl.best_score ?? 'N/A'}%`,
   ];
 
-  // ⚠️ List ALL weak subjects if available, fallback to single weak_subject
+  // âš ï¸ List ALL weak subjects if available, fallback to single weak_subject
   const weakList = sl.weak_subjects && sl.weak_subjects.length > 0
     ? sl.weak_subjects
     : (sl.weak_subject ? [{ subject: sl.weak_subject, score: sl.weak_score ?? 0 }] : []);
 
   if (weakList.length === 1) {
-    lines.push(`⚠️ Needs Attention: ${weakList[0].subject} — ${weakList[0].score}%`);
+    lines.push(`âš ï¸ Needs Attention: ${weakList[0].subject} â€” ${weakList[0].score}%`);
   } else if (weakList.length > 1) {
-    lines.push(`⚠️ Needs Attention (${weakList.length} subjects):`);
+    lines.push(`âš ï¸ Needs Attention (${weakList.length} subjects):`);
     for (const w of weakList) {
-      lines.push(`   • ${w.subject} — ${w.score}%`);
+      lines.push(`   â€¢ ${w.subject} â€” ${w.score}%`);
     }
   }
 
   lines.push(
-    `📅 Attendance: ${sl.attendance_pct}% (${sl.attendance_present}/${sl.attendance_total} days)`
+    `ðŸ“… Attendance: ${sl.attendance_pct}% (${sl.attendance_present}/${sl.attendance_total} days)`
   );
 
-  // 📝 Homework
+  // ðŸ“ Homework
   if (sl.homework_assigned > 0) {
     const notSubmitted = sl.homework_assigned - sl.homework_submitted;
     if (notSubmitted > 0) {
-      lines.push(`📝 Homework: ${sl.homework_submitted}/${sl.homework_assigned} submitted (${notSubmitted} pending)`);
+      lines.push(`ðŸ“ Homework: ${sl.homework_submitted}/${sl.homework_assigned} submitted (${notSubmitted} pending)`);
     } else {
-      lines.push(`📝 Homework: All ${sl.homework_assigned} submitted ✓`);
+      lines.push(`ðŸ“ Homework: All ${sl.homework_assigned} submitted âœ“`);
     }
   }
 
-  // 📋 Tests missed
+  // ðŸ“‹ Tests missed
   if (sl.tests_missed > 0) {
-    lines.push(`📋 Tests Missed: ${sl.tests_missed}`);
+    lines.push(`ðŸ“‹ Tests Missed: ${sl.tests_missed}`);
   }
 
-  // 🔥 streak only if > 0
+  // ðŸ”¥ streak only if > 0
   if (sl.streak_days > 0) {
-    lines.push(`🔥 Study Streak: ${sl.streak_days} days`);
+    lines.push(`ðŸ”¥ Study Streak: ${sl.streak_days} days`);
   }
 
-  // 🚨 Integrity concern — only if suspicious activity found
+  // ðŸš¨ Integrity concern â€” only if suspicious activity found
   if (sl.suspicious_test_count > 0) {
-    lines.push(`🚨 Integrity Concern: ${sl.suspicious_test_count} test(s) flagged for review`);
+    lines.push(`ðŸš¨ Integrity Concern: ${sl.suspicious_test_count} test(s) flagged for review`);
   }
 
   lines.push(
     '',
     '---',
-    `🇬🇧 ${content.summary_en}`,
-    `🇮🇳 ${content.summary_hi}`,
-    `🇮🇳 ${content.summary_gu}`,
+    `ðŸ‡¬ðŸ‡§ ${content.summary_en}`,
+    `ðŸ‡®ðŸ‡³ ${content.summary_hi}`,
+    `ðŸ‡®ðŸ‡³ ${content.summary_gu}`,
     '',
-    '_Eduvo · Do not reply · Contact school for queries_'
+    '_Eduvo Â· Do not reply Â· Contact school for queries_'
   );
 
   return lines.join('\n');
 }
 
-// ── PART D — Save and Send ────────────────────────────────────────────────────
+// â”€â”€ PART D â€” Save and Send â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Upserts the report into monthly_reports and optionally sends a WhatsApp message.
@@ -604,7 +604,7 @@ export async function saveAndSendReport(
       `[Monthly] monthly_reports upsert error for student ${studentId}:`,
       upsertErr.message
     );
-    // Non-fatal — continue to WhatsApp attempt
+    // Non-fatal â€” continue to WhatsApp attempt
   }
 
   // 2. Optionally send WhatsApp
@@ -645,7 +645,7 @@ export async function saveAndSendReport(
   );
 }
 
-// ── PART E — Gemini Batch API ─────────────────────────────────────────────────
+// â”€â”€ PART E â€” Gemini Batch API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Builds the Gemini prompt string for a given student (same prompt as Part B).
@@ -668,7 +668,7 @@ function buildMonthlyPrompt(data: StudentMonthlyData, monthLabel: string): strin
   const allWeakSubjectsStr =
     data.weakSubjects.length > 0
       ? data.weakSubjects.map((w) => `${w.subject} (${w.score}%)`).join(', ')
-      : 'none (all subjects ≥ 70%)';
+      : 'none (all subjects â‰¥ 70%)';
 
   const suspiciousStr =
     data.suspiciousTestCount > 0
@@ -718,11 +718,11 @@ Generate a JSON report with this exact structure. No markdown, no extra text:
 
 Rules:
 - Be specific, not generic
-- ALWAYS mention every subject below 70% by name in summary_en/hi/gu — do not omit any weak subject
+- ALWAYS mention every subject below 70% by name in summary_en/hi/gu â€” do not omit any weak subject
 - The overall field should reference the biggest concern (lowest scoring subject or most critical issue)
 - Mention homework non-submission if homeworkNotSubmitted > 0
 - Mention missed tests if testsMissed > 0
-- Mention suspicious activity if suspiciousTestCount > 0 — use the word "integrity concern" not "cheating"
+- Mention suspicious activity if suspiciousTestCount > 0 â€” use the word "integrity concern" not "cheating"
 - If streak is 0, set streak_days to 0
 - All scores are percentages (0-100)
 - tip must address the biggest concern first`;
@@ -856,12 +856,12 @@ export async function checkGeminiBatch(batchJobId: string): Promise<{
     }
 
     if (state !== 'job_state_succeeded' && state !== 'completed') {
-      // Unknown state — treat as still running
+      // Unknown state â€” treat as still running
       console.warn(`[Monthly] Batch job ${batchJobId} unknown state: ${state}`);
       return { status: 'running' };
     }
 
-    // Job completed — parse results
+    // Job completed â€” parse results
     const rawResults = (jobData.responses ?? jobData.results ?? []) as Array<
       Record<string, unknown>
     >;

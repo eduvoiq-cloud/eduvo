@@ -5,11 +5,11 @@
  *
  * Evaluation pipeline per submission:
  *   1. Skip flagged_for_review submissions (teacher handles those).
- *   2. Check evaluation cache (question_hash + answer_hash) — FREE path.
- *   3. Pure numerical: regex compare — ZERO AI cost.
+ *   2. Check evaluation cache (question_hash + answer_hash) â€” FREE path.
+ *   3. Pure numerical: regex compare â€” ZERO AI cost.
  *   4. Typed theory/mixed: Gemini Flash text evaluation.
  *   5. Photo submissions: Gemini Flash vision evaluation.
- *   6. Route by confidence threshold (≥0.9 → checked, <0.9 → flagged_for_review).
+ *   6. Route by confidence threshold (â‰¥0.9 â†’ checked, <0.9 â†’ flagged_for_review).
  *   7. Suspicious-text detection for typed answers if teacher opted in.
  *   8. Cache successful typed evaluations for future reuse.
  */
@@ -18,7 +18,7 @@ import crypto from 'crypto';
 import { geminiRawGenerate } from '../utils/geminiRaw';
 import { supabaseAdmin } from '../config/supabase';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// â”€â”€ Types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface EvalResult {
   result: 'correct' | 'incorrect' | 'partial' | 'unclear';
@@ -63,7 +63,7 @@ interface BatchStats {
   overflow_skipped: number;
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const CONFIDENCE_THRESHOLD = 0.9;
 
@@ -75,21 +75,21 @@ const CONFIDENCE_THRESHOLD = 0.9;
 const MAX_AI_CHECKS_PER_STUDENT_PER_DAY = 5;
 
 /**
- * Gemini 2.5 Flash pricing (INR) — configurable via env.
+ * Gemini 2.5 Flash pricing (INR) â€” configurable via env.
  * Adjust these constants when Google changes pricing.
  *
  * Default approximate values (as of 2025):
- *   Text input:    ₹0.00006 per 1K tokens  (≈ $0.00007)
- *   Text output:   ₹0.00025 per 1K tokens  (≈ $0.0003)
- *   Vision input:  ₹0.00006 per 1K tokens  (same as text for Flash)
+ *   Text input:    â‚¹0.00006 per 1K tokens  (â‰ˆ $0.00007)
+ *   Text output:   â‚¹0.00025 per 1K tokens  (â‰ˆ $0.0003)
+ *   Vision input:  â‚¹0.00006 per 1K tokens  (same as text for Flash)
  *
  * We use a flat per-call estimate since we don't track token counts
  * in the homework eval service (Gemini JS SDK doesn't always return
  * usage metadata for streaming calls without extra config).
  *
  * Per-call cost estimate (conservative):
- *   Text eval:   ~2000 tokens total → ₹0.00062 per call
- *   Vision eval: ~3000 tokens total → ₹0.00093 per call
+ *   Text eval:   ~2000 tokens total â†’ â‚¹0.00062 per call
+ *   Vision eval: ~3000 tokens total â†’ â‚¹0.00093 per call
  */
 const COST_PER_TEXT_CALL_INR = parseFloat(
   process.env.GEMINI_COST_TEXT_INR ?? '0.00062'
@@ -99,7 +99,7 @@ const COST_PER_VISION_CALL_INR = parseFloat(
 );
 
 // Simple sentence-complexity heuristics per class band
-// If avg words-per-sentence > threshold for class → suspiciously complex
+// If avg words-per-sentence > threshold for class â†’ suspiciously complex
 const SUSPICIOUS_WPS_BY_CLASS: Record<string, number> = {
   '1': 8, '2': 9, '3': 10, '4': 11, '5': 13,
   '6': 15, '7': 16, '8': 18, '9': 20, '10': 22,
@@ -108,11 +108,11 @@ const SUSPICIOUS_WPS_BY_CLASS: Record<string, number> = {
 const DEFAULT_SUSPICIOUS_WPS = 22;
 const SUSPICIOUS_MIN_WORDS = 80; // only check texts long enough to matter
 
-// ── Daily per-student rate-limit check ───────────────────────────────────────
+// â”€â”€ Daily per-student rate-limit check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Returns the number of AI-evaluated submissions a student has had today
- * (where the submission was processed by the AI batch — not just submitted).
+ * (where the submission was processed by the AI batch â€” not just submitted).
  * "Today" = submissions where evaluated_at is >= start of current UTC day.
  */
 async function getStudentAiChecksToday(studentId: string): Promise<number> {
@@ -128,12 +128,12 @@ async function getStudentAiChecksToday(studentId: string): Promise<number> {
 
   if (error) {
     console.warn('[homeworkEval] Could not check student daily limit:', error.message);
-    return 0; // fail open — don't block on DB errors
+    return 0; // fail open â€” don't block on DB errors
   }
   return count ?? 0;
 }
 
-// ── Cost logging ──────────────────────────────────────────────────────────────
+// â”€â”€ Cost logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Increment the daily cost log entry for a school.
@@ -166,7 +166,7 @@ async function incrementCostLog(
 
   if (!insertErr) return; // inserted successfully
 
-  // Row already exists — increment existing counters
+  // Row already exists â€” increment existing counters
   // Supabase JS doesn't support `col = col + N` natively, so we fetch + update.
   const { data: existing, error: fetchErr } = await supabaseAdmin
     .from('ai_cost_log')
@@ -200,10 +200,10 @@ async function incrementCostLog(
     .eq('date', today);
 }
 
-// ── Hash helpers ──────────────────────────────────────────────────────────────
+// â”€â”€ Hash helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
- * MD5 of (question + reference_answer) — identifies the question side.
+ * MD5 of (question + reference_answer) â€” identifies the question side.
  * The reference_answer may be null (teacher didn't provide one).
  */
 export function buildQuestionHash(question: string, referenceAnswer: string | null): string {
@@ -214,7 +214,7 @@ export function buildQuestionHash(question: string, referenceAnswer: string | nu
 }
 
 /**
- * MD5 of the normalised submission text — identifies the answer side.
+ * MD5 of the normalised submission text â€” identifies the answer side.
  * Lowercase + collapse whitespace to catch trivial reformatting.
  */
 export function buildAnswerHash(text: string): string {
@@ -224,7 +224,7 @@ export function buildAnswerHash(text: string): string {
     .digest('hex');
 }
 
-// ── Cache helpers ─────────────────────────────────────────────────────────────
+// â”€â”€ Cache helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Look up the evaluation cache.
@@ -266,7 +266,7 @@ async function upsertEvalCache(
     });
 
   if (insertErr) {
-    // Row already exists — bump hit_count
+    // Row already exists â€” bump hit_count
     await supabaseAdmin
       .from('homework_evaluation_cache')
       .update({
@@ -275,21 +275,21 @@ async function upsertEvalCache(
       .eq('question_hash', questionHash)
       .eq('answer_hash', answerHash);
 
-    // increment_hit_count may not exist; silently ignore errors — hit_count is non-critical
+    // increment_hit_count may not exist; silently ignore errors â€” hit_count is non-critical
     try {
       await supabaseAdmin.rpc('increment_homework_cache_hit' as never, {
         p_question_hash: questionHash,
         p_answer_hash: answerHash,
       });
     } catch {
-      // RPC may not exist — that's fine
+      // RPC may not exist â€” that's fine
     }
   }
 }
 
 /** Simpler upsert that uses a raw UPDATE for hit_count increment. */
 async function recordCacheHit(questionHash: string, answerHash: string): Promise<void> {
-  // Use raw update — Supabase JS client doesn't support col = col + 1 natively
+  // Use raw update â€” Supabase JS client doesn't support col = col + 1 natively
   await supabaseAdmin
     .from('homework_evaluation_cache')
     .update({ hit_count: 999 }) // placeholder; replaced by DB trigger/RPC in prod
@@ -300,13 +300,13 @@ async function recordCacheHit(questionHash: string, answerHash: string): Promise
   // We'll just track that the cache was used via the evaluated_at timestamp.
 }
 
-// ── Numerical evaluation ──────────────────────────────────────────────────────
+// â”€â”€ Numerical evaluation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const NUMERIC_TOLERANCE = 0.01;
 
 /**
  * Returns true if `text` looks like a pure number (possibly with units suffix
- * like "cm", "kg", "m/s" — we extract the leading numeric part).
+ * like "cm", "kg", "m/s" â€” we extract the leading numeric part).
  */
 function extractNumber(text: string): number | null {
   const match = text.trim().match(/^-?\d+(\.\d+)?/);
@@ -320,7 +320,7 @@ function evaluateNumerical(submissionText: string, referenceAnswer: string): Eva
   const refNum = extractNumber(referenceAnswer.trim());
 
   if (studentNum === null || refNum === null) {
-    // Can't parse — fall back to string comparison
+    // Can't parse â€” fall back to string comparison
     const match = submissionText.trim().toLowerCase() === referenceAnswer.trim().toLowerCase();
     return {
       result: match ? 'correct' : 'incorrect',
@@ -341,7 +341,7 @@ function evaluateNumerical(submissionText: string, referenceAnswer: string): Eva
   };
 }
 
-// ── Gemini helpers ────────────────────────────────────────────────────────────
+// â”€â”€ Gemini helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Parse the JSON result from Gemini, stripping any markdown fences.
@@ -372,7 +372,7 @@ function parseGeminiJson(raw: string): EvalResult | null {
   }
 }
 
-// ── Typed theory evaluation ───────────────────────────────────────────────────
+// â”€â”€ Typed theory evaluation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function evaluateTypedAnswer(
   className: string,
@@ -387,7 +387,7 @@ export async function evaluateTypedAnswer(
 
   const refNote = referenceAnswer?.trim()
     ? referenceAnswer.trim()
-    : 'Not provided — use general subject knowledge';
+    : 'Not provided â€” use general subject knowledge';
 
   const wordCountNote = minWordCount
     ? `Minimum word requirement: ${minWordCount} words`
@@ -439,7 +439,7 @@ Return ONLY valid JSON:
   }
 }
 
-// ── Photo evaluation ──────────────────────────────────────────────────────────
+// â”€â”€ Photo evaluation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export async function evaluatePhotoAnswer(
   className: string,
@@ -524,7 +524,7 @@ Return ONLY valid JSON:
 
   parts.push({ text: promptText });
 
-  // Vision eval uses raw REST — same pattern as text eval, thinkingBudget:0 guaranteed
+  // Vision eval uses raw REST â€” same pattern as text eval, thinkingBudget:0 guaranteed
   try {
     const { text } = await geminiRawGenerate({
       apiKey,
@@ -543,7 +543,7 @@ Return ONLY valid JSON:
   }
 }
 
-// ── Suspicious-text detection ─────────────────────────────────────────────────
+// â”€â”€ Suspicious-text detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Heuristic check: is this typed answer suspiciously well-written for the
@@ -567,14 +567,14 @@ export function isSuspiciouslyPerfect(text: string, className: string): boolean 
 
   const avgWPS = words.length / sentences.length;
 
-  // Extract numeric class level (e.g. "Class 5" → "5", "5th" → "5")
+  // Extract numeric class level (e.g. "Class 5" â†’ "5", "5th" â†’ "5")
   const classMatch = className.replace(/[^0-9]/g, '');
   const threshold = SUSPICIOUS_WPS_BY_CLASS[classMatch] ?? DEFAULT_SUSPICIOUS_WPS;
 
   return avgWPS > threshold;
 }
 
-// ── Update helpers ────────────────────────────────────────────────────────────
+// â”€â”€ Update helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 async function updateSubmission(
   submissionId: string,
@@ -604,7 +604,7 @@ async function updateSubmission(
   }
 }
 
-// ── Main batch evaluator ──────────────────────────────────────────────────────
+// â”€â”€ Main batch evaluator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Process all pending submissions in one batch run.
@@ -627,7 +627,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
 
   const now = new Date().toISOString();
 
-  // ── Step 0a: Recover stale 'processing' submissions ──────────────────────
+  // â”€â”€ Step 0a: Recover stale 'processing' submissions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // If the server crashed or was restarted mid-batch, some submissions may be
   // stuck in 'processing' indefinitely because the batch never set them to a
   // final state. Reset any submission that has been in 'processing' for more
@@ -646,7 +646,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
     console.log(`[homeworkEval] Recovered ${recoveredCount} stale 'processing' submissions back to 'submitted'`);
   }
 
-  // ── Step 0b: Reset overflow flags from previous days ─────────────────────
+  // â”€â”€ Step 0b: Reset overflow flags from previous days â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Submissions marked queued_overflow=true should be retried today.
   // Clear the flag for all overflow submissions from BEFORE today (UTC).
   const startOfToday = new Date();
@@ -664,7 +664,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
     console.warn('[homeworkEval] Could not clear overflow flags:', clearErr.message);
   }
 
-  // ── Step 1: Fetch all pending submissions ──────────────────────────────────
+  // â”€â”€ Step 1: Fetch all pending submissions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Join with homework to get the question/reference data.
   // Skip submissions that are already flagged_for_review (teacher handles those).
   const { data: submissions, error: fetchErr } = await supabaseAdmin
@@ -707,9 +707,9 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
   const eligible = rows.filter((r) => r.homework?.ai_check_enabled === true);
   stats.total = eligible.length;
 
-  console.log(`[homeworkEval] Batch started — ${eligible.length} eligible submissions`);
+  console.log(`[homeworkEval] Batch started â€” ${eligible.length} eligible submissions`);
 
-  // Cost accumulators per school (school_id → { text, vision, cache })
+  // Cost accumulators per school (school_id â†’ { text, vision, cache })
   const schoolCosts = new Map<string, { text: number; vision: number; cache: number }>();
 
   const addCost = (schoolId: string, type: 'text' | 'vision' | 'cache') => {
@@ -718,7 +718,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
     schoolCosts.set(schoolId, entry);
   };
 
-  // ── Per-school spend cap + feature flag ───────────────────────────────────
+  // â”€â”€ Per-school spend cap + feature flag â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Loaded once per school on first access, cached in-memory for the batch run.
   interface SchoolCapEntry {
     aiEnabled: boolean;
@@ -781,17 +781,17 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
   const checkedStudentIds: string[] = [];
   const flaggedByHomework = new Map<string, { school_id: string; flagged_count: number }>();
 
-  // ── Step 2: Process each submission ───────────────────────────────────────
+  // â”€â”€ Step 2: Process each submission â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   for (const row of eligible) {
     const hw = row.homework;
     if (!hw) { stats.errors++; continue; }
 
-    // ── Daily per-student rate limit check ───────────────────────────────────
+    // â”€â”€ Daily per-student rate limit check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Max 5 AI-checked submissions per student per day across all subjects.
     // Overflow submissions are re-queued for the next day's batch.
     const checksToday = await getStudentAiChecksToday(row.student_id);
     if (checksToday >= MAX_AI_CHECKS_PER_STUDENT_PER_DAY) {
-      // Mark as overflow — will be retried tomorrow
+      // Mark as overflow â€” will be retried tomorrow
       await supabaseAdmin
         .from('homework_submissions')
         .update({ queued_overflow: true })
@@ -803,10 +803,10 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
       continue;
     }
 
-    // ── School AI feature flag + daily spend cap ──────────────────────────────
+    // â”€â”€ School AI feature flag + daily spend cap â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Skip expensive AI calls if the school has disabled AI homework or has
     // reached its daily spend cap. Free paths (cache hits, numerical) are
-    // unaffected — they run regardless. We check this AFTER the per-student
+    // unaffected â€” they run regardless. We check this AFTER the per-student
     // rate limit so overflow accounting still happens correctly.
     const schoolBlocked = await isSchoolAiBlocked(hw.school_id);
 
@@ -835,7 +835,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
       let usedCache = false;
       let isNumerical = false;
 
-      // ── Photo-only submissions → skip cache, go straight to vision ──────────
+      // â”€â”€ Photo-only submissions â†’ skip cache, go straight to vision â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (isPhotoOnly) {
         // If school is blocked (feature off or cap reached), skip vision eval
         // and revert to submitted so it can be retried if the cap resets.
@@ -844,7 +844,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
             .from('homework_submissions')
             .update({ status: 'submitted' })
             .eq('id', row.id);
-          console.log(`[homeworkEval] School ${hw.school_id} AI blocked — skipping vision eval for ${row.id}`);
+          console.log(`[homeworkEval] School ${hw.school_id} AI blocked â€” skipping vision eval for ${row.id}`);
           stats.overflow_skipped++;
           continue;
         }
@@ -864,7 +864,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
       } else if (hasText) {
         const text = row.submission_text!.trim();
 
-        // ── Numerical shortcut (zero cost — always runs even when blocked) ─────
+        // â”€â”€ Numerical shortcut (zero cost â€” always runs even when blocked) â”€â”€â”€â”€â”€
         if (
           hw.subject_type === 'numerical' &&
           hw.reference_answer?.trim() &&
@@ -874,7 +874,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
           stats.numerical++;
           evalResult = evaluateNumerical(text, hw.reference_answer!);
         } else {
-          // ── Cache check (zero cost — always runs even when blocked) ──────────
+          // â”€â”€ Cache check (zero cost â€” always runs even when blocked) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
           const qHash = buildQuestionHash(question, hw.reference_answer);
           const aHash = buildAnswerHash(text);
 
@@ -891,13 +891,13 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
             await recordCacheHit(qHash, aHash);
             addCost(hw.school_id, 'cache');
           } else {
-            // ── AI evaluation — only if school is not blocked ────────────────
+            // â”€â”€ AI evaluation â€” only if school is not blocked â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if (schoolBlocked) {
               await supabaseAdmin
                 .from('homework_submissions')
                 .update({ status: 'submitted' })
                 .eq('id', row.id);
-              console.log(`[homeworkEval] School ${hw.school_id} AI blocked — skipping text eval for ${row.id}`);
+              console.log(`[homeworkEval] School ${hw.school_id} AI blocked â€” skipping text eval for ${row.id}`);
               stats.overflow_skipped++;
               continue;
             }
@@ -923,7 +923,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
           }
         }
 
-        // ── Suspicious-text check (typed theory only, opt-in) ────────────────
+        // â”€â”€ Suspicious-text check (typed theory only, opt-in) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if (
           !isNumerical &&
           !usedCache &&
@@ -953,7 +953,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
           continue;
         }
       } else {
-        // Neither text nor photos — skip
+        // Neither text nor photos â€” skip
         await supabaseAdmin
           .from('homework_submissions')
           .update({ status: 'submitted', evaluated_at: evalAt }) // revert processing
@@ -962,7 +962,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
         continue;
       }
 
-      // ── Confidence threshold routing ─────────────────────────────────────
+      // â”€â”€ Confidence threshold routing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const finalStatus =
         isNumerical || usedCache
           ? 'checked'
@@ -970,7 +970,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
             ? 'flagged_for_review'
             : 'checked';
 
-      // Photo 'unclear' → always flagged
+      // Photo 'unclear' â†’ always flagged
       const photoUnclear = isPhotoOnly && evalResult!.result === 'unclear';
       const photLowConf = isPhotoOnly && evalResult!.confidence < CONFIDENCE_THRESHOLD;
       const routedStatus =
@@ -1022,11 +1022,11 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
     }
   }
 
-  // ── Step 3: Send FCM notifications ────────────────────────────────────────
+  // â”€â”€ Step 3: Send FCM notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   await sendCheckedNotifications(checkedStudentIds);
   await sendFlaggedNotificationsToTeachers(flaggedByHomework, now);
 
-  // ── Step 4: Flush cost logs to database (per school) ─────────────────────
+  // â”€â”€ Step 4: Flush cost logs to database (per school) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   for (const [schoolId, costs] of schoolCosts.entries()) {
     try {
       await incrementCostLog(schoolId, costs.text, costs.vision, costs.cache);
@@ -1036,7 +1036,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
   }
 
   console.log(
-    `[homeworkEval] Batch complete — ` +
+    `[homeworkEval] Batch complete â€” ` +
     `total: ${stats.total}, cache: ${stats.cache_hits}, numerical: ${stats.numerical}, ` +
     `typed_ai: ${stats.typed_ai}, photo_ai: ${stats.photo_ai}, ` +
     `checked: ${stats.checked}, flagged: ${stats.flagged}, errors: ${stats.errors}, ` +
@@ -1046,7 +1046,7 @@ export async function runHomeworkBatchEval(): Promise<BatchStats> {
   return stats;
 }
 
-// ── Notification helpers ──────────────────────────────────────────────────────
+// â”€â”€ Notification helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Send "Your homework has been checked!" notification to all students (and
@@ -1066,7 +1066,7 @@ async function sendCheckedNotifications(studentIds: string[]): Promise<void> {
     if (tokens.length > 0) {
       await sendPushMulticast(
         tokens,
-        '✅ Homework Checked!',
+        'âœ… Homework Checked!',
         'Your homework has been checked! Tap to see your results.',
         { type: 'homework_checked' }
       );
@@ -1074,7 +1074,7 @@ async function sendCheckedNotifications(studentIds: string[]): Promise<void> {
 
     // Also insert in-app notifications
     const notifRows = uniqueIds.map((studentId) => ({
-      title: '✅ Homework Checked!',
+      title: 'âœ… Homework Checked!',
       message: 'Your homework has been checked! Tap to see your results.',
       type: 'announcement',
       recipient_id: studentId,
@@ -1111,7 +1111,7 @@ async function sendCheckedNotifications(studentIds: string[]): Promise<void> {
       if (parentTokens.length > 0) {
         await sendPushMulticast(
           parentTokens,
-          '✅ Homework Results Ready!',
+          'âœ… Homework Results Ready!',
           "Your child's homework has been checked! Tap to see the results.",
           { type: 'homework_checked' }
         );
@@ -1156,7 +1156,7 @@ async function sendFlaggedNotificationsToTeachers(
       try {
         await sendPushNotification(
           hwRow.created_by,
-          '📋 Review Needed',
+          'ðŸ“‹ Review Needed',
           `${flagged_count} homework ${plural} for "${hwRow.title}" need your review.`,
           { type: 'homework_review_needed', homework_id: hwRow.id },
           'user'
@@ -1170,7 +1170,7 @@ async function sendFlaggedNotificationsToTeachers(
         await supabaseAdmin
           .from('notifications')
           .insert({
-            title: '📋 Review Needed',
+            title: 'ðŸ“‹ Review Needed',
             message: `${flagged_count} homework ${plural} for "${hwRow.title}" need your review.`,
             type: 'announcement',
             recipient_id: hwRow.created_by,
