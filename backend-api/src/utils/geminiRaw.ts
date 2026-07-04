@@ -3,22 +3,14 @@
  *
  * Low-level Gemini REST helpers that bypass the @google/generative-ai SDK.
  *
- * WHY: SDK v0.24 does not support `thinkingConfig` in its TypeScript types.
- * When passed via `as Record<string, unknown>`, the field is present in the
- * serialized JSON but some model versions silently ignore it inside
- * `generationConfig`, causing thinking tokens to fire unexpectedly and
- * multiplying costs by 5-20x.
+ * Thinking config reference (generateContent API, July 2026):
+ *   gemini-2.5-flash-lite — thinking OFF by default; no config needed
+ *   gemini-2.5-flash      — thinking ON by default; set thinking_level:"minimal" to cut cost
+ *   gemini-2.5-pro        — thinking ON by default
  *
- * Using the REST API directly guarantees the request body is exactly what
- * we specify â€” no SDK transformation, no field stripping.
- *
- * Thinking budget reference (as of July 2026):
- *   gemini-2.5-flash-lite â€” thinking OFF by default, can be enabled
- *   gemini-2.5-flash      â€” thinking ON by default, thinkingBudget:0 disables
- *   gemini-2.5-pro        â€” thinking ON by default
- *
- * For all structured-output tasks (MCQ gen, reports, evals) we always set
- * thinkingBudget:0 â€” thinking adds no quality benefit for these tasks.
+ * IMPORTANT: thinkingBudget:0 is DEPRECATED and silently ignored by the API.
+ * The correct approach is thinking_level:"minimal" for gemini-2.5-flash.
+ * For flash-lite, thinking is off by default so no config is needed.
  */
 
 export interface GeminiRawPart {
@@ -32,7 +24,7 @@ export interface GeminiRawRequest {
   parts: GeminiRawPart[];
   systemInstruction?: string;
   responseSchema?: Record<string, unknown>;
-  /** Default: true (always disable thinking for cost) */
+  /** Default: true — sets thinking_level:"minimal" on flash models to cut cost */
   disableThinking?: boolean;
 }
 
@@ -49,8 +41,41 @@ interface GeminiRawResponse {
 }
 
 /**
+ * Returns the correct thinkingConfig for a given model.
+ *
+ * - gemini-2.5-flash and similar: thinking is ON by default.
+ *   Use thinking_level:"minimal" to keep thinking cost as low as possible.
+ *   NOTE: thinkingBudget:0 is deprecated and ignored — do NOT use it.
+ *
+ * - gemini-2.5-flash-lite: thinking is OFF by default.
+ *   No config needed — omitting thinkingConfig keeps it off.
+ *
+ * - gemini-2.5-pro: thinking is always on, cannot be disabled.
+ *   Use thinking_level:"low" to minimise cost.
+ */
+function getThinkingConfig(model: string, disableThinking: boolean): Record<string, unknown> | null {
+  if (!disableThinking) return null;
+
+  // Flash-lite: thinking is OFF by default — no config needed
+  if (model.includes('flash-lite')) return null;
+
+  // Flash (non-lite): thinking is ON by default — use minimal to cut cost
+  if (model.includes('flash')) {
+    return { thinking_level: 'minimal' };
+  }
+
+  // Pro: thinking is always on — use low to minimise cost
+  if (model.includes('pro')) {
+    return { thinking_level: 'low' };
+  }
+
+  // Unknown model — try minimal as safe default
+  return { thinking_level: 'minimal' };
+}
+
+/**
  * Makes a single generateContent REST call to the Gemini API.
- * Always disables thinking tokens unless `disableThinking: false` is passed.
+ * Sets thinking_level:"minimal" on flash models to minimise thinking cost.
  * Returns the raw response text.
  *
  * Throws on non-2xx HTTP status.
@@ -58,13 +83,17 @@ interface GeminiRawResponse {
 export async function geminiRawGenerate(req: GeminiRawRequest): Promise<{ text: string; totalTokens: number; thinkingTokens: number }> {
   const { apiKey, model, parts, systemInstruction, responseSchema, disableThinking = true } = req;
 
+  const thinkingConfig = getThinkingConfig(model, disableThinking);
+
+  const generationConfig: Record<string, unknown> = {
+    responseMimeType: 'application/json',
+    ...(responseSchema ? { responseSchema } : {}),
+    ...(thinkingConfig ? { thinkingConfig } : {}),
+  };
+
   const body: Record<string, unknown> = {
     contents: [{ role: 'user', parts }],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      ...(responseSchema ? { responseSchema } : {}),
-      ...(disableThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-    },
+    generationConfig,
   };
 
   if (systemInstruction) {
@@ -89,6 +118,10 @@ export async function geminiRawGenerate(req: GeminiRawRequest): Promise<{ text: 
   const totalTokens = data.usageMetadata?.totalTokenCount ?? 0;
   const thinkingTokens = data.usageMetadata?.thoughtsTokenCount ?? 0;
 
+  if (thinkingTokens > 0) {
+    console.warn(`[geminiRaw] thinking tokens fired: ${thinkingTokens} on model=${model} — review thinkingConfig`);
+  }
+
   return { text, totalTokens, thinkingTokens };
 }
 
@@ -110,7 +143,6 @@ export async function geminiRawGenerateJSON<T>(req: GeminiRawRequest): Promise<{
 
 /**
  * Try `primaryModel` first; if it returns 503 or 429, retry with `fallbackModel`.
- * Both calls use `thinkingBudget: 0`.
  */
 export async function geminiRawWithFallback(
   primaryModel: string,
@@ -129,7 +161,7 @@ export async function geminiRawWithFallback(
       const msg = err instanceof Error ? err.message : String(err);
       const isRetryable = msg.includes('503') || msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('overloaded');
       if (isRetryable && model !== fallbackModel) {
-        console.warn(`[geminiRaw] ${model} returned retryable error, trying fallback ${fallbackModel}â€¦`);
+        console.warn(`[geminiRaw] ${model} returned retryable error, trying fallback ${fallbackModel}...`);
         continue;
       }
       throw err;
