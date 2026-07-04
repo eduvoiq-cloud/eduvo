@@ -60,6 +60,9 @@ to boot if any of the first four are missing.
 | `FIREBASE_CLIENT_EMAIL`    | Firebase service account email                            |
 | `FIREBASE_PRIVATE_KEY`     | Firebase RSA private key (keep `\n` escaped)              |
 | `GEMINI_API_KEY`           | Google Gemini API key                                     |
+| `GEMINI_MODEL`             | Heavy tasks model: `gemini-2.5-flash` (homework eval, reports) |
+| `GEMINI_MODEL_QUESTIONS`   | MCQ generation model: **must be `gemini-2.5-flash-lite`** |
+| `GEMINI_MODEL_RECOVERY`    | Recovery packs model: **must be `gemini-2.5-flash-lite`** |
 | `RESEND_API_KEY`           | Resend email API key                                      |
 | `SENTRY_DSN`               | Sentry DSN (optional but strongly recommended in prod)    |
 | `NODE_ENV`                 | Set to `production`                                       |

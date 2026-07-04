@@ -246,7 +246,7 @@ Requirements:
 - Each question has exactly 4 options (A-D)
 - Mark correct answer index (0-3)
 - explanation: one factual sentence (max 20 words)
-- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong â€” appropriate for Class ${teacher_library_unit.class_name} level
+- reasoning: 1-2 sentences explaining why the correct answer is right (max 30 words)
 - Test conceptual understanding, not just recall
 IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   } else if (isLibraryMode && chapter_number && chapter_name) {
@@ -262,7 +262,7 @@ Requirements:
 - Each question has exactly 4 options (A-D)
 - Mark correct answer index (0-3)
 - explanation: one factual sentence (max 20 words)
-- reasoning: 2-4 sentences explaining the concept, why the correct answer is right, why distractors are wrong â€” appropriate for Class ${cls} level
+- reasoning: 1-2 sentences explaining why the correct answer is right (max 30 words)
 - Test conceptual understanding, not just recall
 IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   } else {
@@ -276,7 +276,7 @@ Requirements:
 - Test understanding, not just recall
 For each question, provide:
 - explanation: one line stating which answer is correct and why (max 20 words, factual)
-- reasoning: a teaching explanation helping the student understand the concept behind this question (2-4 sentences, educational, appropriate for Class ${cls} level, explains WHY the answer is correct and why the wrong options are wrong if relevant)
+- reasoning: 1-2 sentences explaining why the correct answer is right (max 30 words)
 IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   }
 
@@ -362,8 +362,12 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
       disableThinking: true,
     });
     raw = result.text.trim();
+    // COST DIAGNOSTIC � logs real token counts to Railway so we can verify billing
+    const inputLen = JSON.stringify(contentParts).length;
+    const outputLen = raw.length;
+    console.info(`[tests/generate] model=${result.modelUsed} | inputChars=${inputLen} | outputChars=${outputLen} | totalTokens=${result.totalTokens} | thinkingTokens=${result.thinkingTokens} | count=${count}`);
     if (result.thinkingTokens > 0) {
-      console.warn(`[tests/generate] thinking tokens fired: ${result.thinkingTokens} on ${result.modelUsed} â€” check thinkingBudget`);
+      console.warn(`[tests/generate] WARNING: thinking tokens fired: ${result.thinkingTokens} on ${result.modelUsed}`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

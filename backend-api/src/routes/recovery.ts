@@ -50,12 +50,14 @@ async function callGeminiGenerateContent(prompt: string): Promise<string> {
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           responseMimeType: 'application/json',
-          // Disable thinking tokens — saves ~5x cost, no quality loss for pack generation
-          thinkingConfig: { thinkingBudget: 0 },
+          // flash-lite: thinking is OFF by default — no config needed.
+          // Do NOT set thinkingBudget:0 — it is deprecated and silently ignored.
+          // Do NOT set thinking_level — flash-lite ignores it and flash must never be used here.
         },
       }),
     }
   );
+  console.info(`[recovery] callGeminiGenerateContent model=${modelId}`);
   if (!response.ok) {
     const err = await response.text();
     throw new Error(`Gemini API error ${response.status}: ${err}`);

@@ -26,6 +26,8 @@ export interface GeminiRawRequest {
   responseSchema?: Record<string, unknown>;
   /** Default: true — sets thinking_level:"minimal" on flash models to cut cost */
   disableThinking?: boolean;
+  /** Hard cap on output tokens — prevents runaway generation cost */
+  maxOutputTokens?: number;
 }
 
 interface GeminiRawResponse {
@@ -81,7 +83,7 @@ function getThinkingConfig(model: string, disableThinking: boolean): Record<stri
  * Throws on non-2xx HTTP status.
  */
 export async function geminiRawGenerate(req: GeminiRawRequest): Promise<{ text: string; totalTokens: number; thinkingTokens: number }> {
-  const { apiKey, model, parts, systemInstruction, responseSchema, disableThinking = true } = req;
+  const { apiKey, model, parts, systemInstruction, responseSchema, disableThinking = true, maxOutputTokens } = req;
 
   const thinkingConfig = getThinkingConfig(model, disableThinking);
 
@@ -89,6 +91,7 @@ export async function geminiRawGenerate(req: GeminiRawRequest): Promise<{ text: 
     responseMimeType: 'application/json',
     ...(responseSchema ? { responseSchema } : {}),
     ...(thinkingConfig ? { thinkingConfig } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
   };
 
   const body: Record<string, unknown> = {

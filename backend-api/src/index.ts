@@ -381,8 +381,18 @@ async function startServer() {
   await new Promise<void>((resolve, reject) => {
     const server = app.listen(PORT, () => {
       console.log(`[server] Eduvo API running on port ${PORT}`);
-      console.log(`[server] Build: 2026-07-04 — geminiRaw thinkingBudget:0 fix (thinking tokens DISABLED)`);
-      console.log(`[server] AI model: questions=${process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite'} | default=${process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'}`);
+      console.log(`[server] Build: 2026-07-05 — flash-lite enforced for MCQ/recovery, fallthrough-to-flash bug fixed`);
+      const qModel = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
+      const rModel = process.env.GEMINI_MODEL_RECOVERY ?? 'gemini-2.5-flash-lite';
+      const dModel = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+      console.log(`[server] AI models: questions=${qModel} | recovery=${rModel} | default=${dModel}`);
+      // Warn if expensive model is configured for lightweight tasks
+      if (qModel.includes('flash') && !qModel.includes('lite')) {
+        console.warn(`[server] WARNING: GEMINI_MODEL_QUESTIONS=${qModel} — this is expensive flash, not flash-lite! Set GEMINI_MODEL_QUESTIONS=gemini-2.5-flash-lite in Railway env vars.`);
+      }
+      if (rModel.includes('flash') && !rModel.includes('lite')) {
+        console.warn(`[server] WARNING: GEMINI_MODEL_RECOVERY=${rModel} — this is expensive flash, not flash-lite! Set GEMINI_MODEL_RECOVERY=gemini-2.5-flash-lite in Railway env vars.`);
+      }
       resolve();
     });
 
