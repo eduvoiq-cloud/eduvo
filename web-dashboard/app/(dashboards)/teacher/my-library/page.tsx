@@ -341,8 +341,9 @@ export default function MyLibraryPage() {
       if (!res.ok) throw new Error(json.message ?? 'Failed to load units');
 
       // Build map: { [unit_number]: LibraryFile[] }
+      // Backend wraps response as { success, data: { units: [...] } }
       const map: UnitFiles = {};
-      const units: Array<{ unit_number: number; files: LibraryFile[] }> = json.data ?? json.units ?? [];
+      const units: Array<{ unit_number: number; files: LibraryFile[] }> = json.data?.units ?? json.units ?? json.data ?? [];
       for (const unit of units) {
         map[unit.unit_number] = unit.files ?? [];
       }
