@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-// Build: 2026-06-25
+// Build: 2026-07-04 — geminiRaw thinkingBudget:0 fix deployed
 
 // ── Process-level crash handlers (registered before any imports that can throw) ──
 // These catch errors that escape try/catch, e.g. a throw inside a module import.
@@ -381,6 +381,8 @@ async function startServer() {
   await new Promise<void>((resolve, reject) => {
     const server = app.listen(PORT, () => {
       console.log(`[server] Eduvo API running on port ${PORT}`);
+      console.log(`[server] Build: 2026-07-04 — geminiRaw thinkingBudget:0 fix (thinking tokens DISABLED)`);
+      console.log(`[server] AI model: questions=${process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite'} | default=${process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'}`);
       resolve();
     });
 
