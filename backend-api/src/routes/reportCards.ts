@@ -522,6 +522,14 @@ router.post(
   '/generate',
   requireRole('teacher'),
   async (req: Request, res: Response) => {
+    let teacherId = '';
+    let schoolId: string | undefined;
+    let class_name = '';
+    let section = '';
+    let term = '';
+    let exam_type = '';
+    let students: StudentRow[] = [];
+    let marksByStudent = new Map<string, MarkRow[]>();
     try {
     const parsed = reportCardSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -529,9 +537,13 @@ router.post(
       return;
     }
 
-    const { class_name, section, term, exam_type } = parsed.data;
-    const teacherId = req.user!.id;
-    const schoolId  = req.user!.school_id;
+    const parsedData = parsed.data;
+    class_name = parsedData.class_name;
+    section    = parsedData.section;
+    term       = parsedData.term;
+    exam_type  = parsedData.exam_type;
+    teacherId  = req.user!.id;
+    schoolId   = req.user!.school_id;
 
     if (!schoolId) {
       sendError(res, 'Your account is not linked to a school', 403);
@@ -582,7 +594,7 @@ router.post(
       return;
     }
 
-    const students = (studentsData ?? []) as unknown as StudentRow[];
+    students = (studentsData ?? []) as unknown as StudentRow[];
 
     if (students.length === 0) {
       sendError(res, 'No students found for this class and section', 404);
@@ -612,7 +624,7 @@ router.post(
     }
 
     // Group marks by student_id
-    const marksByStudent = new Map<string, MarkRow[]>();
+    marksByStudent = new Map<string, MarkRow[]>();
     for (const mark of (allMarks ?? []) as unknown as (MarkRow & { student_id: string })[]) {
       const existing = marksByStudent.get(mark.student_id) ?? [];
       existing.push({ subject: mark.subject, score: mark.score, max_score: mark.max_score });
@@ -671,14 +683,24 @@ router.post(
     }
 
     // ── Fire-and-forget: store report cards + notify students & parents ───────
+    // Capture values for async closure (TS 6 control flow)
+    const capturedTerm = term;
+    const capturedExamType = exam_type;
+    const capturedClassName = class_name;
+    const capturedSection = section;
+    const capturedSchoolId = schoolId;
+    const capturedTeacherId = teacherId;
+    const capturedStudents = students;
+    const capturedMarksByStudent = marksByStudent;
+
     setImmediate(() => {
     (async () => {
       try {
         const sessionYearStr2 = sessionYear();
-        const senderId = teacherId;
+        const senderId = capturedTeacherId;
 
-        for (const student of students) {
-          const marks = marksByStudent.get(student.id) ?? [];
+        for (const student of capturedStudents) {
+          const marks = capturedMarksByStudent.get(student.id) ?? [];
 
           // Build per-subject summary
           let grandTotal = 0;
@@ -704,11 +726,11 @@ router.post(
             .upsert(
               {
                 student_id:   student.id,
-                school_id:    schoolId,
-                class_name,
-                section,
-                term,
-                exam_type,
+                school_id:    capturedSchoolId,
+                class_name:   capturedClassName,
+                section:      capturedSection,
+                term:         capturedTerm,
+                exam_type:    capturedExamType,
                 marks:        marksJson,
                 grand_total:  grandTotal,
                 grand_max:    grandMax,
@@ -724,7 +746,7 @@ router.post(
           // In-app notification for the student
           await supabaseAdmin.from('notifications').insert({
             title:        '📄 Report Card Available',
-            body:         `Your ${term} ${exam_type.replace('_', ' ')} report card is ready. Overall: ${overallPct.toFixed(1)}% — Grade ${grade}`,
+            body:         `Your ${capturedTerm} ${capturedExamType.replace('_', ' ')} report card is ready. Overall: ${overallPct.toFixed(1)}% — Grade ${grade}`,
             type:         'grade',
             recipient_id: student.id,
             sender_id:    senderId,
@@ -734,7 +756,7 @@ router.post(
         }
 
         // ── Push notifications: batch all student IDs ──────────────────────
-        const allStudentIds = students.map((s) => s.id);
+        const allStudentIds = capturedStudents.map((s) => s.id);
 
         // Get parent IDs for all students
         const { data: parentRows } = await supabaseAdmin
@@ -750,7 +772,7 @@ router.post(
               parentIds.push(row.parent_id);
               await supabaseAdmin.from('notifications').insert({
                 title:        '📄 Report Card Available',
-                body:         `${row.full_name}'s ${term} ${exam_type.replace('_', ' ')} report card is ready.`,
+                body:         `${row.full_name}'s ${capturedTerm} ${capturedExamType.replace('_', ' ')} report card is ready.`,
                 type:         'grade',
                 recipient_id: row.parent_id,
                 sender_id:    senderId,
@@ -767,8 +789,8 @@ router.post(
           await sendPushMulticast(
             studentTokens,
             '📄 Report Card Available',
-            `Your ${term} ${exam_type.replace('_', ' ')} report card is ready. Check your marks now!`,
-            { type: 'report_card', term, exam_type }
+            `Your ${capturedTerm} ${capturedExamType.replace('_', ' ')} report card is ready. Check your marks now!`,
+            { type: 'report_card', term: capturedTerm, exam_type: capturedExamType }
           );
         }
 
@@ -779,8 +801,8 @@ router.post(
             await sendPushMulticast(
               parentTokens,
               '📄 Report Card Available',
-              `Your child's ${term} ${exam_type.replace('_', ' ')} report card is now available.`,
-              { type: 'report_card', term, exam_type }
+              `Your child's ${capturedTerm} ${capturedExamType.replace('_', ' ')} report card is now available.`,
+              { type: 'report_card', term: capturedTerm, exam_type: capturedExamType }
             );
           }
         }
