@@ -288,13 +288,13 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
         items: {
           type: 'object' as const,
           properties: {
-            question:      { type: 'string' as const, maxLength: 300 },
-            options:       { type: 'array' as const, items: { type: 'string' as const, maxLength: 120 }, minItems: 4, maxItems: 4 },
+            question:      { type: 'string' as const },
+            options:       { type: 'array' as const, items: { type: 'string' as const }, minItems: 4, maxItems: 4 },
             correct_index: { type: 'integer' as const, minimum: 0, maximum: 3 },
-            explanation:   { type: 'string' as const, maxLength: 150 },  // max ~20 words
+            explanation:   { type: 'string' as const },
             difficulty:    { type: 'string' as const, enum: ['easy', 'medium', 'hard'] },
-            reasoning:     { type: 'string' as const, maxLength: 200 },  // max ~30 words — enforced at API level
-            topic:         { type: 'string' as const, maxLength: 60 },
+            reasoning:     { type: 'string' as const },
+            topic:         { type: 'string' as const },
           },
           required: ['question', 'options', 'correct_index', 'explanation', 'difficulty', 'reasoning'],
         },
@@ -303,10 +303,8 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
     required: ['questions'],
   };
 
-  // Hard token ceiling: schema maxLength constraints keep individual fields short,
-  // but we need enough headroom for valid JSON with all questions.
-  // ~250 tokens per question (question+4 options+explanation+reasoning JSON overhead)
-  // 10 questions = ~2500 tokens. Use count*300 with minimum 1500 for safety.
+  // Hard token ceiling: allow enough tokens for complete valid JSON
+  // ~300 tokens per question x count, minimum 1500
   const maxOutputTokens = Math.max(1500, count * 300);
 
   const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: prompt }];
