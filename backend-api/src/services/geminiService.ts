@@ -291,12 +291,11 @@ Return this exact JSON structure:
 
   // Use GEMINI_MODEL_QUESTIONS for question generation (same as tests.ts /generate).
   // Flash Lite is sufficient â€” MCQ generation is simple extraction, not complex reasoning.
-  // GEMINI_MODEL (full Flash) is reserved for homework eval and monthly reports.
-  // Uses raw REST API so thinkingBudget:0 is guaranteed to reach the API (SDK v0.24 drops it).
-  // IMPORTANT: do NOT fall through to GEMINI_MODEL here — that's gemini-2.5-flash (expensive + thinking ON).
-  // Flash Lite is always sufficient for MCQ generation. If it's unavailable, fail rather than silently upgrade.
+  // Use Flash Lite for MCQ generation — cheap, no thinking tokens.
+  // Falls back to Flash on 503/overload. disableThinking:true is always passed
+  // so Flash will NOT fire thinking tokens even on fallback.
   const modelId = process.env.GEMINI_MODEL_QUESTIONS ?? "gemini-2.5-flash-lite";
-  const fallbackModelId = modelId; // never escalate to flash — thinking ON by default on flash costs 5x more
+  const fallbackModelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
   let rawText = '';
   let tokensUsed = 0;
