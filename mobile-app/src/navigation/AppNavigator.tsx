@@ -21,6 +21,7 @@ import TimetableScreen from '../screens/main/TimetableScreen';
 import HomeworkScreen from '../screens/main/HomeworkScreen';
 import ResourcesScreen from '../screens/main/ResourcesScreen';
 import ComplaintsScreen from '../screens/main/ComplaintsScreen';
+import RequestsScreen from '../screens/main/RequestsScreen';
 import NotificationsScreen from '../screens/main/NotificationsScreen';
 import FeeStatusScreen from '../screens/main/FeeStatusScreen';
 import TestAttemptScreen, { TestMeta } from '../screens/main/TestAttemptScreen';
@@ -152,6 +153,11 @@ function MoreNavigator() {
         name="Complaints"
         component={ComplaintsScreen}
         options={{ title: 'Complaints' }}
+      />
+      <MoreStack.Screen
+        name="Requests"
+        component={RequestsScreen}
+        options={{ title: 'Requests' }}
       />
       <MoreStack.Screen
         name="Notifications"

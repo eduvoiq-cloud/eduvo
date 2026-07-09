@@ -92,7 +92,7 @@ export default function ComplaintsPage() {
 
   return (
     <>
-      <PageHeader title="Complaints" description="View and respond to parent complaints" />
+      <PageHeader title="Complaints" description="View and respond to student complaints" />
 
       {/* Status filter tabs */}
       <div className="flex items-center gap-2 mb-4">
@@ -154,9 +154,15 @@ export default function ComplaintsPage() {
                   </div>
                   <p className="font-medium text-gray-900 text-sm">{c.subject}</p>
                   <p className="text-sm text-gray-600 mt-1 line-clamp-2">{c.message ?? c.body}</p>
-                  {c.users && (
+                  {(c.student_name || c.users) && (
                     <p className="text-xs text-gray-400 mt-1.5">
-                      From: <span className="font-medium text-gray-600">{c.users.name}</span> · {c.users.email}
+                      From: <span className="font-medium text-gray-600">
+                        {c.student_name ?? c.users?.name ?? 'Unknown Student'}
+                      </span>
+                      {c.class_name && (
+                        <> · Class {c.class_name}{c.section ? ` ${c.section}` : ''}</>
+                      )}
+                      {c.users?.email && <> · {c.users.email}</>}
                     </p>
                   )}
                   {c.resolution_note && (

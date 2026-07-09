@@ -86,6 +86,7 @@ const NAV_ITEMS: Record<AppRole, NavEntry[]> = {
         { label: 'Attendance', href: '/teacher/attendance' },
         { label: 'Fees', href: '/teacher/fees' },
         { label: 'Complaints', href: '/teacher/complaints' },
+        { label: 'Requests', href: '/teacher/requests' },
       ],
     },
     {

@@ -355,7 +355,7 @@ IMPORTANT LANGUAGE REQUIREMENT: ${languageInstruction}`;
   // Falls back to gemini-2.5-flash if Lite is overloaded (503).
   // Uses raw REST API (not SDK) so thinkingBudget:0 is guaranteed to be sent.
   const primaryModel  = process.env.GEMINI_MODEL_QUESTIONS ?? 'gemini-2.5-flash-lite';
-  const fallbackModel = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'; // fallback on 503 � disableThinking:true ensures no thinking cost
+  const fallbackModel = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash'; // fallback on 503 � disableThinking:true ensures no thinking cost
 
   let raw = '';
   try {
@@ -2265,11 +2265,21 @@ router.get('/suspicious-activity', authenticate, requireRole('teacher', 'schoola
   // â”€â”€ Step 2: Fetch test_attempts scoped to those tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   let attemptsQuery = supabaseAdmin
     .from('test_attempts')
-    .select('id, test_id')
-    .eq('school_id', schoolId);
+    .select('id, test_id');
 
   if (scopedTestIds !== null) {
+    // Teacher path: already scoped to their own tests (school is implicit)
     attemptsQuery = attemptsQuery.in('test_id', scopedTestIds);
+  } else {
+    // Admin path: scope to school's tests (test_attempts has no school_id column)
+    const { data: schoolTests, error: schoolTestsErr } = await supabaseAdmin
+      .from('tests')
+      .select('id')
+      .eq('school_id', schoolId);
+    if (schoolTestsErr) { sendError(res, schoolTestsErr.message, 500); return; }
+    const schoolTestIds = (schoolTests ?? []).map((t: { id: string }) => t.id);
+    if (schoolTestIds.length === 0) { sendSuccess(res, []); return; }
+    attemptsQuery = attemptsQuery.in('test_id', schoolTestIds);
   }
 
   const { data: scopedAttempts, error: attemptsErr } = await attemptsQuery;

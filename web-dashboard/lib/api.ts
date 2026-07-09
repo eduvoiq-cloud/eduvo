@@ -1274,6 +1274,43 @@ export const complaintsApi = {
     }, token),
 };
 
+// ── Student Requests ──────────────────────────────────────────────────────────
+
+export interface StudentRequest {
+  id: string;
+  subject: string | null;
+  message: string;
+  status: 'pending' | 'approved' | 'rejected';
+  recipient_type?: 'subject_teacher' | 'school_admin';
+  student_name?: string | null;
+  class_name?: string | null;
+  section?: string | null;
+  resolution_note?: string | null;
+  reviewed_at?: string | null;
+  created_at: string;
+}
+
+export const requestsApi = {
+  /** List requests addressed to the logged-in teacher */
+  list: (token: string, params?: { status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return request<StudentRequest[]>(`/api/requests/teacher${query}`, { method: 'GET' }, token);
+  },
+
+  /** Approve or reject a request (teacher only) */
+  updateStatus: (
+    token: string,
+    id: string,
+    payload: { status: 'approved' | 'rejected'; resolution_note?: string }
+  ) =>
+    request<StudentRequest>(`/api/requests/${id}/status`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }, token),
+};
+
 // ── Admin endpoints ───────────────────────────────────────────────────────────
 
 export interface AdminStudent {

@@ -54,6 +54,7 @@ import assignmentRoutes from './routes/assignments';
 import feeRoutes from './routes/fees';
 import testRoutes from './routes/tests';
 import complaintRoutes from './routes/complaints';
+import requestRoutes from './routes/requests';
 import teacherRoutes from './routes/teacher';
 import adminRoutes from './routes/admin';
 import superadminRoutes from './routes/superadmin';
@@ -308,6 +309,7 @@ async function startServer() {
   app.use('/api/fees', feeRoutes);
   app.use('/api/tests', largeBody, testRoutes);   // supports base64 file upload for question generation
   app.use('/api/complaints', complaintRoutes);
+  app.use('/api/requests', requestRoutes);
   app.use('/api/teacher', teacherRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/superadmin', superadminRoutes);

@@ -22,6 +22,7 @@ type MoreStackParamList = {
   Notifications: undefined;
   Announcements: undefined;
   Complaints: undefined;
+  Requests: undefined;
   FeeStatus: undefined;
   ChangePassword: undefined;
   LinkChild: undefined;
@@ -163,6 +164,13 @@ export default function MoreHomeScreen() {
             description="Raise a complaint to teacher or admin"
             color="#EF4444"
             onPress={() => navigation.navigate('Complaints')}
+          />
+          <MenuItem
+            icon="📝"
+            label="Requests"
+            description="Submit a request to teacher or admin"
+            color="#7C3AED"
+            onPress={() => navigation.navigate('Requests')}
           />
           <MenuItem
             icon="🔔"
